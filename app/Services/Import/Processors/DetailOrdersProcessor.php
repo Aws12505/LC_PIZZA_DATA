@@ -17,56 +17,56 @@ class DetailOrdersProcessor extends BaseTableProcessor
     protected function getUniqueKeys(): array
     {
         // FIXED: Added transactiontype back (was missing in new code)
-        return ['franchisestore', 'businessdate', 'orderid', 'transactiontype'];
+        return ['franchise_store', 'business_date', 'order_id', 'transaction_type'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'orderid',
-            'datetimeplaced',
-            'datetimefulfilled',
-            'royaltyobligation',
+            'franchise_store',
+            'business_date',
+            'order_id',
+            'date_time_placed',
+            'date_time_fulfilled',
+            'royalty_obligation',
             'quantity',
-            'customercount',
-            'taxableamount',
-            'nontaxableamount',
-            'taxexemptamount',
-            'nonroyaltyamount',
-            'salestax',
-            'grosssales',
-            'occupationaltax',
+            'customer_count',
+            'taxable_amount',
+            'non_taxable_amount',
+            'tax_exempt_amount',
+            'non_royalty_amount',
+            'sales_tax',
+            'gross_sales',
+            'occupational_tax',
             'employee',
-            'overrideapprovalemployee',
-            'orderplacedmethod',
-            'orderfulfilledmethod',
-            'deliverytip',
-            'deliverytiptax',
-            'deliveryfee',
-            'deliveryfeetax',
-            'deliveryservicefee',
-            'deliveryservicefeetax',
-            'deliverysmallorderfee',
-            'deliverysmallorderfeetax',
-            'modifiedorderamount',
-            'modificationreason',
+            'override_approval_employee',
+            'order_placed_method',
+            'order_fulfilled_method',
+            'delivery_tip',
+            'delivery_tip_tax',
+            'delivery_fee',
+            'delivery_fee_tax',
+            'delivery_service_fee',
+            'delivery_service_fee_tax',
+            'delivery_small_order_fee',
+            'delivery_small_order_fee_tax',
+            'modified_order_amount',
+            'modification_reason',
             'refunded',
-            'paymentmethods',
-            'transactiontype',
-            'storetipamount',
-            'promisedate',
-            'taxexemptionid',
-            'taxexemptionentityname',
-            'userid',
+            'payment_methods',
+            'transaction_type',
+            'store_tip_amount',
+            'promise_date',
+            'tax_exemption_id',
+            'tax_exemption_entity_name',
+            'user_id',
             'hnrOrder',
-            'brokenpromise',
-            'portaleligible',
-            'portalused',
-            'putintoportalbeforepromisetime',
-            'portalcompartmentsused',
-            'timeloadedintoportal',
+            'broken_promise',
+            'portal_eligible',
+            'portal_used',
+            'put_into_portal_before_promise_time',
+            'portal_compartments_used',
+            'time_loaded_into_portal',
         ];
     }
 
@@ -88,8 +88,8 @@ class DetailOrdersProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
             && !empty($row['orderid']);
     }
 }

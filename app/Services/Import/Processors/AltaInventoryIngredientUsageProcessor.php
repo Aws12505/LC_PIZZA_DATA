@@ -11,36 +11,36 @@ class AltaInventoryIngredientUsageProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'countperiod', 'ingredientid'];
+        return ['franchise_store', 'business_date', 'count_period', 'ingredient_id'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'countperiod',
-            'ingredientid',
-            'ingredientdescription',
-            'ingredientcategory',
-            'ingredientunit',
-            'ingredientunitcost',
-            'startinginventoryqty',
-            'receivedqty',
-            'nettransferredqty',
-            'endinginventoryqty',
-            'actualusage',
-            'theoreticalusage',
-            'varianceqty',
-            'wasteqty',
+            'franchise_store',
+            'business_date',
+            'count_period',
+            'ingredient_id',
+            'ingredient_description',
+            'ingredient_category',
+            'ingredient_unit',
+            'ingredient_unit_cost',
+            'starting_inventory_qty',
+            'received_qty',
+            'net_transferred_qty',
+            'ending_inventory_qty',
+            'actual_usage',
+            'theoretical_usage',
+            'variance_qty',
+            'waste_qty',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['countperiod']) 
-            && !empty($row['ingredientid']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['count_period']) 
+            && !empty($row['ingredient_id']);
     }
 }

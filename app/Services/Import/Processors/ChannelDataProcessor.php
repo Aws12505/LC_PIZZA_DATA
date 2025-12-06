@@ -15,46 +15,46 @@ class ChannelDataProcessor extends BaseTableProcessor
     protected function getUniqueKeys(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
+            'franchise_store',
+            'business_date',
             'category',
-            'subcategory',
-            'orderplacedmethod',
-            'orderfulfilledmethod'
+            'sub_category',
+            'order_placed_method',
+            'order_fulfilled_method'
         ];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
+            'franchise_store',
+            'business_date',
             'category',
-            'subcategory',
-            'orderplacedmethod',
-            'orderfulfilledmethod',
+            'sub_category',
+            'order_placed_method',
+            'order_fulfilled_method',
             'amount',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) && !empty($row['businessdate']);
+        return !empty($row['franchise_store']) && !empty($row['business_date']);
     }
 
     /**
      * Channel data uses composite key, delete by date only
      */
-    protected function deleteExistingData(string $businessDate, string $tableName, string $connection): void
+    protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
     {
         $deleted = DB::connection($connection)
             ->table($tableName)
-            ->where('businessdate', $businessDate)
+            ->where('business_date', $business_date)
             ->delete();
 
         Log::info("Deleted existing channel data", [
             'table' => $tableName,
-            'date' => $businessDate,
+            'date' => $business_date,
             'rows_deleted' => $deleted
         ]);
     }

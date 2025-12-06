@@ -11,29 +11,29 @@ class StoreHNRTransactionsProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'itemid'];
+        return ['franchise_store', 'business_date', 'item_id'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'itemid',
-            'itemname',
+            'franchise_store',
+            'business_date',
+            'item_id',
+            'item_name',
             'transactions',
-            'promisemettransactions',
-            'promisemetpercentage',
-            'transactionswithCC',
-            'promisemettransactionscc',
-            'promisemetpercentagecc',
+            'promise_met_transactions',
+            'promise_met_percentage',
+            'transactions_with_CC',
+            'promise_met_transactions_cc',
+            'promise_met_percentage_cc',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['itemid']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['item_id']);
     }
 }

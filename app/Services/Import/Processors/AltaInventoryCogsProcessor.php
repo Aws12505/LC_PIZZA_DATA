@@ -11,31 +11,31 @@ class AltaInventoryCogsProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'countperiod', 'inventorycategory'];
+        return ['franchise_store', 'business_date', 'count_period', 'inventory_category'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'countperiod',
-            'inventorycategory',
-            'startingvalue',
-            'receivedvalue',
-            'nettransfervalue',
-            'endingvalue',
-            'usedvalue',
-            'theoreticalusagevalue',
-            'variancevalue',
+            'franchise_store',
+            'business_date',
+            'count_period',
+            'inventory_category',
+            'starting_value',
+            'received_value',
+            'net_transfer_value',
+            'ending_value',
+            'used_value',
+            'theoretical_usage_value',
+            'variance_value',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['countperiod']) 
-            && !empty($row['inventorycategory']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['count_period']) 
+            && !empty($row['inventory_category']);
     }
 }

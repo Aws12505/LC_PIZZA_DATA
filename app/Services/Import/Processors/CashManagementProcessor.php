@@ -11,31 +11,31 @@ class CashManagementProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'createdatetime', 'till', 'checktype'];
+        return ['franchise_store', 'business_date', 'create_datetime', 'till', 'check_type'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'createdatetime',
-            'verifieddatetime',
+            'franchise_store',
+            'business_date',
+            'create_datetime',
+            'verified_datetime',
             'till',
-            'checktype',
-            'systemtotals',
+            'check_type',
+            'system_totals',
             'verified',
             'variance',
-            'createdby',
-            'verifiedby',
+            'created_by',
+            'verified_by',
         ];
     }
 
     protected function transformData(array $row): array
     {
-        $row['createdatetime'] = $this->parseDateTime($row['createdatetime'] ?? null);
-        $row['verifieddatetime'] = $this->parseDateTime($row['verifieddatetime'] ?? null);
-        $row['systemtotals'] = $this->toNumeric($row['systemtotals'] ?? null);
+        $row['create_datetime'] = $this->parseDateTime($row['create_datetime'] ?? null);
+        $row['verified_datetime'] = $this->parseDateTime($row['verified_datetime'] ?? null);
+        $row['system_totals'] = $this->toNumeric($row['system_totals'] ?? null);
         $row['verified'] = $this->toNumeric($row['verified'] ?? null);
         $row['variance'] = $this->toNumeric($row['variance'] ?? null);
 
@@ -44,10 +44,10 @@ class CashManagementProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['createdatetime']) 
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['create_datetime']) 
             && !empty($row['till']) 
-            && !empty($row['checktype']);
+            && !empty($row['check_type']);
     }
 }

@@ -11,33 +11,33 @@ class WasteProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['businessdate', 'franchisestore', 'cvitemid', 'wastedatetime'];
+        return ['business_date', 'franchise_store', 'cv_item_id', 'waste_date_time'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'businessdate',
-            'franchisestore',
-            'cvitemid',
-            'menuitemname',
+            'business_date',
+            'franchise_store',
+            'cv_item_id',
+            'menu_item_name',
             'expired',
-            'wastedatetime',
-            'producedatetime',
-            'wastereason',
-            'cvorderid',
-            'wastetype',
-            'itemcost',
+            'waste_date_time',
+            'produce_date_time',
+            'waste_reason',
+            'cv_order_id',
+            'waste_type',
+            'item_cost',
             'quantity',
         ];
     }
 
     protected function transformData(array $row): array
     {
-        $row['wastedatetime'] = $this->parseDateTime($row['wastedatetime'] ?? null);
-        $row['producedatetime'] = $this->parseDateTime($row['producedatetime'] ?? null);
+        $row['waste_date_time'] = $this->parseDateTime($row['waste_date_time'] ?? null);
+        $row['produce_date_time'] = $this->parseDateTime($row['produce_date_time'] ?? null);
         $row['expired'] = $this->toBoolean($row['expired'] ?? null);
-        $row['itemcost'] = $this->toNumeric($row['itemcost'] ?? null);
+        $row['item_cost'] = $this->toNumeric($row['item_cost'] ?? null);
         $row['quantity'] = $this->toNumeric($row['quantity'] ?? null);
 
         return $row;
@@ -45,9 +45,9 @@ class WasteProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['businessdate']) 
-            && !empty($row['franchisestore']) 
-            && !empty($row['cvitemid'])
-            && !empty($row['wastedatetime']);
+        return !empty($row['business_date']) 
+            && !empty($row['franchise_store']) 
+            && !empty($row['cv_item_id'])
+            && !empty($row['waste_date_time']);
     }
 }

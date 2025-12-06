@@ -11,26 +11,26 @@ class OnlineDiscountProgramProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'orderid'];
+        return ['franchise_store', 'business_date', 'order_id'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'orderid',
-            'businessdate',
-            'paytype',
-            'originalsubtotal',
-            'modifiedsubtotal',
-            'promocode',
+            'franchise_store',
+            'order_id',
+            'business_date',
+            'pay_type',
+            'original_subtotal',
+            'modified_subtotal',
+            'promo_code',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['orderid']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['order_id']);
     }
 }

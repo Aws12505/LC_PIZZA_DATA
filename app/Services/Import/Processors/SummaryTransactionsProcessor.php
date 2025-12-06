@@ -11,26 +11,26 @@ class SummaryTransactionsProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'paymentmethod', 'subpaymentmethod'];
+        return ['franchise_store', 'business_date', 'payment_method', 'sub_payment_method'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'paymentmethod',
-            'subpaymentmethod',
-            'totalamount',
-            'safqty',
-            'saftotal',
+            'franchise_store',
+            'business_date',
+            'payment_method',
+            'sub_payment_method',
+            'total_amount',
+            'saf_qty',
+            'saf_total',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['paymentmethod']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['payment_method']);
     }
 }

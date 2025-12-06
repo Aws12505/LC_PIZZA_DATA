@@ -13,41 +13,41 @@ class AltaInventoryIngredientOrdersProcessor extends BaseTableProcessor
     {
         // FIXED: Added purchaseordernumber back (was missing in new code)
         return [
-            'franchisestore', 
-            'businessdate', 
+            'franchise_store', 
+            'business_date', 
             'supplier', 
-            'invoicenumber', 
-            'purchaseordernumber', 
-            'ingredientid'
+            'invoice_number', 
+            'purchase_order_number', 
+            'ingredient_id'
         ];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
+            'franchise_store',
+            'business_date',
             'supplier',
-            'invoicenumber',
-            'purchaseordernumber',
-            'ingredientid',
-            'ingredientdescription',
-            'ingredientcategory',
-            'ingredientunit',
-            'unitprice',
-            'orderqty',
-            'sentqty',
-            'receivedqty',
-            'totalcost',
+            'invoice_number',
+            'purchase_order_number',
+            'ingredient_id',
+            'ingredient_description',
+            'ingredient_category',
+            'ingredient_unit',
+            'unit_price',
+            'order_qty',
+            'sent_qty',
+            'received_qty',
+            'total_cost',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
             && !empty($row['supplier']) 
-            && !empty($row['invoicenumber']) 
-            && !empty($row['ingredientid']);
+            && !empty($row['invoice_number']) 
+            && !empty($row['ingredient_id']);
     }
 }

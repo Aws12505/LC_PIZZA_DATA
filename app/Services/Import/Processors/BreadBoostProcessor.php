@@ -11,23 +11,23 @@ class BreadBoostProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate'];
+        return ['franchise_store', 'business_date'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'businessdate',
-            'franchisestore',
-            'classicorder',
-            'classicwithbread',
-            'otherpizzaorder',
-            'otherpizzawithbread',
+            'business_date',
+            'franchise_store',
+            'classic_order',
+            'classic_with_bread',
+            'other_pizza_order',
+            'other_pizza_with_bread',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) && !empty($row['businessdate']);
+        return !empty($row['franchise_store']) && !empty($row['business_date']);
     }
 }

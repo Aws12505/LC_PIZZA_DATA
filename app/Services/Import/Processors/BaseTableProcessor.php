@@ -32,7 +32,7 @@ abstract class BaseTableProcessor
      */
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate'];
+        return ['franchise_store', 'business_date'];
     }
 
     /**
@@ -88,10 +88,10 @@ abstract class BaseTableProcessor
      * Process and import data for this table
      * 
      * @param array $data Array of rows to import
-     * @param string $businessDate Business date for this import
+     * @param string $business_date Business date for this import
      * @return int Number of rows imported
      */
-    public function process(array $data, string $businessDate): int
+    public function process(array $data, string $business_date): int
     {
         if (empty($data)) {
             Log::warning("No data to import for " . $this->getTableName());
@@ -107,11 +107,11 @@ abstract class BaseTableProcessor
             'table' => $tableName,
             'connection' => $connection,
             'rows' => count($data),
-            'date' => $businessDate
+            'date' => $business_date
         ]);
 
         // Transform and validate data
-        $transformed = $this->transformAndValidate($data, $businessDate);
+        $transformed = $this->transformAndValidate($data, $business_date);
 
         if (empty($transformed)) {
             Log::warning("No valid data after transformation", ['table' => $tableName]);
@@ -119,7 +119,7 @@ abstract class BaseTableProcessor
         }
 
         // Execute import based on strategy
-        $count = $this->executeImport($transformed, $businessDate, $tableName, $connection, $strategy);
+        $count = $this->executeImport($transformed, $business_date, $tableName, $connection, $strategy);
 
         Log::info("Import completed", [
             'table' => $tableName,
@@ -133,15 +133,15 @@ abstract class BaseTableProcessor
     /**
      * Transform and validate all rows
      */
-    protected function transformAndValidate(array $data, string $businessDate): array
+    protected function transformAndValidate(array $data, string $business_date): array
     {
         $transformed = [];
         $fillable = $this->getFillableColumns();
 
         foreach ($data as $index => $row) {
-            // Add businessdate if not present
-            if (!isset($row['businessdate'])) {
-                $row['businessdate'] = $businessDate;
+            // Add business_date if not present
+            if (!isset($row['business_date'])) {
+                $row['business_date'] = $business_date;
             }
 
             // Transform data
@@ -170,15 +170,15 @@ abstract class BaseTableProcessor
      */
     protected function executeImport(
         array $data, 
-        string $businessDate, 
+        string $business_date, 
         string $tableName, 
         string $connection, 
         string $strategy
     ): int {
-        return DB::connection($connection)->transaction(function() use ($data, $businessDate, $tableName, $connection, $strategy) {
+        return DB::connection($connection)->transaction(function() use ($data, $business_date, $tableName, $connection, $strategy) {
             if ($strategy === self::STRATEGY_REPLACE) {
                 // Delete existing data for this business date
-                $this->deleteExistingData($businessDate, $tableName, $connection);
+                $this->deleteExistingData($business_date, $tableName, $connection);
             }
 
             if ($strategy === self::STRATEGY_UPSERT) {
@@ -201,16 +201,16 @@ abstract class BaseTableProcessor
      * Delete existing data for business date
      * Override to customize deletion logic (e.g., by store + date)
      */
-    protected function deleteExistingData(string $businessDate, string $tableName, string $connection): void
+    protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
     {
         $deleted = DB::connection($connection)
             ->table($tableName)
-            ->where('businessdate', $businessDate)
+            ->where('business_date', $business_date)
             ->delete();
 
         Log::info("Deleted existing data", [
             'table' => $tableName,
-            'date' => $businessDate,
+            'date' => $business_date,
             'rows_deleted' => $deleted
         ]);
     }

@@ -11,26 +11,26 @@ class AltaInventoryWasteProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'itemid'];
+        return ['franchise_store', 'business_date', 'item_id'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
-            'itemid',
-            'itemdescription',
-            'wastereason',
-            'unitfoodcost',
+            'franchise_store',
+            'business_date',
+            'item_id',
+            'item_description',
+            'waste_reason',
+            'unit_food_cost',
             'qty',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
-            && !empty($row['itemid']);
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
+            && !empty($row['item_id']);
     }
 }

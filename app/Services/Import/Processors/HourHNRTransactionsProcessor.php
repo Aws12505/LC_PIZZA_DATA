@@ -11,25 +11,25 @@ class HourHNRTransactionsProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        return ['franchisestore', 'businessdate', 'hour'];
+        return ['franchise_store', 'business_date', 'hour'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchisestore',
-            'businessdate',
+            'franchise_store',
+            'business_date',
             'hour',
             'transactions',
-            'promisebrokentransactions',
-            'promisebrokenpercentage',
+            'promise_broken_transactions',
+            'promise_broken_percentage',
         ];
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchisestore']) 
-            && !empty($row['businessdate']) 
+        return !empty($row['franchise_store']) 
+            && !empty($row['business_date']) 
             && !empty($row['hour']);
     }
 }
