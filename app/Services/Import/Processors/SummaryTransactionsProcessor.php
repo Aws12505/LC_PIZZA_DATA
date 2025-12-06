@@ -29,8 +29,6 @@ class SummaryTransactionsProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['payment_method']);
+        return true;
     }
 }

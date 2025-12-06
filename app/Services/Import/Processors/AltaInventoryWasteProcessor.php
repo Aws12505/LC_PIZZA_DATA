@@ -29,8 +29,6 @@ class AltaInventoryWasteProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['item_id']);
+        return true;
     }
 }

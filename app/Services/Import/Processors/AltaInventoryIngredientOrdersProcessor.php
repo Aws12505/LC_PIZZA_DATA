@@ -44,10 +44,6 @@ class AltaInventoryIngredientOrdersProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['supplier']) 
-            && !empty($row['invoice_number']) 
-            && !empty($row['ingredient_id']);
+        return true;
     }
 }

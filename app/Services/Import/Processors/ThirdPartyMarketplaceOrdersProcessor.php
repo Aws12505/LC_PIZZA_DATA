@@ -33,6 +33,6 @@ class ThirdPartyMarketplaceOrdersProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) && !empty($row['business_date']);
+        return true;
     }
 }

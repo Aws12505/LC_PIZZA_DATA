@@ -33,9 +33,6 @@ class AltaInventoryCogsProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['count_period']) 
-            && !empty($row['inventory_category']);
+        return true;
     }
 }

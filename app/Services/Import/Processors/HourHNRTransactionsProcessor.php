@@ -28,8 +28,6 @@ class HourHNRTransactionsProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['hour']);
+        return true;
     }
 }

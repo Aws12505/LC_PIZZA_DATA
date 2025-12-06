@@ -34,9 +34,6 @@ class SummaryItemsProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['menu_item_name']) 
-            && !empty($row['item_id']);
+        return true;
     }
 }

@@ -44,10 +44,6 @@ class CashManagementProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['create_datetime']) 
-            && !empty($row['till']) 
-            && !empty($row['check_type']);
+        return true;
     }
 }

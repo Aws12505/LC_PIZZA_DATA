@@ -27,9 +27,6 @@ class FinancialViewsProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) 
-            && !empty($row['business_date']) 
-            && !empty($row['sub_account']) 
-            && !empty($row['area']);
+        return true;
     }
 }

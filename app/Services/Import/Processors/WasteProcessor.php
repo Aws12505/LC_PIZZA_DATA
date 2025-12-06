@@ -45,9 +45,6 @@ class WasteProcessor extends BaseTableProcessor
 
     protected function validate(array $row): bool
     {
-        return !empty($row['business_date']) 
-            && !empty($row['franchise_store']) 
-            && !empty($row['cv_item_id'])
-            && !empty($row['waste_date_time']);
+        return true;
     }
 }
