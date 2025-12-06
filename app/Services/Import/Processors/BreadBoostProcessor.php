@@ -6,19 +6,28 @@ class BreadBoostProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'bread_boost';
+        return 'breadboost';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date'];
+        return ['franchisestore', 'businessdate'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'business_date', 'franchise_store', 'classic_order', 'classic_with_bread',
-            'other_pizza_order', 'other_pizza_with_bread',
+            'businessdate',
+            'franchisestore',
+            'classicorder',
+            'classicwithbread',
+            'otherpizzaorder',
+            'otherpizzawithbread',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) && !empty($row['businessdate']);
     }
 }

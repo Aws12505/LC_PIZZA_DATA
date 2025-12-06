@@ -6,21 +6,37 @@ class SummaryItemsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'summary_items';
+        return 'summaryitems';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'menu_item_name', 'item_id'];
+        return ['franchisestore', 'businessdate', 'menuitemname', 'itemid'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'menu_item_name', 'menu_item_account',
-            'item_id', 'item_quantity', 'royalty_obligation', 'taxable_amount',
-            'non_taxable_amount', 'tax_exempt_amount', 'non_royalty_amount',
-            'tax_included_amount',
+            'franchisestore',
+            'businessdate',
+            'menuitemname',
+            'menuitemaccount',
+            'itemid',
+            'itemquantity',
+            'royaltyobligation',
+            'taxableamount',
+            'nontaxableamount',
+            'taxexemptamount',
+            'nonroyaltyamount',
+            'taxincludedamount',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['menuitemname']) 
+            && !empty($row['itemid']);
     }
 }

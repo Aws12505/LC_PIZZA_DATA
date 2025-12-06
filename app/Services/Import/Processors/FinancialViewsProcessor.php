@@ -6,18 +6,30 @@ class FinancialViewsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'financial_views';
+        return 'financialviews';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'sub_account', 'area'];
+        return ['franchisestore', 'businessdate', 'subaccount', 'area'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'area', 'sub_account', 'amount',
+            'franchisestore',
+            'businessdate',
+            'area',
+            'subaccount',
+            'amount',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['subaccount']) 
+            && !empty($row['area']);
     }
 }

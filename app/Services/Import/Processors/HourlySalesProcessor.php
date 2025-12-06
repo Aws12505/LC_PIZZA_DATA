@@ -6,21 +6,39 @@ class HourlySalesProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'hourly_sales';
+        return 'hourlysales';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'hour'];
+        return ['franchisestore', 'businessdate', 'hour'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'hour', 'total_sales', 'phone_sales',
-            'call_center_sales', 'drive_thru_sales', 'website_sales', 'mobile_sales',
-            'website_sales_delivery', 'mobile_sales_delivery', 'doordash_sales',
-            'ubereats_sales', 'grubhub_sales', 'order_count',
+            'franchisestore',
+            'businessdate',
+            'hour',
+            'totalsales',
+            'phonesales',
+            'callcentersales',
+            'drivethrusales',
+            'websitesales',
+            'mobilesales',
+            'websitesalesdelivery',
+            'mobilesalesdelivery',
+            'doordashsales',
+            'ubereatssales',
+            'grubhubsales',
+            'ordercount',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['hour']);
     }
 }

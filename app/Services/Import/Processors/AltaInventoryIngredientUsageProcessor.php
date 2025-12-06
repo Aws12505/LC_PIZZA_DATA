@@ -6,22 +6,41 @@ class AltaInventoryIngredientUsageProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'alta_inventory_ingredient_usage';
+        return 'altainventoryingredientusage';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'count_period', 'ingredient_id'];
+        return ['franchisestore', 'businessdate', 'countperiod', 'ingredientid'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'count_period', 'ingredient_id',
-            'ingredient_description', 'ingredient_category', 'ingredient_unit',
-            'ingredient_unit_cost', 'starting_inventory_qty', 'received_qty',
-            'net_transferred_qty', 'ending_inventory_qty', 'actual_usage',
-            'theoretical_usage', 'variance_qty', 'waste_qty',
+            'franchisestore',
+            'businessdate',
+            'countperiod',
+            'ingredientid',
+            'ingredientdescription',
+            'ingredientcategory',
+            'ingredientunit',
+            'ingredientunitcost',
+            'startinginventoryqty',
+            'receivedqty',
+            'nettransferredqty',
+            'endinginventoryqty',
+            'actualusage',
+            'theoreticalusage',
+            'varianceqty',
+            'wasteqty',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['countperiod']) 
+            && !empty($row['ingredientid']);
     }
 }

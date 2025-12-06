@@ -10,16 +10,14 @@ use Illuminate\Support\Facades\Log;
  * 
  * Supports multiple import strategies:
  * - UPSERT: Insert or update based on unique keys (default)
- * - REPLACE: Delete existing records for date, then insert (source of truth)
+ * - REPLACE: Delete existing records for date+store, then insert (source of truth)
  * - INSERT: Just insert new records (no conflict handling)
  * 
  * Supports importing to both operational and archive databases
  */
 abstract class BaseTableProcessor
 {
-    /**
-     * Import strategy constants
-     */
+    // Import strategy constants
     const STRATEGY_UPSERT = 'upsert';
     const STRATEGY_REPLACE = 'replace';
     const STRATEGY_INSERT = 'insert';
@@ -34,7 +32,7 @@ abstract class BaseTableProcessor
      */
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date'];
+        return ['franchisestore', 'businessdate'];
     }
 
     /**
@@ -104,7 +102,8 @@ abstract class BaseTableProcessor
         $connection = $this->getDatabaseConnection();
         $strategy = $this->getImportStrategy();
 
-        Log::info("Processing table with {$strategy} strategy", [
+        Log::info("Processing table with strategy", [
+            'strategy' => $strategy,
             'table' => $tableName,
             'connection' => $connection,
             'rows' => count($data),
@@ -140,9 +139,9 @@ abstract class BaseTableProcessor
         $fillable = $this->getFillableColumns();
 
         foreach ($data as $index => $row) {
-            // Add business_date if not present
-            if (!isset($row['business_date'])) {
-                $row['business_date'] = $businessDate;
+            // Add businessdate if not present
+            if (!isset($row['businessdate'])) {
+                $row['businessdate'] = $businessDate;
             }
 
             // Transform data
@@ -160,7 +159,6 @@ abstract class BaseTableProcessor
 
             // Only keep fillable columns
             $filtered = array_intersect_key($row, array_flip($fillable));
-
             $transformed[] = $filtered;
         }
 
@@ -177,7 +175,7 @@ abstract class BaseTableProcessor
         string $connection, 
         string $strategy
     ): int {
-        DB::connection($connection)->transaction(function() use ($data, $businessDate, $tableName, $connection, $strategy) {
+        return DB::connection($connection)->transaction(function() use ($data, $businessDate, $tableName, $connection, $strategy) {
             if ($strategy === self::STRATEGY_REPLACE) {
                 // Delete existing data for this business date
                 $this->deleteExistingData($businessDate, $tableName, $connection);
@@ -194,9 +192,9 @@ abstract class BaseTableProcessor
                     ->table($tableName)
                     ->insert($data);
             }
-        });
 
-        return count($data);
+            return count($data);
+        });
     }
 
     /**
@@ -207,7 +205,7 @@ abstract class BaseTableProcessor
     {
         $deleted = DB::connection($connection)
             ->table($tableName)
-            ->where('business_date', $businessDate)
+            ->where('businessdate', $businessDate)
             ->delete();
 
         Log::info("Deleted existing data", [
@@ -217,8 +215,11 @@ abstract class BaseTableProcessor
         ]);
     }
 
+    // ========== HELPER METHODS ==========
+
     /**
-     * Helper: Parse datetime string to MySQL format
+     * Parse datetime string to MySQL format
+     * Improved to handle multiple formats like old code
      */
     protected function parseDateTime(?string $datetime): ?string
     {
@@ -227,18 +228,26 @@ abstract class BaseTableProcessor
         }
 
         try {
-            return \Carbon\Carbon::parse($datetime)->toDateTimeString();
+            // Try specific format first (from old code)
+            $dt = \Carbon\Carbon::createFromFormat('m-d-Y h:i:s A', $datetime);
+            return $dt->format('Y-m-d H:i:s');
         } catch (\Exception $e) {
-            Log::warning("Failed to parse datetime", [
-                'value' => $datetime,
-                'error' => $e->getMessage()
-            ]);
-            return null;
+            // Fallback to generic parse
+            try {
+                $dt = \Carbon\Carbon::parse($datetime);
+                return $dt->format('Y-m-d H:i:s');
+            } catch (\Exception $e) {
+                Log::warning("Failed to parse datetime", [
+                    'value' => $datetime,
+                    'error' => $e->getMessage()
+                ]);
+                return null;
+            }
         }
     }
 
     /**
-     * Helper: Parse date string to MySQL format
+     * Parse date string to MySQL format
      */
     protected function parseDate(?string $date): ?string
     {
@@ -258,24 +267,33 @@ abstract class BaseTableProcessor
     }
 
     /**
-     * Helper: Convert to numeric or null
+     * Convert to numeric or null
      */
     protected function toNumeric($value)
     {
         if ($value === '' || $value === null) {
             return null;
         }
-
         return is_numeric($value) ? $value : null;
     }
 
     /**
-     * Helper: Convert to boolean
+     * Convert to boolean (handles 'yes'/'no' strings from old code)
      */
     protected function toBoolean($value): ?bool
     {
         if ($value === '' || $value === null) {
             return null;
+        }
+
+        $normalized = strtolower(trim((string)$value));
+
+        // Handle yes/no explicitly (for 'expired' field in Waste)
+        if ($normalized === 'yes' || $normalized === 'true' || $normalized === '1') {
+            return true;
+        }
+        if ($normalized === 'no' || $normalized === 'false' || $normalized === '0') {
+            return false;
         }
 
         return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);

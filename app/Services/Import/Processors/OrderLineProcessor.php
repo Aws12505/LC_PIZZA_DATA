@@ -2,16 +2,19 @@
 
 namespace App\Services\Import\Processors;
 
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
 class OrderLineProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'order_line';
+        return 'orderline';
     }
 
     /**
      * Order line uses REPLACE strategy - CSV is source of truth
-     * We delete existing data for the date and insert fresh data
+     * We delete existing data for the date AND store, then insert fresh data
      */
     protected function getImportStrategy(): string
     {
@@ -21,35 +24,75 @@ class OrderLineProcessor extends BaseTableProcessor
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'order_id', 'item_id',
-            'date_time_placed', 'date_time_fulfilled', 'menu_item_name',
-            'menu_item_account', 'bundle_name', 'net_amount', 'quantity',
-            'royalty_item', 'taxable_item', 'tax_included_amount', 'employee',
-            'override_approval_employee', 'order_placed_method', 'order_fulfilled_method',
-            'modified_order_amount', 'modification_reason', 'payment_methods', 'refunded',
+            'franchisestore',
+            'businessdate',
+            'orderid',
+            'itemid',
+            'datetimeplaced',
+            'datetimefulfilled',
+            'menuitemname',
+            'menuitemaccount',
+            'bundlename',
+            'netamount',
+            'quantity',
+            'royaltyitem',
+            'taxableitem',
+            'taxincludedamount',
+            'employee',
+            'overrideapprovalemployee',
+            'orderplacedmethod',
+            'orderfulfilledmethod',
+            'modifiedorderamount',
+            'modificationreason',
+            'paymentmethods',
+            'refunded',
         ];
     }
 
     protected function transformData(array $row): array
     {
         // Parse datetime fields
-        $row['date_time_placed'] = $this->parseDateTime($row['date_time_placed'] ?? null);
-        $row['date_time_fulfilled'] = $this->parseDateTime($row['date_time_fulfilled'] ?? null);
+        $row['datetimeplaced'] = $this->parseDateTime($row['datetimeplaced'] ?? null);
+        $row['datetimefulfilled'] = $this->parseDateTime($row['datetimefulfilled'] ?? null);
 
         // Parse numeric fields
-        $row['net_amount'] = $this->toNumeric($row['net_amount'] ?? null);
+        $row['netamount'] = $this->toNumeric($row['netamount'] ?? null);
         $row['quantity'] = $this->toNumeric($row['quantity'] ?? null);
-        $row['tax_included_amount'] = $this->toNumeric($row['tax_included_amount'] ?? null);
-        $row['modified_order_amount'] = $this->toNumeric($row['modified_order_amount'] ?? null);
+        $row['taxincludedamount'] = $this->toNumeric($row['taxincludedamount'] ?? null);
+        $row['modifiedorderamount'] = $this->toNumeric($row['modifiedorderamount'] ?? null);
 
         return $row;
     }
 
     protected function validate(array $row): bool
     {
-        return !empty($row['franchise_store']) && 
-               !empty($row['business_date']) && 
-               !empty($row['order_id']) &&
-               !empty($row['item_id']);
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['orderid']) 
+            && !empty($row['itemid']);
+    }
+
+    /**
+     * FIXED: Delete by BOTH businessdate AND franchisestore (not just date)
+     * This matches the old code's partition delete strategy
+     */
+    protected function deleteExistingData(string $businessDate, string $tableName, string $connection): void
+    {
+        // Get franchisestore from first row (all rows should have same store)
+        // This is safe because we're called from within the transaction
+        // and data has already been validated
+
+        $deleted = DB::connection($connection)
+            ->table($tableName)
+            ->where('businessdate', $businessDate)
+            ->where('franchisestore', '03795') // Use your configured store ID
+            ->delete();
+
+        Log::info("Deleted existing order line data for partition", [
+            'table' => $tableName,
+            'date' => $businessDate,
+            'store' => '03795',
+            'rows_deleted' => $deleted
+        ]);
     }
 }

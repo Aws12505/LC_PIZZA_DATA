@@ -6,19 +6,31 @@ class AltaInventoryWasteProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'alta_inventory_waste';
+        return 'altainventorywaste';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'item_id'];
+        return ['franchisestore', 'businessdate', 'itemid'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'item_id', 'item_description',
-            'waste_reason', 'unit_food_cost', 'qty',
+            'franchisestore',
+            'businessdate',
+            'itemid',
+            'itemdescription',
+            'wastereason',
+            'unitfoodcost',
+            'qty',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['itemid']);
     }
 }

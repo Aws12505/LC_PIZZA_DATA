@@ -6,19 +6,31 @@ class SummaryTransactionsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'summary_transactions';
+        return 'summarytransactions';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date', 'payment_method', 'sub_payment_method'];
+        return ['franchisestore', 'businessdate', 'paymentmethod', 'subpaymentmethod'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'franchise_store', 'business_date', 'payment_method', 'sub_payment_method',
-            'total_amount', 'saf_qty', 'saf_total',
+            'franchisestore',
+            'businessdate',
+            'paymentmethod',
+            'subpaymentmethod',
+            'totalamount',
+            'safqty',
+            'saftotal',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) 
+            && !empty($row['businessdate']) 
+            && !empty($row['paymentmethod']);
     }
 }

@@ -6,22 +6,39 @@ class DeliveryOrderSummaryProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'delivery_order_summary';
+        return 'deliveryordersummary';
     }
 
     protected function getUniqueKeys(): array
     {
-        return ['franchise_store', 'business_date'];
+        return ['franchisestore', 'businessdate'];
     }
 
     protected function getFillableColumns(): array
     {
         return [
-            'business_date', 'franchise_store', 'orders_count', 'product_cost', 'tax',
-            'occupational_tax', 'delivery_charges', 'delivery_charges_taxes',
-            'service_charges', 'service_charges_taxes', 'small_order_charge',
-            'small_order_charge_taxes', 'delivery_late_charge', 'tip', 'tip_tax',
-            'total_taxes', 'order_total',
+            'businessdate',
+            'franchisestore',
+            'orderscount',
+            'productcost',
+            'tax',
+            'occupationaltax',
+            'deliverycharges',
+            'deliverychargestaxes',
+            'servicecharges',
+            'servicechargestaxes',
+            'smallordercharge',
+            'smallorderchargetaxes',
+            'deliverylatecharge',
+            'tip',
+            'tiptax',
+            'totaltaxes',
+            'ordertotal',
         ];
+    }
+
+    protected function validate(array $row): bool
+    {
+        return !empty($row['franchisestore']) && !empty($row['businessdate']);
     }
 }
