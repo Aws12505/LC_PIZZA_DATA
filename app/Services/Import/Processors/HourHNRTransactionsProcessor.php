@@ -6,7 +6,7 @@ class HourHNRTransactionsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'hourHNRtransactions';
+        return 'hour_HNR_transactions';
     }
 
     protected function getUniqueKeys(): array

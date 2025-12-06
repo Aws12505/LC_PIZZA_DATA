@@ -6,7 +6,7 @@ class OnlineDiscountProgramProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'onlinediscountprogram';
+        return 'online_discount_program';
     }
 
     protected function getUniqueKeys(): array

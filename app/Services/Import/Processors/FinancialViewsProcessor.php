@@ -6,7 +6,7 @@ class FinancialViewsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'financialviews';
+        return 'financial_views';
     }
 
     protected function getUniqueKeys(): array

@@ -6,7 +6,7 @@ class HourlySalesProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'hourlysales';
+        return 'hourly_sales';
     }
 
     protected function getUniqueKeys(): array

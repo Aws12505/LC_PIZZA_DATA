@@ -6,7 +6,7 @@ class CashManagementProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'cashmanagement';
+        return 'cash_management';
     }
 
     protected function getUniqueKeys(): array

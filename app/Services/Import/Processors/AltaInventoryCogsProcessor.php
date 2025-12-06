@@ -6,7 +6,7 @@ class AltaInventoryCogsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'altainventorycogs';
+        return 'alta_inventory_cogs';
     }
 
     protected function getUniqueKeys(): array

@@ -6,7 +6,7 @@ class DeliveryOrderSummaryProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'deliveryordersummary';
+        return 'delivery_order_summary';
     }
 
     protected function getUniqueKeys(): array

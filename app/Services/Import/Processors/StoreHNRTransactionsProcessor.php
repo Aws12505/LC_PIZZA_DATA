@@ -6,7 +6,7 @@ class StoreHNRTransactionsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'storeHNRtransactions';
+        return 'store_HNR_transactions';
     }
 
     protected function getUniqueKeys(): array

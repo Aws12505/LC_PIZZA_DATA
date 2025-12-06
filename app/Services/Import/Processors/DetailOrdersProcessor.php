@@ -6,7 +6,7 @@ class DetailOrdersProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'detailorders';
+        return 'detail_orders';
     }
 
     protected function getImportStrategy(): string

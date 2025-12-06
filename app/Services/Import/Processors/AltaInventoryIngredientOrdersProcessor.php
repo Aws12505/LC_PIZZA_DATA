@@ -6,7 +6,7 @@ class AltaInventoryIngredientOrdersProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'altainventoryingredientorders';
+        return 'alta_inventory_ingredient_orders';
     }
 
     protected function getUniqueKeys(): array

@@ -6,7 +6,7 @@ class BreadBoostProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'breadboost';
+        return 'bread_boost';
     }
 
     protected function getUniqueKeys(): array

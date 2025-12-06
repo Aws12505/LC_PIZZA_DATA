@@ -9,7 +9,7 @@ class ChannelDataProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'channeldata';
+        return 'channel_data';
     }
 
     protected function getUniqueKeys(): array

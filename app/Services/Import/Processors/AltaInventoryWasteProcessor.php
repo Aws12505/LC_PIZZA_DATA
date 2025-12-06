@@ -6,7 +6,7 @@ class AltaInventoryWasteProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'altainventorywaste';
+        return 'alta_inventory_waste';
     }
 
     protected function getUniqueKeys(): array

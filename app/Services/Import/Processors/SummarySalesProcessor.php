@@ -6,7 +6,7 @@ class SummarySalesProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'summarysales';
+        return 'summary_sales';
     }
 
     protected function getUniqueKeys(): array

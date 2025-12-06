@@ -6,7 +6,7 @@ class FinanceDataProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'financedata';
+        return 'finance_data';
     }
 
     protected function getUniqueKeys(): array

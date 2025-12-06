@@ -6,7 +6,7 @@ class ThirdPartyMarketplaceOrdersProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'thirdpartymarketplaceorders';
+        return 'third_party_marketplace_orders';
     }
 
     protected function getUniqueKeys(): array

@@ -6,7 +6,7 @@ class SummaryItemsProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'summaryitems';
+        return 'summary_items';
     }
 
     protected function getUniqueKeys(): array

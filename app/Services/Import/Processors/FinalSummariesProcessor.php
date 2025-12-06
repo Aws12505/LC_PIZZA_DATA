@@ -6,7 +6,7 @@ class FinalSummariesProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'finalsummaries';
+        return 'final_summaries';
     }
 
     protected function getUniqueKeys(): array

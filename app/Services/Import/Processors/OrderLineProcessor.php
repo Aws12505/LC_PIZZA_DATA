@@ -9,7 +9,7 @@ class OrderLineProcessor extends BaseTableProcessor
 {
     protected function getTableName(): string
     {
-        return 'orderline';
+        return 'order_line';
     }
 
     /**
