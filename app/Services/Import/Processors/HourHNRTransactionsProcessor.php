@@ -26,8 +26,13 @@ class HourHNRTransactionsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'hour' => 'hour',
+            'transactions' => 'transactions',
+            'promisebrokentransactions' => 'promise_broken_transactions',
+            'promisebrokenpercentage' => 'promise_broken_percentage',
+        ]);
     }
 }

@@ -30,8 +30,17 @@ class StoreHNRTransactionsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'itemid' => 'item_id',
+            'itemname' => 'item_name',
+            'transactions' => 'transactions',
+            'promisemettransactions' => 'promise_met_transactions',
+            'promisemetpercentage' => 'promise_met_percentage',
+            'transactionswithcc' => 'transactions_with_CC',
+            'promisemettransactionscc' => 'promise_met_transactions_cc',
+            'promisemetpercentagecc' => 'promise_met_percentage_cc',
+        ]);
     }
 }

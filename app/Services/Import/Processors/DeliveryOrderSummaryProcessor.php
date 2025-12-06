@@ -37,8 +37,24 @@ class DeliveryOrderSummaryProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'orderscount' => 'orders_count',
+            'productcost' => 'product_cost',
+            'tax' => 'tax',
+            'occupationaltax' => 'occupational_tax',
+            'deliverycharges' => 'delivery_charges',
+            'deliverychargestaxes' => 'delivery_charges_taxes',
+            'servicecharges' => 'service_charges',
+            'servicechargestaxes' => 'service_charges_taxes',
+            'smallordercharge' => 'small_order_charge',
+            'smallorderchargetaxes' => 'small_order_charge_taxes',
+            'deliverylatecharge' => 'delivery_late_charge',
+            'tip' => 'tip',
+            'tiptax' => 'tip_tax',
+            'totaltaxes' => 'total_taxes',
+            'ordertotal' => 'order_total',
+        ]);
     }
 }

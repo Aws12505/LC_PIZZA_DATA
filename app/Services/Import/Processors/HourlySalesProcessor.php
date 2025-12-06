@@ -35,8 +35,22 @@ class HourlySalesProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'hour' => 'hour',
+            'totalsales' => 'total_sales',
+            'phonesales' => 'phone_sales',
+            'callcentersales' => 'call_center_sales',
+            'drivethrusalse' => 'drive_thru_sales',
+            'websitesales' => 'website_sales',
+            'mobilesales' => 'mobile_sales',
+            'websitesalesdelivery' => 'website_sales_delivery',
+            'mobilesalesdelivery' => 'mobile_sales_delivery',
+            'doordashsales' => 'doordash_sales',
+            'ubereatsales' => 'ubereats_sales',
+            'grubhubsales' => 'grubhub_sales',
+            'ordercount' => 'order_count',
+        ]);
     }
 }

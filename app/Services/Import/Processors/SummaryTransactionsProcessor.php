@@ -27,8 +27,14 @@ class SummaryTransactionsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'paymentmethod' => 'payment_method',
+            'subpaymentmethod' => 'sub_payment_method',
+            'totalamount' => 'total_amount',
+            'safqty' => 'saf_qty',
+            'saftotal' => 'saf_total',
+        ]);
     }
 }

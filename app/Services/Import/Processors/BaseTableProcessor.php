@@ -12,8 +12,6 @@ use Illuminate\Support\Facades\Log;
  * - UPSERT: Insert or update based on unique keys (default)
  * - REPLACE: Delete existing records for date+store, then insert (source of truth)
  * - INSERT: Just insert new records (no conflict handling)
- * 
- * Supports importing to both operational and archive databases
  */
 abstract class BaseTableProcessor
 {
@@ -51,7 +49,6 @@ abstract class BaseTableProcessor
 
     /**
      * Get database connection to use (operational or analytics)
-     * Override in child classes to import to archive
      */
     protected function getDatabaseConnection(): string
     {
@@ -67,6 +64,45 @@ abstract class BaseTableProcessor
     }
 
     /**
+     * CSV COLUMN MAPPING - OVERRIDE IN CHILD CLASSES
+     * Maps CSV column names (lowercase, no spaces) to database column names
+     */
+    protected function getColumnMapping(): array
+    {
+        // Common fields that appear in most tables
+        return [
+            'franchisestore' => 'franchise_store',
+            'businessdate' => 'business_date',
+        ];
+    }
+
+    /**
+     * MAP CSV ROW TO DATABASE COLUMNS
+     */
+    protected function mapCsvRow(array $csvRow): array
+    {
+        $columnMap = $this->getColumnMapping();
+        $fillable = $this->getFillableColumns();
+        $mapped = [];
+
+        foreach ($fillable as $dbColumn) {
+            // Find the CSV column name for this DB column
+            $csvColumn = array_search($dbColumn, $columnMap);
+
+            if ($csvColumn !== false && isset($csvRow[$csvColumn])) {
+                $mapped[$dbColumn] = $csvRow[$csvColumn];
+            } elseif (isset($csvRow[$dbColumn])) {
+                // Direct match (CSV column same as DB column)
+                $mapped[$dbColumn] = $csvRow[$dbColumn];
+            } else {
+                $mapped[$dbColumn] = null;
+            }
+        }
+
+        return $mapped;
+    }
+
+    /**
      * Transform raw CSV data before import
      * Override this in child classes for custom transformations
      */
@@ -76,20 +112,7 @@ abstract class BaseTableProcessor
     }
 
     /**
-     * Validate data before import
-     * Override this in child classes for custom validation
-     */
-    protected function validate(array $row): bool
-    {
-        return true;
-    }
-
-    /**
      * Process and import data for this table
-     * 
-     * @param array $data Array of rows to import
-     * @param string $business_date Business date for this import
-     * @return int Number of rows imported
      */
     public function process(array $data, string $business_date): int
     {
@@ -110,8 +133,8 @@ abstract class BaseTableProcessor
             'date' => $business_date
         ]);
 
-        // Transform and validate data
-        $transformed = $this->transformAndValidate($data, $business_date);
+        // Map, transform and validate data
+        $transformed = $this->mapTransformAndValidate($data, $business_date);
 
         if (empty($transformed)) {
             Log::warning("No valid data after transformation", ['table' => $tableName]);
@@ -131,35 +154,25 @@ abstract class BaseTableProcessor
     }
 
     /**
-     * Transform and validate all rows
+     * Map CSV columns, transform all rows
      */
-    protected function transformAndValidate(array $data, string $business_date): array
+    protected function mapTransformAndValidate(array $data, string $business_date): array
     {
         $transformed = [];
-        $fillable = $this->getFillableColumns();
 
-        foreach ($data as $index => $row) {
-            // Add business_date if not present
+        foreach ($data as $index => $csvRow) {
+            // Step 1: Map CSV columns to DB columns
+            $row = $this->mapCsvRow($csvRow);
+
+            // Step 2: Add business_date if not present
             if (!isset($row['business_date'])) {
                 $row['business_date'] = $business_date;
             }
 
-            // Transform data
+            // Step 3: Transform data (datetime parsing, etc.)
             $row = $this->transformData($row);
 
-            // Validate
-            if (!$this->validate($row)) {
-                Log::warning("Validation failed for row", [
-                    'table' => $this->getTableName(),
-                    'row_index' => $index,
-                    'data' => $row
-                ]);
-                continue;
-            }
-
-            // Only keep fillable columns
-            $filtered = array_intersect_key($row, array_flip($fillable));
-            $transformed[] = $filtered;
+            $transformed[] = $row;
         }
 
         return $transformed;
@@ -177,17 +190,14 @@ abstract class BaseTableProcessor
     ): int {
         return DB::connection($connection)->transaction(function() use ($data, $business_date, $tableName, $connection, $strategy) {
             if ($strategy === self::STRATEGY_REPLACE) {
-                // Delete existing data for this business date
                 $this->deleteExistingData($business_date, $tableName, $connection);
             }
 
             if ($strategy === self::STRATEGY_UPSERT) {
-                // Upsert data
                 DB::connection($connection)
                     ->table($tableName)
                     ->upsert($data, $this->getUniqueKeys(), array_keys($data[0]));
             } else {
-                // Insert data (for both REPLACE and INSERT strategies)
                 DB::connection($connection)
                     ->table($tableName)
                     ->insert($data);
@@ -199,7 +209,6 @@ abstract class BaseTableProcessor
 
     /**
      * Delete existing data for business date
-     * Override to customize deletion logic (e.g., by store + date)
      */
     protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
     {
@@ -217,10 +226,6 @@ abstract class BaseTableProcessor
 
     // ========== HELPER METHODS ==========
 
-    /**
-     * Parse datetime string to MySQL format
-     * Improved to handle multiple formats like old code
-     */
     protected function parseDateTime(?string $datetime): ?string
     {
         if (empty($datetime)) {
@@ -228,11 +233,9 @@ abstract class BaseTableProcessor
         }
 
         try {
-            // Try specific format first (from old code)
             $dt = \Carbon\Carbon::createFromFormat('m-d-Y h:i:s A', $datetime);
             return $dt->format('Y-m-d H:i:s');
         } catch (\Exception $e) {
-            // Fallback to generic parse
             try {
                 $dt = \Carbon\Carbon::parse($datetime);
                 return $dt->format('Y-m-d H:i:s');
@@ -246,9 +249,6 @@ abstract class BaseTableProcessor
         }
     }
 
-    /**
-     * Parse date string to MySQL format
-     */
     protected function parseDate(?string $date): ?string
     {
         if (empty($date)) {
@@ -266,9 +266,6 @@ abstract class BaseTableProcessor
         }
     }
 
-    /**
-     * Convert to numeric or null
-     */
     protected function toNumeric($value)
     {
         if ($value === '' || $value === null) {
@@ -277,9 +274,6 @@ abstract class BaseTableProcessor
         return is_numeric($value) ? $value : null;
     }
 
-    /**
-     * Convert to boolean (handles 'yes'/'no' strings from old code)
-     */
     protected function toBoolean($value): ?bool
     {
         if ($value === '' || $value === null) {
@@ -288,7 +282,6 @@ abstract class BaseTableProcessor
 
         $normalized = strtolower(trim((string)$value));
 
-        // Handle yes/no explicitly (for 'expired' field in Waste)
         if ($normalized === 'yes' || $normalized === 'true' || $normalized === '1') {
             return true;
         }

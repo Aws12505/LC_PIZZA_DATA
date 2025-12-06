@@ -37,14 +37,17 @@ class ChannelDataProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'category' => 'category',
+            'subcategory' => 'sub_category',
+            'orderplacedmethod' => 'order_placed_method',
+            'orderfulfilledmethod' => 'order_fulfilled_method',
+            'amount' => 'amount',
+        ]);
     }
 
-    /**
-     * Channel data uses composite key, delete by date only
-     */
     protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
     {
         $deleted = DB::connection($connection)

@@ -31,8 +31,18 @@ class AltaInventoryCogsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'countperiod' => 'count_period',
+            'inventorycategory' => 'inventory_category',
+            'startingvalue' => 'starting_value',
+            'receivedvalue' => 'received_value',
+            'nettransfervalue' => 'net_transfer_value',
+            'endingvalue' => 'ending_value',
+            'usedvalue' => 'used_value',
+            'theoreticalusagevalue' => 'theoretical_usage_value',
+            'variancevalue' => 'variance_value',
+        ]);
     }
 }

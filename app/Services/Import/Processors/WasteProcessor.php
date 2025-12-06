@@ -32,6 +32,22 @@ class WasteProcessor extends BaseTableProcessor
         ];
     }
 
+    protected function getColumnMapping(): array
+    {
+        return array_merge(parent::getColumnMapping(), [
+            'cvitemid' => 'cv_item_id',
+            'menuitemname' => 'menu_item_name',
+            'expired' => 'expired',
+            'wastedatetime' => 'waste_date_time',
+            'producedatetime' => 'produce_date_time',
+            'wastereason' => 'waste_reason',
+            'cvorderid' => 'cv_order_id',
+            'wastetype' => 'waste_type',
+            'itemcost' => 'item_cost',
+            'quantity' => 'quantity',
+        ]);
+    }
+
     protected function transformData(array $row): array
     {
         $row['waste_date_time'] = $this->parseDateTime($row['waste_date_time'] ?? null);
@@ -41,10 +57,5 @@ class WasteProcessor extends BaseTableProcessor
         $row['quantity'] = $this->toNumeric($row['quantity'] ?? null);
 
         return $row;
-    }
-
-    protected function validate(array $row): bool
-    {
-        return true;
     }
 }

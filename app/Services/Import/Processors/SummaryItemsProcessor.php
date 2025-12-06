@@ -32,8 +32,19 @@ class SummaryItemsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'menuitemname' => 'menu_item_name',
+            'menuitemaccount' => 'menu_item_account',
+            'itemid' => 'item_id',
+            'itemquantity' => 'item_quantity',
+            'royaltyobligation' => 'royalty_obligation',
+            'taxableamount' => 'taxable_amount',
+            'nontaxableamount' => 'non_taxable_amount',
+            'taxexemptamount' => 'tax_exempt_amount',
+            'nonroyaltyamount' => 'non_royalty_amount',
+            'taxincludedamount' => 'tax_included_amount',
+        ]);
     }
 }

@@ -11,13 +11,12 @@ class AltaInventoryIngredientOrdersProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        // FIXED: Added purchaseordernumber back (was missing in new code)
         return [
-            'franchise_store', 
-            'business_date', 
-            'supplier', 
-            'invoice_number', 
-            'purchase_order_number', 
+            'franchise_store',
+            'business_date',
+            'supplier',
+            'invoice_number',
+            'purchase_order_number',
             'ingredient_id'
         ];
     }
@@ -42,8 +41,21 @@ class AltaInventoryIngredientOrdersProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'supplier' => 'supplier',
+            'invoicenumber' => 'invoice_number',
+            'purchaseordernumber' => 'purchase_order_number',
+            'ingredientid' => 'ingredient_id',
+            'ingredientdescription' => 'ingredient_description',
+            'ingredientcategory' => 'ingredient_category',
+            'ingredientunit' => 'ingredient_unit',
+            'unitprice' => 'unit_price',
+            'orderqty' => 'order_qty',
+            'sentqty' => 'sent_qty',
+            'receivedqty' => 'received_qty',
+            'totalcost' => 'total_cost',
+        ]);
     }
 }

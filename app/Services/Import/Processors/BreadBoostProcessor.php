@@ -26,8 +26,13 @@ class BreadBoostProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'classicorder' => 'classic_order',
+            'classicwithbread' => 'classic_with_bread',
+            'otherpizzaorder' => 'other_pizza_order',
+            'otherpizzawithbread' => 'other_pizza_with_bread',
+        ]);
     }
 }

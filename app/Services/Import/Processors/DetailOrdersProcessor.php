@@ -16,7 +16,6 @@ class DetailOrdersProcessor extends BaseTableProcessor
 
     protected function getUniqueKeys(): array
     {
-        // FIXED: Added transactiontype back (was missing in new code)
         return ['franchise_store', 'business_date', 'order_id', 'transaction_type'];
     }
 
@@ -70,24 +69,65 @@ class DetailOrdersProcessor extends BaseTableProcessor
         ];
     }
 
+    protected function getColumnMapping(): array
+    {
+        return array_merge(parent::getColumnMapping(), [
+            'orderid' => 'order_id',
+            'datetimeplaced' => 'date_time_placed',
+            'datetimefulfilled' => 'date_time_fulfilled',
+            'royaltyobligation' => 'royalty_obligation',
+            'quantity' => 'quantity',
+            'customercount' => 'customer_count',
+            'taxableamount' => 'taxable_amount',
+            'nontaxableamount' => 'non_taxable_amount',
+            'taxexemptamount' => 'tax_exempt_amount',
+            'nonroyaltyamount' => 'non_royalty_amount',
+            'salestax' => 'sales_tax',
+            'grosssales' => 'gross_sales',
+            'occupationaltax' => 'occupational_tax',
+            'employee' => 'employee',
+            'overrideapprovalemployee' => 'override_approval_employee',
+            'orderplacedmethod' => 'order_placed_method',
+            'orderfulfilledmethod' => 'order_fulfilled_method',
+            'deliverytip' => 'delivery_tip',
+            'deliverytiptax' => 'delivery_tip_tax',
+            'deliveryfee' => 'delivery_fee',
+            'deliveryfeetax' => 'delivery_fee_tax',
+            'deliveryservicefee' => 'delivery_service_fee',
+            'deliveryservicefeetax' => 'delivery_service_fee_tax',
+            'deliverysmallorderfee' => 'delivery_small_order_fee',
+            'deliverysmallorderfeetax' => 'delivery_small_order_fee_tax',
+            'modifiedorderamount' => 'modified_order_amount',
+            'modificationreason' => 'modification_reason',
+            'refunded' => 'refunded',
+            'paymentmethods' => 'payment_methods',
+            'transactiontype' => 'transaction_type',
+            'storetipamount' => 'store_tip_amount',
+            'promisedate' => 'promise_date',
+            'taxexemptionid' => 'tax_exemption_id',
+            'taxexemptionentityname' => 'tax_exemption_entity_name',
+            'userid' => 'user_id',
+            'hnrorder' => 'hnrOrder',
+            'brokenpromise' => 'broken_promise',
+            'portaleligible' => 'portal_eligible',
+            'portalused' => 'portal_used',
+            'putintoportalbeforepromisetime' => 'put_into_portal_before_promise_time',
+            'portalcompartmentsused' => 'portal_compartments_used',
+            'timeloadedintoportal' => 'time_loaded_into_portal',
+        ]);
+    }
+
     protected function transformData(array $row): array
     {
-        // Parse datetime fields
-        $row['datetimeplaced'] = $this->parseDateTime($row['datetimeplaced'] ?? null);
-        $row['datetimefulfilled'] = $this->parseDateTime($row['datetimefulfilled'] ?? null);
-        $row['promisedate'] = $this->parseDateTime($row['promisedate'] ?? null);
-        $row['timeloadedintoportal'] = $this->parseDateTime($row['timeloadedintoportal'] ?? null);
+        $row['date_time_placed'] = $this->parseDateTime($row['date_time_placed'] ?? null);
+        $row['date_time_fulfilled'] = $this->parseDateTime($row['date_time_fulfilled'] ?? null);
+        $row['promise_date'] = $this->parseDateTime($row['promise_date'] ?? null);
+        $row['time_loaded_into_portal'] = $this->parseDateTime($row['time_loaded_into_portal'] ?? null);
 
-        // Parse numeric fields
-        foreach (['royaltyobligation', 'quantity', 'customercount', 'grosssales'] as $field) {
+        foreach (['royalty_obligation', 'quantity', 'customer_count', 'gross_sales'] as $field) {
             $row[$field] = $this->toNumeric($row[$field] ?? null);
         }
 
         return $row;
-    }
-
-    protected function validate(array $row): bool
-    {
-        return true;
     }
 }

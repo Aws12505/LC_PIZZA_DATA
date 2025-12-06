@@ -27,8 +27,14 @@ class OnlineDiscountProgramProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'orderid' => 'order_id',
+            'paytype' => 'pay_type',
+            'originalsubtotal' => 'original_subtotal',
+            'modifiedsubtotal' => 'modified_subtotal',
+            'promocode' => 'promo_code',
+        ]);
     }
 }

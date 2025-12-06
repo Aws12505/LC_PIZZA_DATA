@@ -25,8 +25,12 @@ class FinancialViewsProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'area' => 'area',
+            'subaccount' => 'sub_account',
+            'amount' => 'amount',
+        ]);
     }
 }

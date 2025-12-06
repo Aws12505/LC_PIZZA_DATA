@@ -27,8 +27,14 @@ class AltaInventoryWasteProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        return array_merge(parent::getColumnMapping(), [
+            'itemid' => 'item_id',
+            'itemdescription' => 'item_description',
+            'wastereason' => 'waste_reason',
+            'unitfoodcost' => 'unit_food_cost',
+            'qty' => 'qty',
+        ]);
     }
 }

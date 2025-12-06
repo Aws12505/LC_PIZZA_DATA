@@ -12,10 +12,6 @@ class OrderLineProcessor extends BaseTableProcessor
         return 'order_line';
     }
 
-    /**
-     * Order line uses REPLACE strategy - CSV is source of truth
-     * We delete existing data for the date AND store, then insert fresh data
-     */
     protected function getImportStrategy(): string
     {
         return self::STRATEGY_REPLACE;
@@ -49,13 +45,36 @@ class OrderLineProcessor extends BaseTableProcessor
         ];
     }
 
+    protected function getColumnMapping(): array
+    {
+        return array_merge(parent::getColumnMapping(), [
+            'orderid' => 'order_id',
+            'itemid' => 'item_id',
+            'datetimeplaced' => 'date_time_placed',
+            'datetimefulfilled' => 'date_time_fulfilled',
+            'menuitemname' => 'menu_item_name',
+            'menuitemaccount' => 'menu_item_account',
+            'bundlename' => 'bundle_name',
+            'netamount' => 'net_amount',
+            'quantity' => 'quantity',
+            'royaltyitem' => 'royalty_item',
+            'taxableitem' => 'taxable_item',
+            'taxincludedamount' => 'tax_included_amount',
+            'employee' => 'employee',
+            'overrideapprovalemployee' => 'override_approval_employee',
+            'orderplacedmethod' => 'order_placed_method',
+            'orderfulfilledmethod' => 'order_fulfilled_method',
+            'modifiedorderamount' => 'modified_order_amount',
+            'modificationreason' => 'modification_reason',
+            'paymentmethods' => 'payment_methods',
+            'refunded' => 'refunded',
+        ]);
+    }
+
     protected function transformData(array $row): array
     {
-        // Parse datetime fields
         $row['date_time_placed'] = $this->parseDateTime($row['date_time_placed'] ?? null);
         $row['date_time_fulfilled'] = $this->parseDateTime($row['date_time_fulfilled'] ?? null);
-
-        // Parse numeric fields
         $row['net_amount'] = $this->toNumeric($row['net_amount'] ?? null);
         $row['quantity'] = $this->toNumeric($row['quantity'] ?? null);
         $row['tax_included_amount'] = $this->toNumeric($row['tax_included_amount'] ?? null);
@@ -64,21 +83,8 @@ class OrderLineProcessor extends BaseTableProcessor
         return $row;
     }
 
-    protected function validate(array $row): bool
-    {
-        return true;
-    }
-
-    /**
-     * FIXED: Delete by BOTH business_date AND franchise_store (not just date)
-     * This matches the old code's partition delete strategy
-     */
     protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
     {
-        // Get franchise_store from first row (all rows should have same store)
-        // This is safe because we're called from within the transaction
-        // and data has already been validated
-
         $deleted = DB::connection($connection)
             ->table($tableName)
             ->where('business_date', $business_date)

@@ -81,8 +81,10 @@ class FinanceDataProcessor extends BaseTableProcessor
         ];
     }
 
-    protected function validate(array $row): bool
+    protected function getColumnMapping(): array
     {
-        return true;
+        // Finance data probably comes with exact column names
+        // so just return parent mapping
+        return parent::getColumnMapping();
     }
 }
