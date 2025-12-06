@@ -123,7 +123,12 @@ class LCReportDataService
             $hmacHeader = $this->pureIO->buildHmacHeader($url, 'GET');
 
             // Step 3: Get blob URI (NOTE: Pass hmacHeader as string, not array)
-            Log::info("[Step 3/5] Fetching blob URI");
+            Log::info("[Step 3/5] Fetching blob URI", [
+    'url'          => $url,
+    'hmacHeader'   => $hmacHeader,
+    'accessToken'  => $accessToken,
+    'http'         => $this->http,
+]);
             $blobUri = $this->networked->getReportBlobUri($this->http, $url, $hmacHeader, $accessToken);
 
             // Step 4: Download and extract
