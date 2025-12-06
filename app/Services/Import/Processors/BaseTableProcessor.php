@@ -64,6 +64,18 @@ abstract class BaseTableProcessor
     }
 
     /**
+     * Get chunk size for bulk operations
+     * MySQL has a limit of ~65535 placeholders
+     * Override this if you need smaller/larger chunks
+     */
+    protected function getChunkSize(): int
+    {
+        // Safe default: 500 rows
+        // For tables with many columns, you might want to lower this
+        return 500;
+    }
+
+    /**
      * CSV COLUMN MAPPING - OVERRIDE IN CHILD CLASSES
      * Maps CSV column names (lowercase, no spaces) to database column names
      */
@@ -179,7 +191,7 @@ abstract class BaseTableProcessor
     }
 
     /**
-     * Execute import based on strategy
+     * Execute import based on strategy with chunking to avoid "too many placeholders" error
      */
     protected function executeImport(
         array $data, 
@@ -193,17 +205,26 @@ abstract class BaseTableProcessor
                 $this->deleteExistingData($business_date, $tableName, $connection);
             }
 
-            if ($strategy === self::STRATEGY_UPSERT) {
-                DB::connection($connection)
-                    ->table($tableName)
-                    ->upsert($data, $this->getUniqueKeys(), array_keys($data[0]));
-            } else {
-                DB::connection($connection)
-                    ->table($tableName)
-                    ->insert($data);
+            $totalImported = 0;
+            $chunkSize = $this->getChunkSize();
+
+            // Chunk the data to avoid MySQL placeholder limits
+            foreach (array_chunk($data, $chunkSize) as $chunk) {
+                if ($strategy === self::STRATEGY_UPSERT) {
+                    DB::connection($connection)
+                        ->table($tableName)
+                        ->upsert($chunk, $this->getUniqueKeys(), array_keys($chunk[0]));
+                } else {
+                    // Insert data (for both REPLACE and INSERT strategies)
+                    DB::connection($connection)
+                        ->table($tableName)
+                        ->insert($chunk);
+                }
+
+                $totalImported += count($chunk);
             }
 
-            return count($data);
+            return $totalImported;
         });
     }
 
