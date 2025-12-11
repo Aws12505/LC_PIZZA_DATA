@@ -28,9 +28,9 @@ return new class extends Migration
 
             // Growth metrics
             $table->integer('quantity_vs_prior_month')->nullable();
-            $table->decimal('quantity_growth_percent', 5, 2)->nullable();
+            $table->decimal('quantity_growth_percent', 15, 2)->nullable();
             $table->decimal('sales_vs_prior_month', 15, 2)->nullable();
-            $table->decimal('sales_growth_percent', 5, 2)->nullable();
+            $table->decimal('sales_growth_percent', 15, 2)->nullable();
 
             // Channel breakdown
             $table->integer('delivery_quantity')->default(0);

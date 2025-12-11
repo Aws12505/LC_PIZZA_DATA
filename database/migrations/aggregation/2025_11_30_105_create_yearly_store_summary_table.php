@@ -39,7 +39,7 @@ return new class extends Migration
 
             // Growth metrics
             $table->decimal('sales_vs_prior_year', 15, 2)->nullable();
-            $table->decimal('sales_growth_percent', 5, 2)->nullable();
+            $table->decimal('sales_growth_percent', 15, 2)->nullable();
 
             // CHANNEL METRICS - Orders
             $table->integer('phone_orders')->default(0);

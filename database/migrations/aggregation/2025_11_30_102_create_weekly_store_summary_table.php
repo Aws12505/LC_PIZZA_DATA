@@ -107,9 +107,9 @@ return new class extends Migration
 
             // Growth metrics
             $table->decimal('sales_vs_prior_week', 15, 2)->nullable();
-            $table->decimal('sales_growth_percent', 5, 2)->nullable();
+            $table->decimal('sales_growth_percent', 15, 2)->nullable();
             $table->integer('orders_vs_prior_week')->nullable();
-            $table->decimal('orders_growth_percent', 5, 2)->nullable();
+            $table->decimal('orders_growth_percent', 15, 2)->nullable();
 
             $table->timestamps();
 
