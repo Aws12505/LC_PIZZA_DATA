@@ -329,7 +329,7 @@ class AggregationService
     // ========== WEEKLY ==========
     private function aggregateWeeklyStore(string $store, int $year, int $week): void
     {
-        $weekStart = Carbon::createFromIsoDate($year, $week)->startOfWeek();
+        $weekStart = Carbon::now()->setISODate($year, $week)->startOfWeek();
         $weekEnd = $weekStart->copy()->endOfWeek();
 
         $daily = DailyStoreSummary::where('franchise_store', $store)
@@ -425,7 +425,7 @@ class AggregationService
 
     private function aggregateWeeklyItems(string $store, int $year, int $week): void
     {
-        $weekStart = Carbon::createFromIsoDate($year, $week)->startOfWeek();
+        $weekStart = Carbon::now()->setISODate($year, $week)->startOfWeek();
         $weekEnd = $weekStart->copy()->endOfWeek();
 
         $items = DailyItemSummary::where('franchise_store', $store)

@@ -87,7 +87,7 @@ class RebuildAggregationsCommand extends Command
         $bar->finish();
         $this->newLine(2);
 
-        $this->success("✅ Success: {$success} | ❌ Failed: {$failed}");
+        $this->info("✅ Success: {$success} | ❌ Failed: {$failed}");
 
         return $failed === 0 ? self::SUCCESS : self::FAILURE;
     }

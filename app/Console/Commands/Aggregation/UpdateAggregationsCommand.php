@@ -48,7 +48,7 @@ class UpdateAggregationsCommand extends Command
             };
 
             $time = round(microtime(true) - $start, 2);
-            $this->success("✅ COMPLETE - {$time}s");
+            $this->info("✅ COMPLETE - {$time}s");
             return self::SUCCESS;
 
         } catch (\Exception $e) {
