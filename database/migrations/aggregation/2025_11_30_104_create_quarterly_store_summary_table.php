@@ -10,12 +10,13 @@ return new class extends Migration
 
     public function up(): void
     {
-        Schema::connection($this->connection)->create('monthly_store_summary', function (Blueprint $table) {
+        Schema::connection($this->connection)->create('quarterly_store_summary', function (Blueprint $table) {
             $table->id();
             $table->string('franchise_store', 20)->index();
             $table->year('year_num')->index();
-            $table->unsignedTinyInteger('month_num')->index();
-            $table->string('month_name', 20);
+            $table->unsignedTinyInteger('quarter_num')->index();
+            $table->date('quarter_start_date');
+            $table->date('quarter_end_date');
 
             // SALES METRICS
             $table->decimal('total_sales', 15, 2)->default(0);
@@ -33,15 +34,16 @@ return new class extends Migration
             $table->integer('customer_count')->default(0);
             $table->decimal('avg_customers_per_order', 5, 2)->default(0);
 
-            // Operational days
+            // Operational metrics
             $table->integer('operational_days')->default(0);
+            $table->integer('operational_months')->default(0);
             $table->decimal('avg_daily_sales', 15, 2)->default(0);
-            $table->decimal('avg_daily_orders', 10, 2)->default(0);
+            $table->decimal('avg_monthly_sales', 15, 2)->default(0);
 
             // Growth metrics
-            $table->decimal('sales_vs_prior_month', 15, 2)->nullable();
+            $table->decimal('sales_vs_prior_quarter', 15, 2)->nullable();
             $table->decimal('sales_growth_percent', 5, 2)->nullable();
-            $table->decimal('sales_vs_same_month_prior_year', 15, 2)->nullable();
+            $table->decimal('sales_vs_same_quarter_prior_year', 15, 2)->nullable();
             $table->decimal('yoy_growth_percent', 5, 2)->nullable();
 
             // CHANNEL METRICS - Orders
@@ -117,13 +119,13 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->unique(['franchise_store', 'year_num', 'month_num'], 'unique_monthly_store_summary');
-            $table->index(['year_num', 'month_num']);
+            $table->unique(['franchise_store', 'year_num', 'quarter_num'], 'unique_quarterly_store_summary');
+            $table->index(['year_num', 'quarter_num']);
         });
     }
 
     public function down(): void
     {
-        Schema::connection($this->connection)->dropIfExists('monthly_store_summary');
+        Schema::connection($this->connection)->dropIfExists('quarterly_store_summary');
     }
 };

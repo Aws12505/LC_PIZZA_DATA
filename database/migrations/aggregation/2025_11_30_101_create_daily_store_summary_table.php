@@ -74,6 +74,8 @@ return new class extends Migration
             $table->decimal('wings_sales', 12, 2)->default(0);
             $table->integer('beverages_quantity')->default(0);
             $table->decimal('beverages_sales', 12, 2)->default(0);
+            $table->integer('crazy_puffs_quantity')->default(0);
+            $table->decimal('crazy_puffs_sales', 12, 2)->default(0);
 
             // FINANCIAL METRICS
             $table->decimal('sales_tax', 12, 2)->default(0);

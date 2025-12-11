@@ -19,12 +19,12 @@ class DailyStoreSummary extends AnalyticsModel
         'grubhub_sales', 'delivery_orders', 'delivery_sales', 'carryout_orders',
         'carryout_sales', 'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
         'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-        'beverages_quantity', 'beverages_sales', 'sales_tax', 'delivery_fees',
-        'delivery_tips', 'store_tips', 'total_tips', 'cash_sales', 'credit_card_sales',
-        'prepaid_sales', 'over_short', 'portal_eligible_orders', 'portal_used_orders',
-        'portal_usage_rate', 'portal_on_time_orders', 'portal_on_time_rate',
-        'total_waste_items', 'total_waste_cost', 'digital_orders', 'digital_sales',
-        'digital_penetration',
+        'beverages_quantity', 'beverages_sales','crazy_puffs_quantity', 'crazy_puffs_sales',
+        'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips', 
+        'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short', 
+        'portal_eligible_orders', 'portal_used_orders','portal_usage_rate', 
+        'portal_on_time_orders', 'portal_on_time_rate','total_waste_items', 'total_waste_cost',
+        'digital_orders', 'digital_sales', 'digital_penetration',
     ];
 
     protected $casts = [
