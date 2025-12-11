@@ -206,8 +206,8 @@ class AggregationService
         $lines = OrderLineHot::where('franchise_store', $store)->where('business_date', $dateStr);
         $pizzaQty = $lines->where('is_pizza', 1)->sum('quantity');
         $pizzaSales = $lines->where('is_pizza', 1)->sum('net_amount');
-        $hnrQty = $lines->where('is_hnr', 1)->sum('quantity');
-        $hnrSales = $lines->where('is_hnr', 1)->sum('net_amount');
+        $hnrQty = $lines->where('menu_item_account', 'HNR')->sum('quantity');
+        $hnrSales = $lines->where('menu_item_account', 'HNR')->sum('net_amount');
         $breadQty = $lines->where('is_bread', 1)->sum('quantity');
         $breadSales = $lines->where('is_bread', 1)->sum('net_amount');
         $wingsQty = $lines->where('is_wings', 1)->sum('quantity');
