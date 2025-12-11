@@ -145,146 +145,320 @@ class AggregationService
 
     // ========== DAILY FROM RAW DATA ==========
     private function updateDailyStoreSummary(string $store, Carbon $date): void
-    {
-        $dateStr = $date->toDateString();
-        $orders = DetailOrderHot::where('franchise_store', $store)->where('business_date', $dateStr);
+{
+    $dateStr = $date->toDateString();
 
-        if (!$orders->exists()) return;
+    $baseOrders = DetailOrderHot::where('franchise_store', $store)
+        ->where('business_date', $dateStr);
 
-        // SALES
-        $totalSales = $orders->sum('gross_sales');
-        $grossSales = $orders->sum('royalty_obligation');
-        $netSales = $orders->get(['gross_sales', 'non_royalty_amount'])
-            ->sum(fn($r) => (float)$r->gross_sales - (float)($r->non_royalty_amount ?? 0));
-        $refundAmount = $orders->where('refunded', 'Yes')->sum('gross_sales');
-
-        // ORDERS
-        $totalOrders = $orders->distinct()->count('order_id');
-        $refundedOrders = $orders->where('refunded', 'Yes')->distinct()->count('order_id');
-        $modifiedOrders = $orders->whereNotNull('modified_order_amount')->distinct()->count('order_id');
-        $customerCount = $orders->sum('customer_count');
-
-        // CHANNELS
-        $phoneOrders = $orders->where('order_placed_method', 'Phone')->distinct()->count('order_id');
-        $phoneSales = $orders->where('order_placed_method', 'Phone')->sum('gross_sales');
-        $websiteOrders = $orders->where('order_placed_method', 'Website')->distinct()->count('order_id');
-        $websiteSales = $orders->where('order_placed_method', 'Website')->sum('gross_sales');
-        $mobileOrders = $orders->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
-        $mobileSales = $orders->where('order_placed_method', 'Mobile')->sum('gross_sales');
-        $callCenterOrders = $orders->where('order_placed_method', 'CallCenterAgent')->distinct()->count('order_id');
-        $callCenterSales = $orders->where('order_placed_method', 'CallCenterAgent')->sum('gross_sales');
-        $driveThruOrders = 0; // Add logic if needed
-        $driveThruSales = 0;
-
-        // MARKETPLACE
-        $doordashOrders = $orders->where('order_placed_method', 'DoorDash')->distinct()->count('order_id');
-        $doordashSales = $orders->where('order_placed_method', 'DoorDash')->sum('gross_sales');
-        $ubereatsOrders = $orders->where('order_placed_method', 'UberEats')->distinct()->count('order_id');
-        $ubereatsSales = $orders->where('order_placed_method', 'UberEats')->sum('gross_sales');
-        $grubhubOrders = $orders->where('order_placed_method', 'Grubhub')->distinct()->count('order_id');
-        $grubhubSales = $orders->where('order_placed_method', 'Grubhub')->sum('gross_sales');
-
-        // FULFILLMENT
-        $deliveryOrders = $orders->where('order_fulfilled_method', 'Delivery')->distinct()->count('order_id');
-        $deliverySales = $orders->where('order_fulfilled_method', 'Delivery')->sum('gross_sales');
-        $carryoutOrders = $orders->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])->distinct()->count('order_id');
-        $carryoutSales = $orders->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])->sum('gross_sales');
-
-        // FINANCIAL
-        $salesTax = $orders->sum('sales_tax');
-        $deliveryFees = $orders->sum('delivery_fee');
-        $deliveryTips = $orders->sum('delivery_tip');
-        $storeTips = $orders->sum('store_tip_amount');
-        $totalTips = $deliveryTips + $storeTips;
-
-        // PORTAL
-        $portalEligible = $orders->where('portal_eligible', 'Yes')->distinct()->count('order_id');
-        $portalUsed = $orders->where('portal_used', 'Yes')->distinct()->count('order_id');
-        $portalOnTime = $orders->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
-
-        // PRODUCTS
-        $lines = OrderLineHot::where('franchise_store', $store)->where('business_date', $dateStr);
-        $pizzaQty = $lines->where('is_pizza', 1)->sum('quantity');
-        $pizzaSales = $lines->where('is_pizza', 1)->sum('net_amount');
-        $hnrQty = $lines->where('menu_item_account', 'HNR')->sum('quantity');
-        $hnrSales = $lines->where('menu_item_account', 'HNR')->sum('net_amount');
-        $breadQty = $lines->where('is_bread', 1)->sum('quantity');
-        $breadSales = $lines->where('is_bread', 1)->sum('net_amount');
-        $wingsQty = $lines->where('is_wings', 1)->sum('quantity');
-        $wingsSales = $lines->where('is_wings', 1)->sum('net_amount');
-        $beveragesQty = $lines->where('is_beverages', 1)->sum('quantity');
-        $beveragesSales = $lines->where('is_beverages', 1)->sum('net_amount');
-        $crazyPuffsQty = $lines->where('is_crazy_puffs', 1)->sum('quantity');
-        $crazyPuffsSales = $lines->where('is_crazy_puffs', 1)->sum('net_amount');
-
-        // PAYMENTS
-        $payments = SummaryTransactionsHot::where('franchise_store', $store)->where('business_date', $dateStr);
-        $cashSales = $payments->where('payment_method', 'Cash')->sum('total_amount');
-        $creditCardSales = $payments->get(['payment_method', 'total_amount'])
-            ->filter(fn($r) => str_contains((string)$r->payment_method, 'Credit') || str_contains((string)$r->payment_method, 'Card'))
-            ->sum('total_amount');
-        $prepaidSales = $payments->where('sub_payment_method', 'like', '%Prepaid%')->sum('total_amount');
-
-        // WASTE
-        $waste = WasteHot::where('franchise_store', $store)->where('business_date', $dateStr);
-        $wasteItems = $waste->count();
-        $wasteCost = $waste->get(['item_cost', 'quantity'])->sum(fn($r) => (float)($r->item_cost ?? 0) * (float)($r->quantity ?? 0));
-
-        // OVER/SHORT
-        $overShort = SummarySalesHot::where('franchise_store', $store)
-            ->where('business_date', $dateStr)->value('over_short') ?? 0;
-
-        // DIGITAL
-        $digitalOrders = $websiteOrders + $mobileOrders;
-        $digitalSales = $websiteSales + $mobileSales;
-
-        $data = [
-            'franchise_store' => $store,
-            'business_date' => $dateStr,
-            'total_sales' => $totalSales,
-            'gross_sales' => $grossSales,
-            'net_sales' => $netSales,
-            'refund_amount' => $refundAmount,
-            'total_orders' => $totalOrders,
-            'completed_orders' => $totalOrders - $refundedOrders,
-            'cancelled_orders' => 0,
-            'modified_orders' => $modifiedOrders,
-            'refunded_orders' => $refundedOrders,
-            'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
-            'customer_count' => $customerCount,
-            'avg_customers_per_order' => $totalOrders > 0 ? round($customerCount / $totalOrders, 2) : 0,
-            'phone_orders' => $phoneOrders, 'phone_sales' => $phoneSales,
-            'website_orders' => $websiteOrders, 'website_sales' => $websiteSales,
-            'mobile_orders' => $mobileOrders, 'mobile_sales' => $mobileSales,
-            'call_center_orders' => $callCenterOrders, 'call_center_sales' => $callCenterSales,
-            'drive_thru_orders' => $driveThruOrders, 'drive_thru_sales' => $driveThruSales,
-            'doordash_orders' => $doordashOrders, 'doordash_sales' => $doordashSales,
-            'ubereats_orders' => $ubereatsOrders, 'ubereats_sales' => $ubereatsSales,
-            'grubhub_orders' => $grubhubOrders, 'grubhub_sales' => $grubhubSales,
-            'delivery_orders' => $deliveryOrders, 'delivery_sales' => $deliverySales,
-            'carryout_orders' => $carryoutOrders, 'carryout_sales' => $carryoutSales,
-            'pizza_quantity' => $pizzaQty, 'pizza_sales' => $pizzaSales,
-            'hnr_quantity' => $hnrQty, 'hnr_sales' => $hnrSales,
-            'bread_quantity' => $breadQty, 'bread_sales' => $breadSales,
-            'wings_quantity' => $wingsQty, 'wings_sales' => $wingsSales,
-            'beverages_quantity' => $beveragesQty, 'beverages_sales' => $beveragesSales,
-            'crazy_puffs_quantity' => $crazyPuffsQty, 'crazy_puffs_sales' => $crazyPuffsSales,
-            'sales_tax' => $salesTax, 'delivery_fees' => $deliveryFees,
-            'delivery_tips' => $deliveryTips, 'store_tips' => $storeTips, 'total_tips' => $totalTips,
-            'cash_sales' => $cashSales, 'credit_card_sales' => $creditCardSales, 'prepaid_sales' => $prepaidSales,
-            'over_short' => $overShort,
-            'portal_eligible_orders' => $portalEligible, 'portal_used_orders' => $portalUsed,
-            'portal_on_time_orders' => $portalOnTime,
-            'portal_usage_rate' => $portalEligible > 0 ? round(($portalUsed/$portalEligible)*100, 2) : 0,
-            'portal_on_time_rate' => $portalUsed > 0 ? round(($portalOnTime/$portalUsed)*100, 2) : 0,
-            'total_waste_items' => $wasteItems, 'total_waste_cost' => $wasteCost,
-            'digital_orders' => $digitalOrders, 'digital_sales' => $digitalSales,
-            'digital_penetration' => $totalOrders > 0 ? round(($digitalOrders/$totalOrders)*100, 2) : 0
-        ];
-
-        DB::connection('analytics')->table('daily_store_summary')
-            ->upsert([$data], ['franchise_store', 'business_date'], array_keys($data));
+    if (!(clone $baseOrders)->exists()) {
+        return;
     }
+
+    // SALES
+    $totalSales = (clone $baseOrders)->sum('gross_sales');
+    $grossSales = (clone $baseOrders)->sum('royalty_obligation');
+
+    $netSales = (clone $baseOrders)
+        ->get(['gross_sales', 'non_royalty_amount'])
+        ->sum(fn ($r) => (float) $r->gross_sales - (float) ($r->non_royalty_amount ?? 0));
+
+    $refundAmount = (clone $baseOrders)
+        ->where('refunded', 'Yes')
+        ->sum('gross_sales');
+
+    // ORDERS
+    $totalOrders = (clone $baseOrders)->distinct()->count('order_id');
+
+    $refundedOrders = (clone $baseOrders)
+        ->where('refunded', 'Yes')
+        ->distinct()
+        ->count('order_id');
+
+    $modifiedOrders = (clone $baseOrders)
+        ->whereNotNull('modified_order_amount')
+        ->distinct()
+        ->count('order_id');
+
+    $customerCount = (clone $baseOrders)->sum('customer_count');
+
+    // CHANNELS (adjust method values if needed to match your data)
+    $phoneOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'Phone')
+        ->distinct()
+        ->count('order_id');
+    $phoneSales = (clone $baseOrders)
+        ->where('order_placed_method', 'Phone')
+        ->sum('gross_sales');
+
+    $websiteOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'Website')
+        ->distinct()
+        ->count('order_id');
+    $websiteSales = (clone $baseOrders)
+        ->where('order_placed_method', 'Website')
+        ->sum('gross_sales');
+
+    $mobileOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'Mobile')
+        ->distinct()
+        ->count('order_id');
+    $mobileSales = (clone $baseOrders)
+        ->where('order_placed_method', 'Mobile')
+        ->sum('gross_sales');
+
+    $callCenterOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'CallCenterAgent')
+        ->distinct()
+        ->count('order_id');
+    $callCenterSales = (clone $baseOrders)
+        ->where('order_placed_method', 'CallCenterAgent')
+        ->sum('gross_sales');
+
+    // If you have a real drive‑thru code, plug it here
+    $driveThruOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'Drive-Thru')
+        ->distinct()
+        ->count('order_id');
+    $driveThruSales = (clone $baseOrders)
+        ->where('order_placed_method', 'Drive-Thru')
+        ->sum('gross_sales');
+
+    // MARKETPLACE
+    $doordashOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'DoorDash')
+        ->distinct()
+        ->count('order_id');
+    $doordashSales = (clone $baseOrders)
+        ->where('order_placed_method', 'DoorDash')
+        ->sum('gross_sales');
+
+    $ubereatsOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'UberEats')
+        ->distinct()
+        ->count('order_id');
+    $ubereatsSales = (clone $baseOrders)
+        ->where('order_placed_method', 'UberEats')
+        ->sum('gross_sales');
+
+    $grubhubOrders = (clone $baseOrders)
+        ->where('order_placed_method', 'Grubhub')
+        ->distinct()
+        ->count('order_id');
+    $grubhubSales = (clone $baseOrders)
+        ->where('order_placed_method', 'Grubhub')
+        ->sum('gross_sales');
+
+    // FULFILLMENT
+    $deliveryOrders = (clone $baseOrders)
+        ->where('order_fulfilled_method', 'Delivery')
+        ->distinct()
+        ->count('order_id');
+    $deliverySales = (clone $baseOrders)
+        ->where('order_fulfilled_method', 'Delivery')
+        ->sum('gross_sales');
+
+    $carryoutOrders = (clone $baseOrders)
+        ->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])
+        ->distinct()
+        ->count('order_id');
+    $carryoutSales = (clone $baseOrders)
+        ->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])
+        ->sum('gross_sales');
+
+    // FINANCIAL
+    $salesTax = (clone $baseOrders)->sum('sales_tax');
+    $deliveryFees = (clone $baseOrders)->sum('delivery_fee');
+    $deliveryTips = (clone $baseOrders)->sum('delivery_tip');
+    $storeTips = (clone $baseOrders)->sum('store_tip_amount');
+    $totalTips = $deliveryTips + $storeTips;
+
+    // PORTAL
+    $portalEligible = (clone $baseOrders)
+        ->where('portal_eligible', 'Yes')
+        ->distinct()
+        ->count('order_id');
+    $portalUsed = (clone $baseOrders)
+        ->where('portal_used', 'Yes')
+        ->distinct()
+        ->count('order_id');
+    $portalOnTime = (clone $baseOrders)
+        ->where('put_into_portal_before_promise_time', 'Yes')
+        ->distinct()
+        ->count('order_id');
+
+    // PRODUCTS
+    $baseLines = OrderLineHot::where('franchise_store', $store)
+        ->where('business_date', $dateStr);
+
+    $pizzaQty = (clone $baseLines)
+        ->where('is_pizza', 1)
+        ->sum('quantity');
+    $pizzaSales = (clone $baseLines)
+        ->where('is_pizza', 1)
+        ->sum('net_amount');
+
+    $hnrQty = (clone $baseLines)
+        ->where('menu_item_account', 'HNR')
+        ->sum('quantity');
+    $hnrSales = (clone $baseLines)
+        ->where('menu_item_account', 'HNR')
+        ->sum('net_amount');
+
+    $breadQty = (clone $baseLines)
+        ->where('is_bread', 1)
+        ->sum('quantity');
+    $breadSales = (clone $baseLines)
+        ->where('is_bread', 1)
+        ->sum('net_amount');
+
+    $wingsQty = (clone $baseLines)
+        ->where('is_wings', 1)
+        ->sum('quantity');
+    $wingsSales = (clone $baseLines)
+        ->where('is_wings', 1)
+        ->sum('net_amount');
+
+    $beveragesQty = (clone $baseLines)
+        ->where('is_beverages', 1)
+        ->sum('quantity');
+    $beveragesSales = (clone $baseLines)
+        ->where('is_beverages', 1)
+        ->sum('net_amount');
+
+    $crazyPuffsQty = (clone $baseLines)
+        ->where('is_crazy_puffs', 1)
+        ->sum('quantity');
+    $crazyPuffsSales = (clone $baseLines)
+        ->where('is_crazy_puffs', 1)
+        ->sum('net_amount');
+
+    // PAYMENTS
+    $basePayments = SummaryTransactionsHot::where('franchise_store', $store)
+        ->where('business_date', $dateStr);
+
+    $cashSales = (clone $basePayments)
+        ->where('payment_method', 'Cash')
+        ->sum('total_amount');
+
+    $creditCardSales = (clone $basePayments)
+        ->get(['payment_method', 'total_amount'])
+        ->filter(fn ($r) =>
+            str_contains((string) $r->payment_method, 'Credit') ||
+            str_contains((string) $r->payment_method, 'Card')
+        )
+        ->sum('total_amount');
+
+    $prepaidSales = (clone $basePayments)
+        ->where('sub_payment_method', 'like', '%Prepaid%')
+        ->sum('total_amount');
+
+    // WASTE
+    $baseWaste = WasteHot::where('franchise_store', $store)
+        ->where('business_date', $dateStr);
+
+    $wasteItems = (clone $baseWaste)->count();
+    $wasteCost = (clone $baseWaste)
+        ->get(['item_cost', 'quantity'])
+        ->sum(fn ($r) => (float) ($r->item_cost ?? 0) * (float) ($r->quantity ?? 0));
+
+    // OVER/SHORT
+    $overShort = SummarySalesHot::where('franchise_store', $store)
+        ->where('business_date', $dateStr)
+        ->value('over_short') ?? 0;
+
+    // DIGITAL
+    $digitalOrders = $websiteOrders + $mobileOrders;
+    $digitalSales = $websiteSales + $mobileSales;
+
+    $data = [
+        'franchise_store' => $store,
+        'business_date' => $dateStr,
+        'total_sales' => $totalSales,
+        'gross_sales' => $grossSales,
+        'net_sales' => $netSales,
+        'refund_amount' => $refundAmount,
+        'total_orders' => $totalOrders,
+        'completed_orders' => $totalOrders - $refundedOrders,
+        'cancelled_orders' => 0,
+        'modified_orders' => $modifiedOrders,
+        'refunded_orders' => $refundedOrders,
+        'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
+        'customer_count' => $customerCount,
+        'avg_customers_per_order' => $totalOrders > 0 ? round($customerCount / $totalOrders, 2) : 0,
+
+        'phone_orders' => $phoneOrders,
+        'phone_sales' => $phoneSales,
+        'website_orders' => $websiteOrders,
+        'website_sales' => $websiteSales,
+        'mobile_orders' => $mobileOrders,
+        'mobile_sales' => $mobileSales,
+        'call_center_orders' => $callCenterOrders,
+        'call_center_sales' => $callCenterSales,
+        'drive_thru_orders' => $driveThruOrders,
+        'drive_thru_sales' => $driveThruSales,
+
+        'doordash_orders' => $doordashOrders,
+        'doordash_sales' => $doordashSales,
+        'ubereats_orders' => $ubereatsOrders,
+        'ubereats_sales' => $ubereatsSales,
+        'grubhub_orders' => $grubhubOrders,
+        'grubhub_sales' => $grubhubSales,
+
+        'delivery_orders' => $deliveryOrders,
+        'delivery_sales' => $deliverySales,
+        'carryout_orders' => $carryoutOrders,
+        'carryout_sales' => $carryoutSales,
+
+        'pizza_quantity' => $pizzaQty,
+        'pizza_sales' => $pizzaSales,
+        'hnr_quantity' => $hnrQty,
+        'hnr_sales' => $hnrSales,
+        'bread_quantity' => $breadQty,
+        'bread_sales' => $breadSales,
+        'wings_quantity' => $wingsQty,
+        'wings_sales' => $wingsSales,
+        'beverages_quantity' => $beveragesQty,
+        'beverages_sales' => $beveragesSales,
+        'crazy_puffs_quantity' => $crazyPuffsQty,
+        'crazy_puffs_sales' => $crazyPuffsSales,
+
+        'sales_tax' => $salesTax,
+        'delivery_fees' => $deliveryFees,
+        'delivery_tips' => $deliveryTips,
+        'store_tips' => $storeTips,
+        'total_tips' => $totalTips,
+
+        'cash_sales' => $cashSales,
+        'credit_card_sales' => $creditCardSales,
+        'prepaid_sales' => $prepaidSales,
+        'over_short' => $overShort,
+
+        'portal_eligible_orders' => $portalEligible,
+        'portal_used_orders' => $portalUsed,
+        'portal_on_time_orders' => $portalOnTime,
+        'portal_usage_rate' => $portalEligible > 0
+            ? round(($portalUsed / $portalEligible) * 100, 2)
+            : 0,
+        'portal_on_time_rate' => $portalUsed > 0
+            ? round(($portalOnTime / $portalUsed) * 100, 2)
+            : 0,
+
+        'total_waste_items' => $wasteItems,
+        'total_waste_cost' => $wasteCost,
+
+        'digital_orders' => $digitalOrders,
+        'digital_sales' => $digitalSales,
+        'digital_penetration' => $totalOrders > 0
+            ? round(($digitalOrders / $totalOrders) * 100, 2)
+            : 0,
+    ];
+
+    DB::connection('analytics')
+        ->table('daily_store_summary')
+        ->upsert([$data], ['franchise_store', 'business_date'], array_keys($data));
+}
+
 
     private function updateDailyItemSummary(string $store, Carbon $date): void
     {
