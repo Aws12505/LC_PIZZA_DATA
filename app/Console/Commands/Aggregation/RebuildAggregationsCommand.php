@@ -5,24 +5,18 @@ namespace App\Console\Commands\Aggregation;
 use App\Services\Aggregation\AggregationService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 
-/**
- * Rebuild aggregations for a date range
- * 
- * Usage:
- *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31
- *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=daily
- */
 class RebuildAggregationsCommand extends Command
 {
     protected $signature = 'aggregation:rebuild 
-                            {--start= : Start date (Y-m-d format)}
-                            {--end= : End date (Y-m-d format)}
-                            {--type=daily : Type to rebuild (daily, weekly, monthly, all)}';
+        {--start= : Start date Y-m-d}
+        {--end= : End date Y-m-d}
+        {--type=daily : daily, weekly, monthly, quarterly, yearly, all}';
 
-    protected $description = 'Rebuild aggregations for a date range';
+    protected $description = 'Rebuild ALL aggregations for date range';
 
-    protected AggregationService $aggregationService;
+    protected $aggregationService;
 
     public function __construct(AggregationService $aggregationService)
     {
@@ -32,76 +26,69 @@ class RebuildAggregationsCommand extends Command
 
     public function handle(): int
     {
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->info('  Rebuild Aggregations');
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        $this->newLine();
+        $this->info('🔄 REBUILD AGGREGATIONS');
+        $this->line(str_repeat('═', 80));
 
         if (!$this->option('start') || !$this->option('end')) {
-            $this->error('Both --start and --end dates are required');
+            $this->error('❌ Both --start and --end dates required');
             return self::FAILURE;
         }
 
         try {
-            $startDate = Carbon::parse($this->option('start'));
-            $endDate = Carbon::parse($this->option('end'));
+            $start = Carbon::parse($this->option('start'));
+            $end = Carbon::parse($this->option('end'));
         } catch (\Exception $e) {
-            $this->error('Invalid date format');
+            $this->error('❌ Invalid date format (use Y-m-d)');
             return self::FAILURE;
         }
 
-        $totalDays = $startDate->diffInDays($endDate) + 1;
+        $days = $start->diffInDays($end) + 1;
         $type = $this->option('type');
 
-        $this->info("📅 Start: {$startDate->toDateString()}");
-        $this->info("📅 End: {$endDate->toDateString()}");
-        $this->info("📊 Days: {$totalDays}");
-        $this->info("📊 Type: {$type}");
-        $this->newLine();
+        $this->table(['Start', 'End', 'Days', 'Type'], [
+            [$start->toDateString(), $end->toDateString(), $days, $type]
+        ]);
 
-        if (!$this->confirm('This will rebuild aggregations. Continue?', true)) {
-            return self::SUCCESS;
+        if (!$this->confirm('🚀 Proceed with rebuild?', true)) return self::SUCCESS;
+
+        $bar = $this->output->createProgressBar($days);
+        $bar->start();
+
+        $current = $start->copy();
+        $success = $failed = 0;
+
+        while ($current <= $end) {
+    try {
+        if ($type === 'daily' || $type === 'all') {
+            $this->aggregationService->updateDailySummaries($current);
         }
-
-        $this->newLine();
-
-        $progressBar = $this->output->createProgressBar($totalDays);
-        $progressBar->start();
-
-        $currentDate = $startDate->copy();
-        $successful = 0;
-        $failed = 0;
-
-        while ($currentDate <= $endDate) {
-            try {
-                if ($type === 'daily' || $type === 'all') {
-                    $this->aggregationService->updateDailySummaries($currentDate);
-                }
-
-                if ($type === 'weekly' || $type === 'all') {
-                    $this->aggregationService->updateWeeklySummaries($currentDate);
-                }
-
-                if ($type === 'monthly' || $type === 'all') {
-                    $this->aggregationService->updateMonthlySummaries($currentDate);
-                }
-
-                $successful++;
-            } catch (\Exception $e) {
-                $failed++;
-                \Illuminate\Support\Facades\Log::error("Rebuild failed for {$currentDate->toDateString()}: " . $e->getMessage());
-            }
-
-            $progressBar->advance();
-            $currentDate->addDay();
+        if ($type === 'weekly' || $type === 'all') {
+            $this->aggregationService->updateWeeklySummaries($current);
         }
+        if ($type === 'monthly' || $type === 'all') {
+            $this->aggregationService->updateMonthlySummaries($current);
+        }
+        if ($type === 'quarterly' || $type === 'all') {
+            $this->aggregationService->updateQuarterlySummaries($current);
+        }
+        if ($type === 'yearly' || $type === 'all') {
+            $this->aggregationService->updateYearlySummaries($current);
+        }
+        $success++;
+    } catch (\Exception $e) {
+        $failed++;
+        Log::error("Rebuild {$current->toDateString()}: " . $e->getMessage());
+    }
+    $bar->advance();
+    $current->addDay();
+}
 
-        $progressBar->finish();
+        $bar->finish();
         $this->newLine(2);
 
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->info("✅ Successful: {$successful}");
-        $this->error("❌ Failed: {$failed}");
+        $this->success("✅ Success: {$success} | ❌ Failed: {$failed}");
 
-        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+        return $failed === 0 ? self::SUCCESS : self::FAILURE;
     }
 }

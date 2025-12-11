@@ -5,6 +5,11 @@ namespace App\Services\Aggregation;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Models\Operational\DetailOrderHot;
+use App\Models\Operational\OrderLineHot;
+use App\Models\Operational\SummaryTransactionsHot;
+use App\Models\Operational\WasteHot;
+use App\Models\Operational\SummarySalesHot;
 use App\Models\Aggregation\DailyStoreSummary;
 use App\Models\Aggregation\DailyItemSummary;
 use App\Models\Aggregation\WeeklyStoreSummary;
@@ -17,55 +22,320 @@ use App\Models\Aggregation\YearlyStoreSummary;
 use App\Models\Aggregation\YearlyItemSummary;
 
 /**
- * AggregationService - Build and maintain summary tables
- *
- * Creates pre-computed aggregations from daily summaries to enable
- * ultra-fast reporting without scanning billions of rows.
- *
- * All summaries (weekly, monthly, quarterly, yearly) have FULL metrics
- * matching daily_store_summary and daily_item_summary.
+ * COMPLETE AggregationService - DAILY→WEEKLY→MONTHLY→QUARTERLY→YEARLY
+ * ✅ BACKWARD COMPATIBLE single date methods
+ * ✅ NEW quarterly/yearly methods  
+ * ✅ FULL 60+ metrics EVERY level (Crazy Puffs included)
  */
 class AggregationService
 {
     /**
-     * Update all weekly summaries for a specific date range
-     *
-     * Aggregates from daily_store_summary and daily_item_summary
+     * BACKWARD COMPATIBLE: LCReportDataService calls this
      */
-    public function updateWeeklySummaries(Carbon $startDate, Carbon $endDate): void
+    public function updateDailySummaries(Carbon $date): void
     {
-        Log::info("Updating weekly summaries from {$startDate->toDateString()} to {$endDate->toDateString()}");
+        Log::info('Daily: ' . $date->toDateString());
 
-        // Get all unique stores and week combinations
-        $dailyData = DailyStoreSummary::whereBetween('business_date', [$startDate, $endDate])
-            ->selectRaw('DISTINCT franchise_store, YEAR(business_date) as year_num, WEEK(business_date) as week_num')
-            ->get();
+        $stores = DetailOrderHot::where('business_date', $date->toDateString())
+            ->distinct()->pluck('franchise_store');
 
-        foreach ($dailyData as $record) {
-            $this->aggregateWeeklyStore($record->franchise_store, $record->year_num, $record->week_num);
-            $this->aggregateWeeklyItems($record->franchise_store, $record->year_num, $record->week_num);
+        if ($stores->isEmpty()) return;
+
+        foreach ($stores as $store) {
+            try {
+                $this->updateDailyStoreSummary($store, $date);
+                $this->updateDailyItemSummary($store, $date);
+            } catch (\Exception $e) {
+                Log::error("Daily {$store} failed: " . $e->getMessage());
+            }
         }
-
-        Log::info("Weekly summaries updated");
     }
 
     /**
-     * Aggregate weekly store summary from daily data
+     * BACKWARD COMPATIBLE: Commands call this
      */
-    private function aggregateWeeklyStore(string $store, int $year, int $week): void
+    public function updateWeeklySummaries(Carbon $date): void
     {
-        // Calculate week start and end dates
-        $weekStart = Carbon::now()->setISODate($year, $week)->startOfWeek();
-        $weekEnd = $weekStart->copy()->endOfWeek();
+        $weekStart = $date->copy()->startOfWeek();
+        $weekEnd = $date->copy()->endOfWeek();
+        Log::info("Weekly {$weekStart->format('Y-m-d')}→{$weekEnd->format('Y-m-d')}");
+        $this->updateWeeklySummariesRange($weekStart, $weekEnd);
+    }
 
-        // SUM all numeric metrics from daily data for this week
-        $daily = DailyStoreSummary::where('franchise_store', $store)
-            ->whereBetween('business_date', [$weekStart, $weekEnd])
+    /**
+     * BACKWARD COMPATIBLE: Commands call this  
+     */
+    public function updateMonthlySummaries(Carbon $date): void
+    {
+        $year = $date->year;
+        $month = $date->month;
+        Log::info("Monthly {$year}-{$month}");
+        $this->updateMonthlySummariesYearMonth($year, $month);
+    }
+
+    public function updateWeeklySummariesRange(Carbon $start, Carbon $end): void
+    {
+        $weeks = DailyStoreSummary::whereBetween('business_date', [$start, $end])
+            ->selectRaw('DISTINCT franchise_store, YEAR(business_date) y, WEEK(business_date) w')
             ->get();
 
-        if ($daily->isEmpty()) {
-            return;
+        foreach ($weeks as $week) {
+            $this->aggregateWeeklyStore($week->franchise_store, $week->y, $week->w);
+            $this->aggregateWeeklyItems($week->franchise_store, $week->y, $week->w);
         }
+    }
+
+    public function updateMonthlySummariesYearMonth(int $year, int $month): void
+    {
+        $stores = DailyStoreSummary::whereYear('business_date', $year)
+            ->whereMonth('business_date', $month)
+            ->distinct()->pluck('franchise_store');
+
+        foreach ($stores as $store) {
+            $this->aggregateMonthlyStore($store, $year, $month);
+            $this->aggregateMonthlyItems($store, $year, $month);
+        }
+    }
+
+    /**
+     * NEW: Quarterly single date
+     */
+    public function updateQuarterlySummaries(Carbon $date): void
+    {
+        $year = $date->year;
+        $quarter = ceil($date->month / 3);
+        Log::info("Quarterly {$year} Q{$quarter}");
+        $this->updateQuarterlySummariesYearQuarter($year, $quarter);
+    }
+
+    public function updateQuarterlySummariesYearQuarter(int $year, int $quarter): void
+    {
+        $m1 = ($quarter - 1) * 3 + 1;
+        $m3 = $quarter * 3;
+        $stores = DailyStoreSummary::whereYear('business_date', $year)
+            ->whereBetween(DB::raw('MONTH(business_date)'), [$m1, $m3])
+            ->distinct()->pluck('franchise_store');
+
+        foreach ($stores as $store) {
+            $this->aggregateQuarterlyStore($store, $year, $quarter);
+            $this->aggregateQuarterlyItems($store, $year, $quarter);
+        }
+    }
+
+    /**
+     * NEW: Yearly single date
+     */
+    public function updateYearlySummaries(Carbon $date): void
+    {
+        $year = $date->year;
+        Log::info("Yearly {$year}");
+        $this->updateYearlySummariesYear($year);
+    }
+
+    public function updateYearlySummariesYear(int $year): void
+    {
+        $stores = DailyStoreSummary::whereYear('business_date', $year)
+            ->distinct()->pluck('franchise_store');
+
+        foreach ($stores as $store) {
+            $this->aggregateYearlyStore($store, $year);
+            $this->aggregateYearlyItems($store, $year);
+        }
+    }
+
+    // ========== DAILY FROM RAW DATA ==========
+    private function updateDailyStoreSummary(string $store, Carbon $date): void
+    {
+        $dateStr = $date->toDateString();
+        $orders = DetailOrderHot::where('franchise_store', $store)->where('business_date', $dateStr);
+
+        if (!$orders->exists()) return;
+
+        // SALES
+        $totalSales = $orders->sum('gross_sales');
+        $grossSales = $orders->sum('royalty_obligation');
+        $netSales = $orders->get(['gross_sales', 'non_royalty_amount'])
+            ->sum(fn($r) => (float)$r->gross_sales - (float)($r->non_royalty_amount ?? 0));
+        $refundAmount = $orders->where('refunded', 'Yes')->sum('gross_sales');
+
+        // ORDERS
+        $totalOrders = $orders->distinct()->count('order_id');
+        $refundedOrders = $orders->where('refunded', 'Yes')->distinct()->count('order_id');
+        $modifiedOrders = $orders->whereNotNull('modified_order_amount')->distinct()->count('order_id');
+        $customerCount = $orders->sum('customer_count');
+
+        // CHANNELS
+        $phoneOrders = $orders->where('order_placed_method', 'Phone')->distinct()->count('order_id');
+        $phoneSales = $orders->where('order_placed_method', 'Phone')->sum('gross_sales');
+        $websiteOrders = $orders->where('order_placed_method', 'Website')->distinct()->count('order_id');
+        $websiteSales = $orders->where('order_placed_method', 'Website')->sum('gross_sales');
+        $mobileOrders = $orders->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
+        $mobileSales = $orders->where('order_placed_method', 'Mobile')->sum('gross_sales');
+        $callCenterOrders = $orders->where('order_placed_method', 'CallCenterAgent')->distinct()->count('order_id');
+        $callCenterSales = $orders->where('order_placed_method', 'CallCenterAgent')->sum('gross_sales');
+        $driveThruOrders = 0; // Add logic if needed
+        $driveThruSales = 0;
+
+        // MARKETPLACE
+        $doordashOrders = $orders->where('order_placed_method', 'DoorDash')->distinct()->count('order_id');
+        $doordashSales = $orders->where('order_placed_method', 'DoorDash')->sum('gross_sales');
+        $ubereatsOrders = $orders->where('order_placed_method', 'UberEats')->distinct()->count('order_id');
+        $ubereatsSales = $orders->where('order_placed_method', 'UberEats')->sum('gross_sales');
+        $grubhubOrders = $orders->where('order_placed_method', 'Grubhub')->distinct()->count('order_id');
+        $grubhubSales = $orders->where('order_placed_method', 'Grubhub')->sum('gross_sales');
+
+        // FULFILLMENT
+        $deliveryOrders = $orders->where('order_fulfilled_method', 'Delivery')->distinct()->count('order_id');
+        $deliverySales = $orders->where('order_fulfilled_method', 'Delivery')->sum('gross_sales');
+        $carryoutOrders = $orders->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])->distinct()->count('order_id');
+        $carryoutSales = $orders->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])->sum('gross_sales');
+
+        // FINANCIAL
+        $salesTax = $orders->sum('sales_tax');
+        $deliveryFees = $orders->sum('delivery_fee');
+        $deliveryTips = $orders->sum('delivery_tip');
+        $storeTips = $orders->sum('store_tip_amount');
+        $totalTips = $deliveryTips + $storeTips;
+
+        // PORTAL
+        $portalEligible = $orders->where('portal_eligible', 'Yes')->distinct()->count('order_id');
+        $portalUsed = $orders->where('portal_used', 'Yes')->distinct()->count('order_id');
+        $portalOnTime = $orders->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
+
+        // PRODUCTS
+        $lines = OrderLineHot::where('franchise_store', $store)->where('business_date', $dateStr);
+        $pizzaQty = $lines->where('is_pizza', 1)->sum('quantity');
+        $pizzaSales = $lines->where('is_pizza', 1)->sum('net_amount');
+        $hnrQty = $lines->where('is_hnr', 1)->sum('quantity');
+        $hnrSales = $lines->where('is_hnr', 1)->sum('net_amount');
+        $breadQty = $lines->where('is_bread', 1)->sum('quantity');
+        $breadSales = $lines->where('is_bread', 1)->sum('net_amount');
+        $wingsQty = $lines->where('is_wings', 1)->sum('quantity');
+        $wingsSales = $lines->where('is_wings', 1)->sum('net_amount');
+        $beveragesQty = $lines->where('is_beverages', 1)->sum('quantity');
+        $beveragesSales = $lines->where('is_beverages', 1)->sum('net_amount');
+        $crazyPuffsQty = $lines->where('is_crazy_puffs', 1)->sum('quantity');
+        $crazyPuffsSales = $lines->where('is_crazy_puffs', 1)->sum('net_amount');
+
+        // PAYMENTS
+        $payments = SummaryTransactionsHot::where('franchise_store', $store)->where('business_date', $dateStr);
+        $cashSales = $payments->where('payment_method', 'Cash')->sum('total_amount');
+        $creditCardSales = $payments->get(['payment_method', 'total_amount'])
+            ->filter(fn($r) => str_contains((string)$r->payment_method, 'Credit') || str_contains((string)$r->payment_method, 'Card'))
+            ->sum('total_amount');
+        $prepaidSales = $payments->where('sub_payment_method', 'like', '%Prepaid%')->sum('total_amount');
+
+        // WASTE
+        $waste = WasteHot::where('franchise_store', $store)->where('business_date', $dateStr);
+        $wasteItems = $waste->count();
+        $wasteCost = $waste->get(['item_cost', 'quantity'])->sum(fn($r) => (float)($r->item_cost ?? 0) * (float)($r->quantity ?? 0));
+
+        // OVER/SHORT
+        $overShort = SummarySalesHot::where('franchise_store', $store)
+            ->where('business_date', $dateStr)->value('over_short') ?? 0;
+
+        // DIGITAL
+        $digitalOrders = $websiteOrders + $mobileOrders;
+        $digitalSales = $websiteSales + $mobileSales;
+
+        $data = [
+            'franchise_store' => $store,
+            'business_date' => $dateStr,
+            'total_sales' => $totalSales,
+            'gross_sales' => $grossSales,
+            'net_sales' => $netSales,
+            'refund_amount' => $refundAmount,
+            'total_orders' => $totalOrders,
+            'completed_orders' => $totalOrders - $refundedOrders,
+            'cancelled_orders' => 0,
+            'modified_orders' => $modifiedOrders,
+            'refunded_orders' => $refundedOrders,
+            'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
+            'customer_count' => $customerCount,
+            'avg_customers_per_order' => $totalOrders > 0 ? round($customerCount / $totalOrders, 2) : 0,
+            'phone_orders' => $phoneOrders, 'phone_sales' => $phoneSales,
+            'website_orders' => $websiteOrders, 'website_sales' => $websiteSales,
+            'mobile_orders' => $mobileOrders, 'mobile_sales' => $mobileSales,
+            'call_center_orders' => $callCenterOrders, 'call_center_sales' => $callCenterSales,
+            'drive_thru_orders' => $driveThruOrders, 'drive_thru_sales' => $driveThruSales,
+            'doordash_orders' => $doordashOrders, 'doordash_sales' => $doordashSales,
+            'ubereats_orders' => $ubereatsOrders, 'ubereats_sales' => $ubereatsSales,
+            'grubhub_orders' => $grubhubOrders, 'grubhub_sales' => $grubhubSales,
+            'delivery_orders' => $deliveryOrders, 'delivery_sales' => $deliverySales,
+            'carryout_orders' => $carryoutOrders, 'carryout_sales' => $carryoutSales,
+            'pizza_quantity' => $pizzaQty, 'pizza_sales' => $pizzaSales,
+            'hnr_quantity' => $hnrQty, 'hnr_sales' => $hnrSales,
+            'bread_quantity' => $breadQty, 'bread_sales' => $breadSales,
+            'wings_quantity' => $wingsQty, 'wings_sales' => $wingsSales,
+            'beverages_quantity' => $beveragesQty, 'beverages_sales' => $beveragesSales,
+            'crazy_puffs_quantity' => $crazyPuffsQty, 'crazy_puffs_sales' => $crazyPuffsSales,
+            'sales_tax' => $salesTax, 'delivery_fees' => $deliveryFees,
+            'delivery_tips' => $deliveryTips, 'store_tips' => $storeTips, 'total_tips' => $totalTips,
+            'cash_sales' => $cashSales, 'credit_card_sales' => $creditCardSales, 'prepaid_sales' => $prepaidSales,
+            'over_short' => $overShort,
+            'portal_eligible_orders' => $portalEligible, 'portal_used_orders' => $portalUsed,
+            'portal_on_time_orders' => $portalOnTime,
+            'portal_usage_rate' => $portalEligible > 0 ? round(($portalUsed/$portalEligible)*100, 2) : 0,
+            'portal_on_time_rate' => $portalUsed > 0 ? round(($portalOnTime/$portalUsed)*100, 2) : 0,
+            'total_waste_items' => $wasteItems, 'total_waste_cost' => $wasteCost,
+            'digital_orders' => $digitalOrders, 'digital_sales' => $digitalSales,
+            'digital_penetration' => $totalOrders > 0 ? round(($digitalOrders/$totalOrders)*100, 2) : 0
+        ];
+
+        DB::connection('analytics')->table('daily_store_summary')
+            ->upsert([$data], ['franchise_store', 'business_date'], array_keys($data));
+    }
+
+    private function updateDailyItemSummary(string $store, Carbon $date): void
+    {
+        $dateStr = $date->toDateString();
+        $lines = OrderLineHot::where('franchise_store', $store)->where('business_date', $dateStr)
+            ->get(['franchise_store', 'business_date', 'item_id', 'menu_item_name', 'menu_item_account', 
+                   'quantity', 'net_amount', 'modification_reason', 'order_fulfilled_method', 'refunded']);
+
+        $items = $lines->groupBy(fn($r) => "{$r->franchise_store}|{$r->business_date}|{$r->item_id}|{$r->menu_item_name}|{$r->menu_item_account}");
+
+        foreach ($items as $group) {
+            $first = $group->first();
+            $qtySold = $group->sum('quantity');
+            $grossSales = $group->sum('net_amount');
+            $netSales = $group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount');
+            $deliveryQty = $group->where('order_fulfilled_method', 'Delivery')->sum('quantity');
+            $carryoutQty = $group->filter(fn($r) => in_array($r->order_fulfilled_method, ['Register', 'Drive-Thru']))->sum('quantity');
+            $modifiedQty = $group->filter(fn($r) => !is_null($r->modified_order_amount))->sum('quantity');
+            $refundedQty = $group->where('refunded', 'Yes')->sum('quantity');
+
+            $data = [
+                'franchise_store' => $first->franchise_store,
+                'business_date' => $first->business_date,
+                'item_id' => $first->item_id,
+                'menu_item_name' => $first->menu_item_name,
+                'menu_item_account' => $first->menu_item_account,
+                'quantity_sold' => $qtySold,
+                'gross_sales' => $grossSales,
+                'net_sales' => $netSales,
+                'avg_item_price' => $qtySold > 0 ? round($grossSales / $qtySold, 2) : 0,
+                'delivery_quantity' => $deliveryQty,
+                'carryout_quantity' => $carryoutQty,
+                'modified_quantity' => $modifiedQty,
+                'refunded_quantity' => $refundedQty
+            ];
+
+            DB::connection('analytics')->table('daily_item_summary')
+                ->upsert([$data], ['franchise_store', 'business_date', 'item_id'], array_keys($data));
+        }
+    }
+
+    // ========== WEEKLY ==========
+    private function aggregateWeeklyStore(string $store, int $year, int $week): void
+    {
+        $weekStart = Carbon::createFromIsoDate($year, $week)->startOfWeek();
+        $weekEnd = $weekStart->copy()->endOfWeek();
+
+        $daily = DailyStoreSummary::where('franchise_store', $store)
+            ->whereBetween('business_date', [$weekStart, $weekEnd])->get();
+
+        if ($daily->isEmpty()) return;
 
         $summary = [
             'franchise_store' => $store,
@@ -73,814 +343,674 @@ class AggregationService
             'week_num' => $week,
             'week_start_date' => $weekStart->toDateString(),
             'week_end_date' => $weekEnd->toDateString(),
-
-            // SALES - Sum all daily sales
+            // ALL 60+ METRICS - SUM FROM DAILY
             'total_sales' => $daily->sum('total_sales'),
             'gross_sales' => $daily->sum('gross_sales'),
             'net_sales' => $daily->sum('net_sales'),
             'refund_amount' => $daily->sum('refund_amount'),
-
-            // ORDERS - Sum all daily orders
             'total_orders' => $daily->sum('total_orders'),
             'completed_orders' => $daily->sum('completed_orders'),
             'cancelled_orders' => $daily->sum('cancelled_orders'),
             'modified_orders' => $daily->sum('modified_orders'),
             'refunded_orders' => $daily->sum('refunded_orders'),
-
-            // CUSTOMERS - Sum all daily customers
             'customer_count' => $daily->sum('customer_count'),
-
-            // AVERAGES - Calculate from summed data
-            'avg_order_value' => $daily->sum('total_orders') > 0
-                ? $daily->sum('total_sales') / $daily->sum('total_orders')
-                : 0,
-            'avg_customers_per_order' => $daily->sum('total_orders') > 0
-                ? $daily->sum('customer_count') / $daily->sum('total_orders')
-                : 0,
-
-            // CHANNELS - Sum all daily channel metrics
-            'phone_orders' => $daily->sum('phone_orders'),
-            'phone_sales' => $daily->sum('phone_sales'),
-            'website_orders' => $daily->sum('website_orders'),
-            'website_sales' => $daily->sum('website_sales'),
-            'mobile_orders' => $daily->sum('mobile_orders'),
-            'mobile_sales' => $daily->sum('mobile_sales'),
-            'call_center_orders' => $daily->sum('call_center_orders'),
-            'call_center_sales' => $daily->sum('call_center_sales'),
-            'drive_thru_orders' => $daily->sum('drive_thru_orders'),
-            'drive_thru_sales' => $daily->sum('drive_thru_sales'),
-
-            // MARKETPLACES - Sum all daily marketplace metrics
-            'doordash_orders' => $daily->sum('doordash_orders'),
-            'doordash_sales' => $daily->sum('doordash_sales'),
-            'ubereats_orders' => $daily->sum('ubereats_orders'),
-            'ubereats_sales' => $daily->sum('ubereats_sales'),
-            'grubhub_orders' => $daily->sum('grubhub_orders'),
-            'grubhub_sales' => $daily->sum('grubhub_sales'),
-
-            // FULFILLMENT - Sum all daily fulfillment metrics
-            'delivery_orders' => $daily->sum('delivery_orders'),
-            'delivery_sales' => $daily->sum('delivery_sales'),
-            'carryout_orders' => $daily->sum('carryout_orders'),
-            'carryout_sales' => $daily->sum('carryout_sales'),
-
-            // PRODUCTS - Sum all daily product metrics
-            'pizza_quantity' => $daily->sum('pizza_quantity'),
-            'pizza_sales' => $daily->sum('pizza_sales'),
-            'hnr_quantity' => $daily->sum('hnr_quantity'),
-            'hnr_sales' => $daily->sum('hnr_sales'),
-            'bread_quantity' => $daily->sum('bread_quantity'),
-            'bread_sales' => $daily->sum('bread_sales'),
-            'wings_quantity' => $daily->sum('wings_quantity'),
-            'wings_sales' => $daily->sum('wings_sales'),
-            'beverages_quantity' => $daily->sum('beverages_quantity'),
-            'beverages_sales' => $daily->sum('beverages_sales'),
-            'crazy_puffs_quantity' => $daily->sum('crazy_puffs_quantity'),
-            'crazy_puffs_sales' => $daily->sum('crazy_puffs_sales'),
-
-            // FINANCIAL - Sum all daily financial metrics
-            'sales_tax' => $daily->sum('sales_tax'),
-            'delivery_fees' => $daily->sum('delivery_fees'),
-            'delivery_tips' => $daily->sum('delivery_tips'),
-            'store_tips' => $daily->sum('store_tips'),
+            'avg_order_value' => $daily->sum('total_orders') > 0 ? $daily->sum('total_sales') / $daily->sum('total_orders') : 0,
+            'avg_customers_per_order' => $daily->sum('total_orders') > 0 ? $daily->sum('customer_count') / $daily->sum('total_orders') : 0,
+            'avg_daily_sales' => $daily->count() > 0 ? $daily->sum('total_sales') / $daily->count() : 0,
+            'avg_daily_orders' => $daily->count() > 0 ? $daily->sum('total_orders') / $daily->count() : 0,
+            // CHANNELS
+            'phone_orders' => $daily->sum('phone_orders'), 'phone_sales' => $daily->sum('phone_sales'),
+            'website_orders' => $daily->sum('website_orders'), 'website_sales' => $daily->sum('website_sales'),
+            'mobile_orders' => $daily->sum('mobile_orders'), 'mobile_sales' => $daily->sum('mobile_sales'),
+            'call_center_orders' => $daily->sum('call_center_orders'), 'call_center_sales' => $daily->sum('call_center_sales'),
+            'drive_thru_orders' => $daily->sum('drive_thru_orders'), 'drive_thru_sales' => $daily->sum('drive_thru_sales'),
+            // MARKETPLACE
+            'doordash_orders' => $daily->sum('doordash_orders'), 'doordash_sales' => $daily->sum('doordash_sales'),
+            'ubereats_orders' => $daily->sum('ubereats_orders'), 'ubereats_sales' => $daily->sum('ubereats_sales'),
+            'grubhub_orders' => $daily->sum('grubhub_orders'), 'grubhub_sales' => $daily->sum('grubhub_sales'),
+            // FULFILLMENT
+            'delivery_orders' => $daily->sum('delivery_orders'), 'delivery_sales' => $daily->sum('delivery_sales'),
+            'carryout_orders' => $daily->sum('carryout_orders'), 'carryout_sales' => $daily->sum('carryout_sales'),
+            // PRODUCTS (incl CRAZY PUFFS!)
+            'pizza_quantity' => $daily->sum('pizza_quantity'), 'pizza_sales' => $daily->sum('pizza_sales'),
+            'hnr_quantity' => $daily->sum('hnr_quantity'), 'hnr_sales' => $daily->sum('hnr_sales'),
+            'bread_quantity' => $daily->sum('bread_quantity'), 'bread_sales' => $daily->sum('bread_sales'),
+            'wings_quantity' => $daily->sum('wings_quantity'), 'wings_sales' => $daily->sum('wings_sales'),
+            'beverages_quantity' => $daily->sum('beverages_quantity'), 'beverages_sales' => $daily->sum('beverages_sales'),
+            'crazy_puffs_quantity' => $daily->sum('crazy_puffs_quantity'), 'crazy_puffs_sales' => $daily->sum('crazy_puffs_sales'),
+            // FINANCIAL
+            'sales_tax' => $daily->sum('sales_tax'), 'delivery_fees' => $daily->sum('delivery_fees'),
+            'delivery_tips' => $daily->sum('delivery_tips'), 'store_tips' => $daily->sum('store_tips'),
             'total_tips' => $daily->sum('total_tips'),
-
-            // PAYMENTS - Sum all daily payment metrics
-            'cash_sales' => $daily->sum('cash_sales'),
-            'credit_card_sales' => $daily->sum('credit_card_sales'),
-            'prepaid_sales' => $daily->sum('prepaid_sales'),
-            'over_short' => $daily->sum('over_short'),
-
-            // OPERATIONAL - Sum all daily operational metrics
+            // PAYMENTS
+            'cash_sales' => $daily->sum('cash_sales'), 'credit_card_sales' => $daily->sum('credit_card_sales'),
+            'prepaid_sales' => $daily->sum('prepaid_sales'), 'over_short' => $daily->sum('over_short'),
+            // PORTAL
             'portal_eligible_orders' => $daily->sum('portal_eligible_orders'),
             'portal_used_orders' => $daily->sum('portal_used_orders'),
             'portal_on_time_orders' => $daily->sum('portal_on_time_orders'),
-
-            // WASTE - Sum all daily waste metrics
-            'total_waste_items' => $daily->sum('total_waste_items'),
-            'total_waste_cost' => $daily->sum('total_waste_cost'),
-
-            // DIGITAL - Sum all daily digital metrics
-            'digital_orders' => $daily->sum('digital_orders'),
-            'digital_sales' => $daily->sum('digital_sales'),
+            // WASTE
+            'total_waste_items' => $daily->sum('total_waste_items'), 'total_waste_cost' => $daily->sum('total_waste_cost'),
+            // DIGITAL
+            'digital_orders' => $daily->sum('digital_orders'), 'digital_sales' => $daily->sum('digital_sales')
         ];
 
-        // Recalculate rates for this week
-        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
-            ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100
-            : 0;
-        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
-            ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100
-            : 0;
-        $summary['digital_penetration'] = $summary['total_orders'] > 0
-            ? ($summary['digital_orders'] / $summary['total_orders']) * 100
-            : 0;
+        // RECALCULATE RATES
+        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0 
+            ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100 : 0;
+        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0 
+            ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100 : 0;
+        $summary['digital_penetration'] = $summary['total_orders'] > 0 
+            ? ($summary['digital_orders'] / $summary['total_orders']) * 100 : 0;
 
-        // Growth metrics vs prior week
+        // GROWTH vs PRIOR WEEK
         $priorWeek = WeeklyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year - ($week == 1 ? 1 : 0))
-            ->where('week_num', $week == 1 ? 52 : $week - 1)
-            ->first();
+            ->where('year_num', $week == 1 ? $year - 1 : $year)
+            ->where('week_num', $week == 1 ? 52 : $week - 1)->first();
 
         if ($priorWeek) {
             $summary['sales_vs_prior_week'] = $summary['total_sales'] - $priorWeek->total_sales;
-            $summary['sales_growth_percent'] = $priorWeek->total_sales > 0
-                ? (($summary['total_sales'] - $priorWeek->total_sales) / $priorWeek->total_sales) * 100
-                : 0;
+            $summary['sales_growth_percent'] = $priorWeek->total_sales > 0 
+                ? (($summary['total_sales'] - $priorWeek->total_sales) / $priorWeek->total_sales) * 100 : 0;
             $summary['orders_vs_prior_week'] = $summary['total_orders'] - $priorWeek->total_orders;
-            $summary['orders_growth_percent'] = $priorWeek->total_orders > 0
-                ? (($summary['total_orders'] - $priorWeek->total_orders) / $priorWeek->total_orders) * 100
-                : 0;
+            $summary['orders_growth_percent'] = $priorWeek->total_orders > 0 
+                ? (($summary['total_orders'] - $priorWeek->total_orders) / $priorWeek->total_orders) * 100 : 0;
         }
 
-        // Upsert the record
         WeeklyStoreSummary::updateOrCreate(
             ['franchise_store' => $store, 'year_num' => $year, 'week_num' => $week],
             $summary
         );
     }
 
-    /**
-     * Aggregate weekly item summary from daily data
-     */
     private function aggregateWeeklyItems(string $store, int $year, int $week): void
     {
-        $weekStart = Carbon::now()->setISODate($year, $week)->startOfWeek();
+        $weekStart = Carbon::createFromIsoDate($year, $week)->startOfWeek();
         $weekEnd = $weekStart->copy()->endOfWeek();
 
-        $dailyItems = DailyItemSummary::where('franchise_store', $store)
+        $items = DailyItemSummary::where('franchise_store', $store)
             ->whereBetween('business_date', [$weekStart, $weekEnd])
-            ->selectRaw('item_id, menu_item_name, menu_item_account, 
-                        SUM(quantity_sold) as quantity_sold,
-                        SUM(gross_sales) as gross_sales,
-                        SUM(net_sales) as net_sales,
-                        AVG(avg_item_price) as avg_item_price,
-                        AVG(quantity_sold) as avg_daily_quantity,
-                        SUM(delivery_quantity) as delivery_quantity,
-                        SUM(carryout_quantity) as carryout_quantity')
-            ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
-            ->get();
+            ->selectRaw('item_id, menu_item_name, menu_item_account,
+                SUM(quantity_sold) qty, SUM(gross_sales) gross, SUM(net_sales) net,
+                AVG(avg_item_price) avg_price, AVG(quantity_sold) avg_daily,
+                SUM(delivery_quantity) delivery, SUM(carryout_quantity) carryout')
+            ->groupBy('item_id', 'menu_item_name', 'menu_item_account')->get();
 
-        foreach ($dailyItems as $item) {
+        foreach ($items as $item) {
             WeeklyItemSummary::updateOrCreate(
                 ['franchise_store' => $store, 'year_num' => $year, 'week_num' => $week, 'item_id' => $item->item_id],
                 [
                     'menu_item_name' => $item->menu_item_name,
                     'menu_item_account' => $item->menu_item_account,
-                    'quantity_sold' => $item->quantity_sold,
-                    'gross_sales' => $item->gross_sales,
-                    'net_sales' => $item->net_sales,
-                    'avg_item_price' => $item->avg_item_price,
-                    'avg_daily_quantity' => $item->avg_daily_quantity,
-                    'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity,
+                    'quantity_sold' => $item->qty,
+                    'gross_sales' => $item->gross,
+                    'net_sales' => $item->net,
+                    'avg_item_price' => $item->avg_price,
+                    'avg_daily_quantity' => $item->avg_daily,
+                    'delivery_quantity' => $item->delivery,
+                    'carryout_quantity' => $item->carryout,
                     'week_start_date' => $weekStart->toDateString(),
-                    'week_end_date' => $weekEnd->toDateString(),
+                    'week_end_date' => $weekEnd->toDateString()
                 ]
             );
         }
     }
 
-    /**
-     * Update all monthly summaries
-     */
-    public function updateMonthlySummaries(int $year, int $month): void
-    {
-        Log::info("Updating monthly summaries for {$year}-{$month}");
-
-        $stores = DailyStoreSummary::whereYear('business_date', $year)
-            ->whereMonth('business_date', $month)
-            ->distinct()
-            ->pluck('franchise_store');
-
-        foreach ($stores as $store) {
-            $this->aggregateMonthlyStore($store, $year, $month);
-            $this->aggregateMonthlyItems($store, $year, $month);
-        }
-
-        Log::info("Monthly summaries updated");
-    }
-
-    /**
-     * Aggregate monthly store summary from daily data
-     */
+    // ========== MONTHLY ==========
     private function aggregateMonthlyStore(string $store, int $year, int $month): void
-    {
-        $daily = DailyStoreSummary::where('franchise_store', $store)
-            ->whereYear('business_date', $year)
-            ->whereMonth('business_date', $month)
-            ->get();
+{
+    $daily = DailyStoreSummary::where('franchise_store', $store)
+        ->whereYear('business_date', $year)
+        ->whereMonth('business_date', $month)
+        ->get();
 
-        if ($daily->isEmpty()) {
-            return;
-        }
+    if ($daily->isEmpty()) {
+        return;
+    }
 
-        $monthName = Carbon::create($year, $month)->format('F');
+    $summary = [
+        'franchise_store'   => $store,
+        'year_num'          => $year,
+        'month_num'         => $month,
+        'month_name'        => Carbon::create($year, $month)->format('F'),
+        'operational_days'  => $daily->count(),
 
-        $summary = [
-            'franchise_store' => $store,
-            'year_num' => $year,
-            'month_num' => $month,
-            'month_name' => $monthName,
+        // SALES / ORDERS / CUSTOMERS
+        'total_sales'       => $daily->sum('total_sales'),
+        'gross_sales'       => $daily->sum('gross_sales'),
+        'net_sales'         => $daily->sum('net_sales'),
+        'refund_amount'     => $daily->sum('refund_amount'),
+        'total_orders'      => $daily->sum('total_orders'),
+        'completed_orders'  => $daily->sum('completed_orders'),
+        'cancelled_orders'  => $daily->sum('cancelled_orders'),
+        'modified_orders'   => $daily->sum('modified_orders'),
+        'refunded_orders'   => $daily->sum('refunded_orders'),
+        'customer_count'    => $daily->sum('customer_count'),
 
-            // All sales, order, channel, product, financial metrics (same as weekly)
-            'total_sales' => $daily->sum('total_sales'),
-            'gross_sales' => $daily->sum('gross_sales'),
-            'net_sales' => $daily->sum('net_sales'),
-            'refund_amount' => $daily->sum('refund_amount'),
-            'total_orders' => $daily->sum('total_orders'),
-            'completed_orders' => $daily->sum('completed_orders'),
-            'cancelled_orders' => $daily->sum('cancelled_orders'),
-            'modified_orders' => $daily->sum('modified_orders'),
-            'refunded_orders' => $daily->sum('refunded_orders'),
-            'customer_count' => $daily->sum('customer_count'),
-            'operational_days' => $daily->count(),
+        'avg_order_value'   => $daily->sum('total_orders') > 0
+            ? $daily->sum('total_sales') / $daily->sum('total_orders') : 0,
+        'avg_customers_per_order' => $daily->sum('total_orders') > 0
+            ? $daily->sum('customer_count') / $daily->sum('total_orders') : 0,
+        'avg_daily_sales'   => $daily->count() > 0
+            ? $daily->sum('total_sales') / $daily->count() : 0,
+        'avg_daily_orders'  => $daily->count() > 0
+            ? $daily->sum('total_orders') / $daily->count() : 0,
 
-            // Averages
-            'avg_order_value' => $daily->sum('total_orders') > 0
-                ? $daily->sum('total_sales') / $daily->sum('total_orders')
-                : 0,
-            'avg_customers_per_order' => $daily->sum('total_orders') > 0
-                ? $daily->sum('customer_count') / $daily->sum('total_orders')
-                : 0,
-            'avg_daily_sales' => $daily->count() > 0
-                ? $daily->sum('total_sales') / $daily->count()
-                : 0,
-            'avg_daily_orders' => $daily->count() > 0
-                ? $daily->sum('total_orders') / $daily->count()
-                : 0,
+        // CHANNELS
+        'phone_orders'      => $daily->sum('phone_orders'),
+        'phone_sales'       => $daily->sum('phone_sales'),
+        'website_orders'    => $daily->sum('website_orders'),
+        'website_sales'     => $daily->sum('website_sales'),
+        'mobile_orders'     => $daily->sum('mobile_orders'),
+        'mobile_sales'      => $daily->sum('mobile_sales'),
+        'call_center_orders'=> $daily->sum('call_center_orders'),
+        'call_center_sales' => $daily->sum('call_center_sales'),
+        'drive_thru_orders' => $daily->sum('drive_thru_orders'),
+        'drive_thru_sales'  => $daily->sum('drive_thru_sales'),
 
-            // All channels
-            'phone_orders' => $daily->sum('phone_orders'),
-            'phone_sales' => $daily->sum('phone_sales'),
-            'website_orders' => $daily->sum('website_orders'),
-            'website_sales' => $daily->sum('website_sales'),
-            'mobile_orders' => $daily->sum('mobile_orders'),
-            'mobile_sales' => $daily->sum('mobile_sales'),
-            'call_center_orders' => $daily->sum('call_center_orders'),
-            'call_center_sales' => $daily->sum('call_center_sales'),
-            'drive_thru_orders' => $daily->sum('drive_thru_orders'),
-            'drive_thru_sales' => $daily->sum('drive_thru_sales'),
+        // MARKETPLACES
+        'doordash_orders'   => $daily->sum('doordash_orders'),
+        'doordash_sales'    => $daily->sum('doordash_sales'),
+        'ubereats_orders'   => $daily->sum('ubereats_orders'),
+        'ubereats_sales'    => $daily->sum('ubereats_sales'),
+        'grubhub_orders'    => $daily->sum('grubhub_orders'),
+        'grubhub_sales'     => $daily->sum('grubhub_sales'),
 
-            // All marketplaces
-            'doordash_orders' => $daily->sum('doordash_orders'),
-            'doordash_sales' => $daily->sum('doordash_sales'),
-            'ubereats_orders' => $daily->sum('ubereats_orders'),
-            'ubereats_sales' => $daily->sum('ubereats_sales'),
-            'grubhub_orders' => $daily->sum('grubhub_orders'),
-            'grubhub_sales' => $daily->sum('grubhub_sales'),
+        // FULFILLMENT
+        'delivery_orders'   => $daily->sum('delivery_orders'),
+        'delivery_sales'    => $daily->sum('delivery_sales'),
+        'carryout_orders'   => $daily->sum('carryout_orders'),
+        'carryout_sales'    => $daily->sum('carryout_sales'),
 
-            // All fulfillment
-            'delivery_orders' => $daily->sum('delivery_orders'),
-            'delivery_sales' => $daily->sum('delivery_sales'),
-            'carryout_orders' => $daily->sum('carryout_orders'),
-            'carryout_sales' => $daily->sum('carryout_sales'),
+        // PRODUCTS
+        'pizza_quantity'    => $daily->sum('pizza_quantity'),
+        'pizza_sales'       => $daily->sum('pizza_sales'),
+        'hnr_quantity'      => $daily->sum('hnr_quantity'),
+        'hnr_sales'         => $daily->sum('hnr_sales'),
+        'bread_quantity'    => $daily->sum('bread_quantity'),
+        'bread_sales'       => $daily->sum('bread_sales'),
+        'wings_quantity'    => $daily->sum('wings_quantity'),
+        'wings_sales'       => $daily->sum('wings_sales'),
+        'beverages_quantity'=> $daily->sum('beverages_quantity'),
+        'beverages_sales'   => $daily->sum('beverages_sales'),
+        'crazy_puffs_quantity' => $daily->sum('crazy_puffs_quantity'),
+        'crazy_puffs_sales'    => $daily->sum('crazy_puffs_sales'),
 
-            // All products
-            'pizza_quantity' => $daily->sum('pizza_quantity'),
-            'pizza_sales' => $daily->sum('pizza_sales'),
-            'hnr_quantity' => $daily->sum('hnr_quantity'),
-            'hnr_sales' => $daily->sum('hnr_sales'),
-            'bread_quantity' => $daily->sum('bread_quantity'),
-            'bread_sales' => $daily->sum('bread_sales'),
-            'wings_quantity' => $daily->sum('wings_quantity'),
-            'wings_sales' => $daily->sum('wings_sales'),
-            'beverages_quantity' => $daily->sum('beverages_quantity'),
-            'beverages_sales' => $daily->sum('beverages_sales'),
-            'crazy_puffs_quantity' => $daily->sum('crazy_puffs_quantity'),
-            'crazy_puffs_sales' => $daily->sum('crazy_puffs_sales'),
+        // FINANCIAL
+        'sales_tax'         => $daily->sum('sales_tax'),
+        'delivery_fees'     => $daily->sum('delivery_fees'),
+        'delivery_tips'     => $daily->sum('delivery_tips'),
+        'store_tips'        => $daily->sum('store_tips'),
+        'total_tips'        => $daily->sum('total_tips'),
 
-            // All financial
-            'sales_tax' => $daily->sum('sales_tax'),
-            'delivery_fees' => $daily->sum('delivery_fees'),
-            'delivery_tips' => $daily->sum('delivery_tips'),
-            'store_tips' => $daily->sum('store_tips'),
-            'total_tips' => $daily->sum('total_tips'),
+        // PAYMENTS
+        'cash_sales'        => $daily->sum('cash_sales'),
+        'credit_card_sales' => $daily->sum('credit_card_sales'),
+        'prepaid_sales'     => $daily->sum('prepaid_sales'),
+        'over_short'        => $daily->sum('over_short'),
 
-            // All payments
-            'cash_sales' => $daily->sum('cash_sales'),
-            'credit_card_sales' => $daily->sum('credit_card_sales'),
-            'prepaid_sales' => $daily->sum('prepaid_sales'),
-            'over_short' => $daily->sum('over_short'),
+        // PORTAL
+        'portal_eligible_orders' => $daily->sum('portal_eligible_orders'),
+        'portal_used_orders'     => $daily->sum('portal_used_orders'),
+        'portal_on_time_orders'  => $daily->sum('portal_on_time_orders'),
 
-            // All operational
-            'portal_eligible_orders' => $daily->sum('portal_eligible_orders'),
-            'portal_used_orders' => $daily->sum('portal_used_orders'),
-            'portal_on_time_orders' => $daily->sum('portal_on_time_orders'),
+        // WASTE
+        'total_waste_items' => $daily->sum('total_waste_items'),
+        'total_waste_cost'  => $daily->sum('total_waste_cost'),
 
-            // All waste
-            'total_waste_items' => $daily->sum('total_waste_items'),
-            'total_waste_cost' => $daily->sum('total_waste_cost'),
+        // DIGITAL
+        'digital_orders'    => $daily->sum('digital_orders'),
+        'digital_sales'     => $daily->sum('digital_sales'),
+    ];
 
-            // All digital
-            'digital_orders' => $daily->sum('digital_orders'),
-            'digital_sales' => $daily->sum('digital_sales'),
-        ];
+    // recalc rates
+    $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
+        ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100 : 0;
 
-        // Recalculate rates
-        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
-            ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100
-            : 0;
-        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
-            ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100
-            : 0;
-        $summary['digital_penetration'] = $summary['total_orders'] > 0
-            ? ($summary['digital_orders'] / $summary['total_orders']) * 100
-            : 0;
+    $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
+        ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100 : 0;
 
-        // Growth vs prior month
-        $priorMonth = MonthlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $month == 1 ? $year - 1 : $year)
-            ->where('month_num', $month == 1 ? 12 : $month - 1)
-            ->first();
+    $summary['digital_penetration'] = $summary['total_orders'] > 0
+        ? ($summary['digital_orders'] / $summary['total_orders']) * 100 : 0;
 
-        if ($priorMonth) {
-            $summary['sales_vs_prior_month'] = $summary['total_sales'] - $priorMonth->total_sales;
-            $summary['sales_growth_percent'] = $priorMonth->total_sales > 0
-                ? (($summary['total_sales'] - $priorMonth->total_sales) / $priorMonth->total_sales) * 100
-                : 0;
-        }
+    // growth vs prior month
+    $priorMonth = MonthlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $month === 1 ? $year - 1 : $year)
+        ->where('month_num', $month === 1 ? 12 : $month - 1)
+        ->first();
 
-        // YoY growth
-        $priorYear = MonthlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year - 1)
-            ->where('month_num', $month)
-            ->first();
+    if ($priorMonth) {
+        $summary['sales_vs_prior_month'] = $summary['total_sales'] - $priorMonth->total_sales;
+        $summary['sales_growth_percent'] = $priorMonth->total_sales > 0
+            ? (($summary['total_sales'] - $priorMonth->total_sales) / $priorMonth->total_sales) * 100 : 0;
+    }
 
-        if ($priorYear) {
-            $summary['sales_vs_same_month_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
-            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
-                ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100
-                : 0;
-        }
+    // YoY vs same month last year
+    $priorYear = MonthlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $year - 1)
+        ->where('month_num', $month)
+        ->first();
 
-        MonthlyStoreSummary::updateOrCreate(
-            ['franchise_store' => $store, 'year_num' => $year, 'month_num' => $month],
-            $summary
+    if ($priorYear) {
+        $summary['sales_vs_same_month_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
+        $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
+            ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100 : 0;
+    }
+
+    MonthlyStoreSummary::updateOrCreate(
+        ['franchise_store' => $store, 'year_num' => $year, 'month_num' => $month],
+        $summary
+    );
+}
+
+   private function aggregateMonthlyItems(string $store, int $year, int $month): void
+{
+    $items = DailyItemSummary::where('franchise_store', $store)
+        ->whereYear('business_date', $year)
+        ->whereMonth('business_date', $month)
+        ->selectRaw('item_id, menu_item_name, menu_item_account,
+            SUM(quantity_sold)     as quantity_sold,
+            SUM(gross_sales)       as gross_sales,
+            SUM(net_sales)         as net_sales,
+            AVG(avg_item_price)    as avg_item_price,
+            AVG(quantity_sold)     as avg_daily_quantity,
+            SUM(delivery_quantity) as delivery_quantity,
+            SUM(carryout_quantity) as carryout_quantity')
+        ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
+        ->get();
+
+    foreach ($items as $item) {
+        MonthlyItemSummary::updateOrCreate(
+            [
+                'franchise_store' => $store,
+                'year_num'        => $year,
+                'month_num'       => $month,
+                'item_id'         => $item->item_id,
+            ],
+            [
+                'menu_item_name'    => $item->menu_item_name,
+                'menu_item_account' => $item->menu_item_account,
+                'quantity_sold'     => $item->quantity_sold,
+                'gross_sales'       => $item->gross_sales,
+                'net_sales'         => $item->net_sales,
+                'avg_item_price'    => $item->avg_item_price,
+                'avg_daily_quantity'=> $item->avg_daily_quantity,
+                'delivery_quantity' => $item->delivery_quantity,
+                'carryout_quantity' => $item->carryout_quantity,
+            ]
         );
     }
+}
 
-    /**
-     * Aggregate monthly item summary from daily data
-     */
-    private function aggregateMonthlyItems(string $store, int $year, int $month): void
-    {
-        $dailyItems = DailyItemSummary::where('franchise_store', $store)
-            ->whereYear('business_date', $year)
-            ->whereMonth('business_date', $month)
-            ->selectRaw('item_id, menu_item_name, menu_item_account,
-                        SUM(quantity_sold) as quantity_sold,
-                        SUM(gross_sales) as gross_sales,
-                        SUM(net_sales) as net_sales,
-                        AVG(avg_item_price) as avg_item_price,
-                        AVG(quantity_sold) as avg_daily_quantity,
-                        SUM(delivery_quantity) as delivery_quantity,
-                        SUM(carryout_quantity) as carryout_quantity')
-            ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
-            ->get();
 
-        foreach ($dailyItems as $item) {
-            MonthlyItemSummary::updateOrCreate(
-                ['franchise_store' => $store, 'year_num' => $year, 'month_num' => $month, 'item_id' => $item->item_id],
-                [
-                    'menu_item_name' => $item->menu_item_name,
-                    'menu_item_account' => $item->menu_item_account,
-                    'quantity_sold' => $item->quantity_sold,
-                    'gross_sales' => $item->gross_sales,
-                    'net_sales' => $item->net_sales,
-                    'avg_item_price' => $item->avg_item_price,
-                    'avg_daily_quantity' => $item->avg_daily_quantity,
-                    'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity,
-                ]
-            );
-        }
+    // ========== QUARTERLY & YEARLY ==========
+private function aggregateQuarterlyStore(string $store, int $year, int $quarter): void
+{
+    $m1 = ($quarter - 1) * 3 + 1;
+    $m3 = $quarter * 3;
+
+    $monthly = MonthlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $year)
+        ->whereBetween('month_num', [$m1, $m3])
+        ->get();
+
+    if ($monthly->isEmpty()) {
+        return;
     }
 
-    /**
-     * Update all quarterly summaries
-     */
-    public function updateQuarterlySummaries(int $year, int $quarter): void
-    {
-        Log::info("Updating quarterly summaries for {$year} Q{$quarter}");
+    $qStart = Carbon::create($year, $m1, 1);
+    $qEnd   = Carbon::create($year, $m3 + 1, 1)->subDay();
 
-        $month1 = ($quarter - 1) * 3 + 1;
-        $month3 = $quarter * 3;
+    $summary = [
+        'franchise_store'    => $store,
+        'year_num'           => $year,
+        'quarter_num'        => $quarter,
+        'quarter_start_date' => $qStart->toDateString(),
+        'quarter_end_date'   => $qEnd->toDateString(),
+        'operational_days'   => $monthly->sum('operational_days'),
+        'operational_months' => $monthly->count(),
 
-        $stores = DailyStoreSummary::whereYear('business_date', $year)
-            ->whereBetween(DB::raw('MONTH(business_date)'), [$month1, $month3])
-            ->distinct()
-            ->pluck('franchise_store');
+        // sums
+        'total_sales'        => $monthly->sum('total_sales'),
+        'gross_sales'        => $monthly->sum('gross_sales'),
+        'net_sales'          => $monthly->sum('net_sales'),
+        'refund_amount'      => $monthly->sum('refund_amount'),
+        'total_orders'       => $monthly->sum('total_orders'),
+        'completed_orders'   => $monthly->sum('completed_orders'),
+        'cancelled_orders'   => $monthly->sum('cancelled_orders'),
+        'modified_orders'    => $monthly->sum('modified_orders'),
+        'refunded_orders'    => $monthly->sum('refunded_orders'),
+        'customer_count'     => $monthly->sum('customer_count'),
 
-        foreach ($stores as $store) {
-            $this->aggregateQuarterlyStore($store, $year, $quarter);
-            $this->aggregateQuarterlyItems($store, $year, $quarter);
-        }
+        // averages
+        'avg_order_value'    => $monthly->sum('total_orders') > 0
+            ? $monthly->sum('total_sales') / $monthly->sum('total_orders') : 0,
+        'avg_customers_per_order' => $monthly->sum('total_orders') > 0
+            ? $monthly->sum('customer_count') / $monthly->sum('total_orders') : 0,
+        'avg_daily_sales'    => $monthly->sum('operational_days') > 0
+            ? $monthly->sum('total_sales') / $monthly->sum('operational_days') : 0,
+        'avg_monthly_sales'  => $monthly->count() > 0
+            ? $monthly->sum('total_sales') / $monthly->count() : 0,
 
-        Log::info("Quarterly summaries updated");
+        // channels
+        'phone_orders'       => $monthly->sum('phone_orders'),
+        'phone_sales'        => $monthly->sum('phone_sales'),
+        'website_orders'     => $monthly->sum('website_orders'),
+        'website_sales'      => $monthly->sum('website_sales'),
+        'mobile_orders'      => $monthly->sum('mobile_orders'),
+        'mobile_sales'       => $monthly->sum('mobile_sales'),
+        'call_center_orders' => $monthly->sum('call_center_orders'),
+        'call_center_sales'  => $monthly->sum('call_center_sales'),
+        'drive_thru_orders'  => $monthly->sum('drive_thru_orders'),
+        'drive_thru_sales'   => $monthly->sum('drive_thru_sales'),
+
+        // marketplaces
+        'doordash_orders'    => $monthly->sum('doordash_orders'),
+        'doordash_sales'     => $monthly->sum('doordash_sales'),
+        'ubereats_orders'    => $monthly->sum('ubereats_orders'),
+        'ubereats_sales'     => $monthly->sum('ubereats_sales'),
+        'grubhub_orders'     => $monthly->sum('grubhub_orders'),
+        'grubhub_sales'      => $monthly->sum('grubhub_sales'),
+
+        // fulfillment
+        'delivery_orders'    => $monthly->sum('delivery_orders'),
+        'delivery_sales'     => $monthly->sum('delivery_sales'),
+        'carryout_orders'    => $monthly->sum('carryout_orders'),
+        'carryout_sales'     => $monthly->sum('carryout_sales'),
+
+        // products
+        'pizza_quantity'     => $monthly->sum('pizza_quantity'),
+        'pizza_sales'        => $monthly->sum('pizza_sales'),
+        'hnr_quantity'       => $monthly->sum('hnr_quantity'),
+        'hnr_sales'          => $monthly->sum('hnr_sales'),
+        'bread_quantity'     => $monthly->sum('bread_quantity'),
+        'bread_sales'        => $monthly->sum('bread_sales'),
+        'wings_quantity'     => $monthly->sum('wings_quantity'),
+        'wings_sales'        => $monthly->sum('wings_sales'),
+        'beverages_quantity' => $monthly->sum('beverages_quantity'),
+        'beverages_sales'    => $monthly->sum('beverages_sales'),
+        'crazy_puffs_quantity' => $monthly->sum('crazy_puffs_quantity'),
+        'crazy_puffs_sales'    => $monthly->sum('crazy_puffs_sales'),
+
+        // financial
+        'sales_tax'          => $monthly->sum('sales_tax'),
+        'delivery_fees'      => $monthly->sum('delivery_fees'),
+        'delivery_tips'      => $monthly->sum('delivery_tips'),
+        'store_tips'         => $monthly->sum('store_tips'),
+        'total_tips'         => $monthly->sum('total_tips'),
+
+        // payments
+        'cash_sales'         => $monthly->sum('cash_sales'),
+        'credit_card_sales'  => $monthly->sum('credit_card_sales'),
+        'prepaid_sales'      => $monthly->sum('prepaid_sales'),
+        'over_short'         => $monthly->sum('over_short'),
+
+        // portal
+        'portal_eligible_orders' => $monthly->sum('portal_eligible_orders'),
+        'portal_used_orders'     => $monthly->sum('portal_used_orders'),
+        'portal_on_time_orders'  => $monthly->sum('portal_on_time_orders'),
+
+        // waste
+        'total_waste_items'  => $monthly->sum('total_waste_items'),
+        'total_waste_cost'   => $monthly->sum('total_waste_cost'),
+
+        // digital
+        'digital_orders'     => $monthly->sum('digital_orders'),
+        'digital_sales'      => $monthly->sum('digital_sales'),
+    ];
+
+    // recalc rates
+    $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
+        ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100 : 0;
+
+    $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
+        ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100 : 0;
+
+    $summary['digital_penetration'] = $summary['total_orders'] > 0
+        ? ($summary['digital_orders'] / $summary['total_orders']) * 100 : 0;
+
+    // growth vs prior quarter
+    $priorQuarter = QuarterlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $quarter === 1 ? $year - 1 : $year)
+        ->where('quarter_num', $quarter === 1 ? 4 : $quarter - 1)
+        ->first();
+
+    if ($priorQuarter) {
+        $summary['sales_vs_prior_quarter'] = $summary['total_sales'] - $priorQuarter->total_sales;
+        $summary['sales_growth_percent'] = $priorQuarter->total_sales > 0
+            ? (($summary['total_sales'] - $priorQuarter->total_sales) / $priorQuarter->total_sales) * 100 : 0;
     }
 
-    /**
-     * Aggregate quarterly store summary from monthly data
-     */
-    private function aggregateQuarterlyStore(string $store, int $year, int $quarter): void
-    {
-        $month1 = ($quarter - 1) * 3 + 1;
-        $month3 = $quarter * 3;
+    // YoY growth vs same quarter last year
+    $priorYear = QuarterlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $year - 1)
+        ->where('quarter_num', $quarter)
+        ->first();
 
-        $monthly = MonthlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year)
-            ->whereBetween('month_num', [$month1, $month3])
-            ->get();
-
-        if ($monthly->isEmpty()) {
-            return;
-        }
-
-        $quarterStart = Carbon::create($year, $month1, 1);
-        $quarterEnd = Carbon::create($year, $month3 + 1, 1)->subDay();
-
-        $summary = [
-            'franchise_store' => $store,
-            'year_num' => $year,
-            'quarter_num' => $quarter,
-            'quarter_start_date' => $quarterStart->toDateString(),
-            'quarter_end_date' => $quarterEnd->toDateString(),
-
-            // All metrics - sum from monthly
-            'total_sales' => $monthly->sum('total_sales'),
-            'gross_sales' => $monthly->sum('gross_sales'),
-            'net_sales' => $monthly->sum('net_sales'),
-            'refund_amount' => $monthly->sum('refund_amount'),
-            'total_orders' => $monthly->sum('total_orders'),
-            'completed_orders' => $monthly->sum('completed_orders'),
-            'cancelled_orders' => $monthly->sum('cancelled_orders'),
-            'modified_orders' => $monthly->sum('modified_orders'),
-            'refunded_orders' => $monthly->sum('refunded_orders'),
-            'customer_count' => $monthly->sum('customer_count'),
-            'operational_days' => $monthly->sum('operational_days'),
-            'operational_months' => $monthly->count(),
-
-            'avg_order_value' => $monthly->sum('total_orders') > 0
-                ? $monthly->sum('total_sales') / $monthly->sum('total_orders')
-                : 0,
-            'avg_customers_per_order' => $monthly->sum('total_orders') > 0
-                ? $monthly->sum('customer_count') / $monthly->sum('total_orders')
-                : 0,
-            'avg_daily_sales' => $monthly->sum('operational_days') > 0
-                ? $monthly->sum('total_sales') / $monthly->sum('operational_days')
-                : 0,
-            'avg_monthly_sales' => $monthly->count() > 0
-                ? $monthly->sum('total_sales') / $monthly->count()
-                : 0,
-
-            // All channels
-            'phone_orders' => $monthly->sum('phone_orders'),
-            'phone_sales' => $monthly->sum('phone_sales'),
-            'website_orders' => $monthly->sum('website_orders'),
-            'website_sales' => $monthly->sum('website_sales'),
-            'mobile_orders' => $monthly->sum('mobile_orders'),
-            'mobile_sales' => $monthly->sum('mobile_sales'),
-            'call_center_orders' => $monthly->sum('call_center_orders'),
-            'call_center_sales' => $monthly->sum('call_center_sales'),
-            'drive_thru_orders' => $monthly->sum('drive_thru_orders'),
-            'drive_thru_sales' => $monthly->sum('drive_thru_sales'),
-
-            // All marketplaces
-            'doordash_orders' => $monthly->sum('doordash_orders'),
-            'doordash_sales' => $monthly->sum('doordash_sales'),
-            'ubereats_orders' => $monthly->sum('ubereats_orders'),
-            'ubereats_sales' => $monthly->sum('ubereats_sales'),
-            'grubhub_orders' => $monthly->sum('grubhub_orders'),
-            'grubhub_sales' => $monthly->sum('grubhub_sales'),
-
-            // All fulfillment
-            'delivery_orders' => $monthly->sum('delivery_orders'),
-            'delivery_sales' => $monthly->sum('delivery_sales'),
-            'carryout_orders' => $monthly->sum('carryout_orders'),
-            'carryout_sales' => $monthly->sum('carryout_sales'),
-
-            // All products
-            'pizza_quantity' => $monthly->sum('pizza_quantity'),
-            'pizza_sales' => $monthly->sum('pizza_sales'),
-            'hnr_quantity' => $monthly->sum('hnr_quantity'),
-            'hnr_sales' => $monthly->sum('hnr_sales'),
-            'bread_quantity' => $monthly->sum('bread_quantity'),
-            'bread_sales' => $monthly->sum('bread_sales'),
-            'wings_quantity' => $monthly->sum('wings_quantity'),
-            'wings_sales' => $monthly->sum('wings_sales'),
-            'beverages_quantity' => $monthly->sum('beverages_quantity'),
-            'beverages_sales' => $monthly->sum('beverages_sales'),
-            'crazy_puffs_quantity' => $monthly->sum('crazy_puffs_quantity'),
-            'crazy_puffs_sales' => $monthly->sum('crazy_puffs_sales'),
-
-            // All financial
-            'sales_tax' => $monthly->sum('sales_tax'),
-            'delivery_fees' => $monthly->sum('delivery_fees'),
-            'delivery_tips' => $monthly->sum('delivery_tips'),
-            'store_tips' => $monthly->sum('store_tips'),
-            'total_tips' => $monthly->sum('total_tips'),
-
-            // All payments
-            'cash_sales' => $monthly->sum('cash_sales'),
-            'credit_card_sales' => $monthly->sum('credit_card_sales'),
-            'prepaid_sales' => $monthly->sum('prepaid_sales'),
-            'over_short' => $monthly->sum('over_short'),
-
-            // All operational
-            'portal_eligible_orders' => $monthly->sum('portal_eligible_orders'),
-            'portal_used_orders' => $monthly->sum('portal_used_orders'),
-            'portal_on_time_orders' => $monthly->sum('portal_on_time_orders'),
-
-            // All waste
-            'total_waste_items' => $monthly->sum('total_waste_items'),
-            'total_waste_cost' => $monthly->sum('total_waste_cost'),
-
-            // All digital
-            'digital_orders' => $monthly->sum('digital_orders'),
-            'digital_sales' => $monthly->sum('digital_sales'),
-        ];
-
-        // Recalculate rates
-        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
-            ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100
-            : 0;
-        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
-            ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100
-            : 0;
-        $summary['digital_penetration'] = $summary['total_orders'] > 0
-            ? ($summary['digital_orders'] / $summary['total_orders']) * 100
-            : 0;
-
-        // Growth vs prior quarter
-        $priorQuarter = QuarterlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $quarter == 1 ? $year - 1 : $year)
-            ->where('quarter_num', $quarter == 1 ? 4 : $quarter - 1)
-            ->first();
-
-        if ($priorQuarter) {
-            $summary['sales_vs_prior_quarter'] = $summary['total_sales'] - $priorQuarter->total_sales;
-            $summary['sales_growth_percent'] = $priorQuarter->total_sales > 0
-                ? (($summary['total_sales'] - $priorQuarter->total_sales) / $priorQuarter->total_sales) * 100
-                : 0;
-        }
-
-        // YoY growth
-        $priorYear = QuarterlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year - 1)
-            ->where('quarter_num', $quarter)
-            ->first();
-
-        if ($priorYear) {
-            $summary['sales_vs_same_quarter_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
-            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
-                ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100
-                : 0;
-        }
-
-        QuarterlyStoreSummary::updateOrCreate(
-            ['franchise_store' => $store, 'year_num' => $year, 'quarter_num' => $quarter],
-            $summary
-        );
+    if ($priorYear) {
+        $summary['sales_vs_same_quarter_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
+        $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
+            ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100 : 0;
     }
 
-    /**
-     * Aggregate quarterly item summary from monthly data
-     */
-    private function aggregateQuarterlyItems(string $store, int $year, int $quarter): void
-    {
-        $month1 = ($quarter - 1) * 3 + 1;
-        $month3 = $quarter * 3;
+    QuarterlyStoreSummary::updateOrCreate(
+        ['franchise_store' => $store, 'year_num' => $year, 'quarter_num' => $quarter],
+        $summary
+    );
+}
 
-        $monthlyItems = MonthlyItemSummary::where('franchise_store', $store)
-            ->where('year_num', $year)
-            ->whereBetween('month_num', [$month1, $month3])
-            ->selectRaw('item_id, menu_item_name, menu_item_account,
-                        SUM(quantity_sold) as quantity_sold,
-                        SUM(gross_sales) as gross_sales,
-                        SUM(net_sales) as net_sales,
-                        AVG(avg_item_price) as avg_item_price,
-                        AVG(avg_daily_quantity) as avg_daily_quantity,
-                        SUM(delivery_quantity) as delivery_quantity,
-                        SUM(carryout_quantity) as carryout_quantity')
-            ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
-            ->get();
 
-        $quarterStart = Carbon::create($year, ($quarter - 1) * 3 + 1, 1);
-        $quarterEnd = Carbon::create($year, $quarter * 3 + 1, 1)->subDay();
-
-        foreach ($monthlyItems as $item) {
-            QuarterlyItemSummary::updateOrCreate(
-                ['franchise_store' => $store, 'year_num' => $year, 'quarter_num' => $quarter, 'item_id' => $item->item_id],
-                [
-                    'menu_item_name' => $item->menu_item_name,
-                    'menu_item_account' => $item->menu_item_account,
-                    'quantity_sold' => $item->quantity_sold,
-                    'gross_sales' => $item->gross_sales,
-                    'net_sales' => $item->net_sales,
-                    'avg_item_price' => $item->avg_item_price,
-                    'avg_daily_quantity' => $item->avg_daily_quantity,
-                    'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity,
-                    'quarter_start_date' => $quarterStart->toDateString(),
-                    'quarter_end_date' => $quarterEnd->toDateString(),
-                ]
-            );
-        }
-    }
-
-    /**
-     * Update all yearly summaries
-     */
-    public function updateYearlySummaries(int $year): void
-    {
-        Log::info("Updating yearly summaries for {$year}");
-
-        $stores = DailyStoreSummary::whereYear('business_date', $year)
-            ->distinct()
-            ->pluck('franchise_store');
-
-        foreach ($stores as $store) {
-            $this->aggregateYearlyStore($store, $year);
-            $this->aggregateYearlyItems($store, $year);
-        }
-
-        Log::info("Yearly summaries updated");
-    }
-
-    /**
-     * Aggregate yearly store summary from monthly data
-     */
     private function aggregateYearlyStore(string $store, int $year): void
-    {
-        $monthly = MonthlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year)
-            ->get();
+{
+    $monthly = MonthlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $year)
+        ->get();
 
-        if ($monthly->isEmpty()) {
-            return;
-        }
+    if ($monthly->isEmpty()) {
+        return;
+    }
 
-        $summary = [
-            'franchise_store' => $store,
-            'year_num' => $year,
+    $summary = [
+        'franchise_store'    => $store,
+        'year_num'           => $year,
+        'operational_days'   => $monthly->sum('operational_days'),
+        'operational_months' => $monthly->count(),
 
-            // All metrics - sum from monthly
-            'total_sales' => $monthly->sum('total_sales'),
-            'gross_sales' => $monthly->sum('gross_sales'),
-            'net_sales' => $monthly->sum('net_sales'),
-            'refund_amount' => $monthly->sum('refund_amount'),
-            'total_orders' => $monthly->sum('total_orders'),
-            'completed_orders' => $monthly->sum('completed_orders'),
-            'cancelled_orders' => $monthly->sum('cancelled_orders'),
-            'modified_orders' => $monthly->sum('modified_orders'),
-            'refunded_orders' => $monthly->sum('refunded_orders'),
-            'customer_count' => $monthly->sum('customer_count'),
-            'operational_days' => $monthly->sum('operational_days'),
-            'operational_months' => $monthly->count(),
+        'total_sales'        => $monthly->sum('total_sales'),
+        'gross_sales'        => $monthly->sum('gross_sales'),
+        'net_sales'          => $monthly->sum('net_sales'),
+        'refund_amount'      => $monthly->sum('refund_amount'),
+        'total_orders'       => $monthly->sum('total_orders'),
+        'completed_orders'   => $monthly->sum('completed_orders'),
+        'cancelled_orders'   => $monthly->sum('cancelled_orders'),
+        'modified_orders'    => $monthly->sum('modified_orders'),
+        'refunded_orders'    => $monthly->sum('refunded_orders'),
+        'customer_count'     => $monthly->sum('customer_count'),
 
-            'avg_order_value' => $monthly->sum('total_orders') > 0
-                ? $monthly->sum('total_sales') / $monthly->sum('total_orders')
-                : 0,
-            'avg_customers_per_order' => $monthly->sum('total_orders') > 0
-                ? $monthly->sum('customer_count') / $monthly->sum('total_orders')
-                : 0,
-            'avg_daily_sales' => $monthly->sum('operational_days') > 0
-                ? $monthly->sum('total_sales') / $monthly->sum('operational_days')
-                : 0,
-            'avg_monthly_sales' => $monthly->count() > 0
-                ? $monthly->sum('total_sales') / $monthly->count()
-                : 0,
+        'avg_order_value'    => $monthly->sum('total_orders') > 0
+            ? $monthly->sum('total_sales') / $monthly->sum('total_orders') : 0,
+        'avg_customers_per_order' => $monthly->sum('total_orders') > 0
+            ? $monthly->sum('customer_count') / $monthly->sum('total_orders') : 0,
+        'avg_daily_sales'    => $monthly->sum('operational_days') > 0
+            ? $monthly->sum('total_sales') / $monthly->sum('operational_days') : 0,
+        'avg_monthly_sales'  => $monthly->count() > 0
+            ? $monthly->sum('total_sales') / $monthly->count() : 0,
 
-            // All channels
-            'phone_orders' => $monthly->sum('phone_orders'),
-            'phone_sales' => $monthly->sum('phone_sales'),
-            'website_orders' => $monthly->sum('website_orders'),
-            'website_sales' => $monthly->sum('website_sales'),
-            'mobile_orders' => $monthly->sum('mobile_orders'),
-            'mobile_sales' => $monthly->sum('mobile_sales'),
-            'call_center_orders' => $monthly->sum('call_center_orders'),
-            'call_center_sales' => $monthly->sum('call_center_sales'),
-            'drive_thru_orders' => $monthly->sum('drive_thru_orders'),
-            'drive_thru_sales' => $monthly->sum('drive_thru_sales'),
+        // channels
+        'phone_orders'       => $monthly->sum('phone_orders'),
+        'phone_sales'        => $monthly->sum('phone_sales'),
+        'website_orders'     => $monthly->sum('website_orders'),
+        'website_sales'      => $monthly->sum('website_sales'),
+        'mobile_orders'      => $monthly->sum('mobile_orders'),
+        'mobile_sales'       => $monthly->sum('mobile_sales'),
+        'call_center_orders' => $monthly->sum('call_center_orders'),
+        'call_center_sales'  => $monthly->sum('call_center_sales'),
+        'drive_thru_orders'  => $monthly->sum('drive_thru_orders'),
+        'drive_thru_sales'   => $monthly->sum('drive_thru_sales'),
 
-            // All marketplaces
-            'doordash_orders' => $monthly->sum('doordash_orders'),
-            'doordash_sales' => $monthly->sum('doordash_sales'),
-            'ubereats_orders' => $monthly->sum('ubereats_orders'),
-            'ubereats_sales' => $monthly->sum('ubereats_sales'),
-            'grubhub_orders' => $monthly->sum('grubhub_orders'),
-            'grubhub_sales' => $monthly->sum('grubhub_sales'),
+        // marketplaces
+        'doordash_orders'    => $monthly->sum('doordash_orders'),
+        'doordash_sales'     => $monthly->sum('doordash_sales'),
+        'ubereats_orders'    => $monthly->sum('ubereats_orders'),
+        'ubereats_sales'     => $monthly->sum('ubereats_sales'),
+        'grubhub_orders'     => $monthly->sum('grubhub_orders'),
+        'grubhub_sales'      => $monthly->sum('grubhub_sales'),
 
-            // All fulfillment
-            'delivery_orders' => $monthly->sum('delivery_orders'),
-            'delivery_sales' => $monthly->sum('delivery_sales'),
-            'carryout_orders' => $monthly->sum('carryout_orders'),
-            'carryout_sales' => $monthly->sum('carryout_sales'),
+        // fulfillment
+        'delivery_orders'    => $monthly->sum('delivery_orders'),
+        'delivery_sales'     => $monthly->sum('delivery_sales'),
+        'carryout_orders'    => $monthly->sum('carryout_orders'),
+        'carryout_sales'     => $monthly->sum('carryout_sales'),
 
-            // All products
-            'pizza_quantity' => $monthly->sum('pizza_quantity'),
-            'pizza_sales' => $monthly->sum('pizza_sales'),
-            'hnr_quantity' => $monthly->sum('hnr_quantity'),
-            'hnr_sales' => $monthly->sum('hnr_sales'),
-            'bread_quantity' => $monthly->sum('bread_quantity'),
-            'bread_sales' => $monthly->sum('bread_sales'),
-            'wings_quantity' => $monthly->sum('wings_quantity'),
-            'wings_sales' => $monthly->sum('wings_sales'),
-            'beverages_quantity' => $monthly->sum('beverages_quantity'),
-            'beverages_sales' => $monthly->sum('beverages_sales'),
-            'crazy_puffs_quantity' => $monthly->sum('crazy_puffs_quantity'),
-            'crazy_puffs_sales' => $monthly->sum('crazy_puffs_sales'),
+        // products
+        'pizza_quantity'     => $monthly->sum('pizza_quantity'),
+        'pizza_sales'        => $monthly->sum('pizza_sales'),
+        'hnr_quantity'       => $monthly->sum('hnr_quantity'),
+        'hnr_sales'          => $monthly->sum('hnr_sales'),
+        'bread_quantity'     => $monthly->sum('bread_quantity'),
+        'bread_sales'        => $monthly->sum('bread_sales'),
+        'wings_quantity'     => $monthly->sum('wings_quantity'),
+        'wings_sales'        => $monthly->sum('wings_sales'),
+        'beverages_quantity' => $monthly->sum('beverages_quantity'),
+        'beverages_sales'    => $monthly->sum('beverages_sales'),
+        'crazy_puffs_quantity' => $monthly->sum('crazy_puffs_quantity'),
+        'crazy_puffs_sales'    => $monthly->sum('crazy_puffs_sales'),
 
-            // All financial
-            'sales_tax' => $monthly->sum('sales_tax'),
-            'delivery_fees' => $monthly->sum('delivery_fees'),
-            'delivery_tips' => $monthly->sum('delivery_tips'),
-            'store_tips' => $monthly->sum('store_tips'),
-            'total_tips' => $monthly->sum('total_tips'),
+        // financial
+        'sales_tax'          => $monthly->sum('sales_tax'),
+        'delivery_fees'      => $monthly->sum('delivery_fees'),
+        'delivery_tips'      => $monthly->sum('delivery_tips'),
+        'store_tips'         => $monthly->sum('store_tips'),
+        'total_tips'         => $monthly->sum('total_tips'),
 
-            // All payments
-            'cash_sales' => $monthly->sum('cash_sales'),
-            'credit_card_sales' => $monthly->sum('credit_card_sales'),
-            'prepaid_sales' => $monthly->sum('prepaid_sales'),
-            'over_short' => $monthly->sum('over_short'),
+        // payments
+        'cash_sales'         => $monthly->sum('cash_sales'),
+        'credit_card_sales'  => $monthly->sum('credit_card_sales'),
+        'prepaid_sales'      => $monthly->sum('prepaid_sales'),
+        'over_short'         => $monthly->sum('over_short'),
 
-            // All operational
-            'portal_eligible_orders' => $monthly->sum('portal_eligible_orders'),
-            'portal_used_orders' => $monthly->sum('portal_used_orders'),
-            'portal_on_time_orders' => $monthly->sum('portal_on_time_orders'),
+        // portal
+        'portal_eligible_orders' => $monthly->sum('portal_eligible_orders'),
+        'portal_used_orders'     => $monthly->sum('portal_used_orders'),
+        'portal_on_time_orders'  => $monthly->sum('portal_on_time_orders'),
 
-            // All waste
-            'total_waste_items' => $monthly->sum('total_waste_items'),
-            'total_waste_cost' => $monthly->sum('total_waste_cost'),
+        // waste
+        'total_waste_items'  => $monthly->sum('total_waste_items'),
+        'total_waste_cost'   => $monthly->sum('total_waste_cost'),
 
-            // All digital
-            'digital_orders' => $monthly->sum('digital_orders'),
-            'digital_sales' => $monthly->sum('digital_sales'),
-        ];
+        // digital
+        'digital_orders'     => $monthly->sum('digital_orders'),
+        'digital_sales'      => $monthly->sum('digital_sales'),
+    ];
 
-        // Recalculate rates
-        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
-            ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100
-            : 0;
-        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
-            ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100
-            : 0;
-        $summary['digital_penetration'] = $summary['total_orders'] > 0
-            ? ($summary['digital_orders'] / $summary['total_orders']) * 100
-            : 0;
+    $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
+        ? ($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100 : 0;
 
-        // Growth vs prior year
-        $priorYear = YearlyStoreSummary::where('franchise_store', $store)
-            ->where('year_num', $year - 1)
-            ->first();
+    $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
+        ? ($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100 : 0;
 
-        if ($priorYear) {
-            $summary['sales_vs_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
-            $summary['sales_growth_percent'] = $priorYear->total_sales > 0
-                ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100
-                : 0;
-        }
+    $summary['digital_penetration'] = $summary['total_orders'] > 0
+        ? ($summary['digital_orders'] / $summary['total_orders']) * 100 : 0;
 
-        YearlyStoreSummary::updateOrCreate(
-            ['franchise_store' => $store, 'year_num' => $year],
-            $summary
+    // growth vs prior year
+    $priorYear = YearlyStoreSummary::where('franchise_store', $store)
+        ->where('year_num', $year - 1)
+        ->first();
+
+    if ($priorYear) {
+        $summary['sales_vs_prior_year'] = $summary['total_sales'] - $priorYear->total_sales;
+        $summary['sales_growth_percent'] = $priorYear->total_sales > 0
+            ? (($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100 : 0;
+    }
+
+    YearlyStoreSummary::updateOrCreate(
+        ['franchise_store' => $store, 'year_num' => $year],
+        $summary
+    );
+}
+
+    private function aggregateQuarterlyItems(string $store, int $year, int $quarter): void
+{
+    $m1 = ($quarter - 1) * 3 + 1;
+    $m3 = $quarter * 3;
+
+    $items = MonthlyItemSummary::where('franchise_store', $store)
+        ->where('year_num', $year)
+        ->whereBetween('month_num', [$m1, $m3])
+        ->selectRaw('item_id, menu_item_name, menu_item_account,
+            SUM(quantity_sold)        as quantity_sold,
+            SUM(gross_sales)          as gross_sales,
+            SUM(net_sales)            as net_sales,
+            AVG(avg_item_price)       as avg_item_price,
+            AVG(avg_daily_quantity)   as avg_daily_quantity,
+            SUM(delivery_quantity)    as delivery_quantity,
+            SUM(carryout_quantity)    as carryout_quantity')
+        ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
+        ->get();
+
+    $qStart = Carbon::create($year, $m1, 1);
+    $qEnd   = Carbon::create($year, $m3 + 1, 1)->subDay();
+
+    foreach ($items as $item) {
+        QuarterlyItemSummary::updateOrCreate(
+            [
+                'franchise_store' => $store,
+                'year_num'        => $year,
+                'quarter_num'     => $quarter,
+                'item_id'         => $item->item_id,
+            ],
+            [
+                'menu_item_name'     => $item->menu_item_name,
+                'menu_item_account'  => $item->menu_item_account,
+                'quantity_sold'      => $item->quantity_sold,
+                'gross_sales'        => $item->gross_sales,
+                'net_sales'          => $item->net_sales,
+                'avg_item_price'     => $item->avg_item_price,
+                'avg_daily_quantity' => $item->avg_daily_quantity,
+                'delivery_quantity'  => $item->delivery_quantity,
+                'carryout_quantity'  => $item->carryout_quantity,
+                'quarter_start_date' => $qStart->toDateString(),
+                'quarter_end_date'   => $qEnd->toDateString(),
+            ]
         );
     }
+}
 
-    /**
-     * Aggregate yearly item summary from monthly data
-     */
-    private function aggregateYearlyItems(string $store, int $year): void
-    {
-        $monthlyItems = MonthlyItemSummary::where('franchise_store', $store)
-            ->where('year_num', $year)
-            ->selectRaw('item_id, menu_item_name, menu_item_account,
-                        SUM(quantity_sold) as quantity_sold,
-                        SUM(gross_sales) as gross_sales,
-                        SUM(net_sales) as net_sales,
-                        AVG(avg_item_price) as avg_item_price,
-                        AVG(avg_daily_quantity) as avg_daily_quantity,
-                        SUM(delivery_quantity) as delivery_quantity,
-                        SUM(carryout_quantity) as carryout_quantity')
-            ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
-            ->get();
+   private function aggregateYearlyItems(string $store, int $year): void
+{
+    $items = MonthlyItemSummary::where('franchise_store', $store)
+        ->where('year_num', $year)
+        ->selectRaw('item_id, menu_item_name, menu_item_account,
+            SUM(quantity_sold)        as quantity_sold,
+            SUM(gross_sales)          as gross_sales,
+            SUM(net_sales)            as net_sales,
+            AVG(avg_item_price)       as avg_item_price,
+            AVG(avg_daily_quantity)   as avg_daily_quantity,
+            SUM(delivery_quantity)    as delivery_quantity,
+            SUM(carryout_quantity)    as carryout_quantity')
+        ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
+        ->get();
 
-        foreach ($monthlyItems as $item) {
-            YearlyItemSummary::updateOrCreate(
-                ['franchise_store' => $store, 'year_num' => $year, 'item_id' => $item->item_id],
-                [
-                    'menu_item_name' => $item->menu_item_name,
-                    'menu_item_account' => $item->menu_item_account,
-                    'quantity_sold' => $item->quantity_sold,
-                    'gross_sales' => $item->gross_sales,
-                    'net_sales' => $item->net_sales,
-                    'avg_item_price' => $item->avg_item_price,
-                    'avg_daily_quantity' => $item->avg_daily_quantity,
-                    'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity,
-                ]
-            );
-        }
+    foreach ($items as $item) {
+        YearlyItemSummary::updateOrCreate(
+            [
+                'franchise_store' => $store,
+                'year_num'        => $year,
+                'item_id'         => $item->item_id,
+            ],
+            [
+                'menu_item_name'     => $item->menu_item_name,
+                'menu_item_account'  => $item->menu_item_account,
+                'quantity_sold'      => $item->quantity_sold,
+                'gross_sales'        => $item->gross_sales,
+                'net_sales'          => $item->net_sales,
+                'avg_item_price'     => $item->avg_item_price,
+                'avg_daily_quantity' => $item->avg_daily_quantity,
+                'delivery_quantity'  => $item->delivery_quantity,
+                'carryout_quantity'  => $item->carryout_quantity,
+            ]
+        );
     }
+}
+
 }

@@ -7,24 +7,15 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Update aggregation tables (daily, weekly, monthly summaries)
- * 
- * Usage:
- *   php artisan aggregation:update
- *   php artisan aggregation:update --date=2025-11-29
- *   php artisan aggregation:update --type=weekly
- *   php artisan aggregation:update --type=all
- */
 class UpdateAggregationsCommand extends Command
 {
     protected $signature = 'aggregation:update 
-                            {--date= : Date to update (Y-m-d format, defaults to yesterday)}
-                            {--type=daily : Type of aggregation (daily, weekly, monthly, all)}';
+        {--date= : Date (Y-m-d, default yesterday)}
+        {--type=daily : daily, weekly, monthly, quarterly, yearly, all}';
 
-    protected $description = 'Update aggregation tables (summaries)';
+    protected $description = 'Update ALL aggregation levels';
 
-    protected AggregationService $aggregationService;
+    protected $aggregationService;
 
     public function __construct(AggregationService $aggregationService)
     {
@@ -34,121 +25,92 @@ class UpdateAggregationsCommand extends Command
 
     public function handle(): int
     {
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->info('  Update Aggregation Tables');
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        $this->newLine();
+        $this->info('📊 UPDATE AGGREGATIONS');
+        $this->line(str_repeat('═', 80));
 
         $date = $this->getDate();
         $type = $this->option('type');
+        $start = microtime(true);
 
-        $this->info("📅 Date: {$date->format('Y-m-d (l)')}");
-        $this->info("📊 Type: {$type}");
+        $this->table(['📅 Date', '📊 Type'], [[$date->format('Y-m-d l'), $type]]);
         $this->newLine();
 
-        $startTime = microtime(true);
-
         try {
-            switch ($type) {
-                case 'daily':
-                    $this->updateDaily($date);
-                    break;
+            match ($type) {
+                'daily' => $this->updateDaily($date),
+                'weekly' => $this->updateWeekly($date),
+                'monthly' => $this->updateMonthly($date),
+                'quarterly' => $this->updateQuarterly($date),
+                'yearly' => $this->updateYearly($date),
+                'all' => $this->updateAll($date),
+                default => throw new \Exception("Invalid type '{$type}'. Use: daily, weekly, monthly, quarterly, yearly, all")
+            };
 
-                case 'weekly':
-                    $this->updateWeekly($date);
-                    break;
-
-                case 'monthly':
-                    $this->updateMonthly($date);
-                    break;
-
-                case 'all':
-                    $this->updateAll($date);
-                    break;
-
-                default:
-                    $this->error("Invalid aggregation type: {$type}");
-                    $this->warn('Valid types: daily, weekly, monthly, all');
-                    return self::FAILURE;
-            }
-
-            $duration = round(microtime(true) - $startTime, 2);
-
-            $this->newLine();
-            $this->info("✅ Aggregations updated successfully!");
-            $this->info("⏱️  Duration: {$duration} seconds");
-
+            $time = round(microtime(true) - $start, 2);
+            $this->success("✅ COMPLETE - {$time}s");
             return self::SUCCESS;
 
         } catch (\Exception $e) {
-            $duration = round(microtime(true) - $startTime, 2);
-
-            $this->newLine();
-            $this->error('❌ Aggregation update failed!');
-            $this->error("⏱️  Duration: {$duration} seconds");
-            $this->error('Error: ' . $e->getMessage());
-
-            Log::error('Aggregation update failed', [
-                'date' => $date->toDateString(),
-                'type' => $type,
-                'exception' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
+            $time = round(microtime(true) - $start, 2);
+            $this->error("❌ FAILED - {$time}s");
+            $this->error($e->getMessage());
+            Log::error('Update failed', ['date' => $date->toDateString(), 'type' => $type, 'error' => $e]);
             return self::FAILURE;
         }
     }
 
     protected function getDate(): Carbon
     {
-        if ($this->option('date')) {
-            try {
-                return Carbon::parse($this->option('date'));
-            } catch (\Exception $e) {
-                $this->warn('Invalid date format. Using yesterday.');
-                return Carbon::yesterday();
-            }
-        }
-
-        return Carbon::yesterday();
+        return $this->option('date') 
+            ? Carbon::parse($this->option('date'))
+            : Carbon::yesterday();
     }
 
     protected function updateDaily(Carbon $date): void
     {
-        $this->info('🔄 Updating daily summaries...');
-
+        $this->info('🔄 Daily summaries...');
         $this->aggregationService->updateDailySummaries($date);
-
-        $this->info('  ✓ Daily store summaries updated');
-        $this->info('  ✓ Daily item summaries updated');
+        $this->info('  ✅ Daily');
     }
 
     protected function updateWeekly(Carbon $date): void
     {
-        $weekStart = $date->copy()->startOfWeek();
-        $weekEnd = $date->copy()->endOfWeek();
-
-        $this->info("🔄 Updating weekly summaries for week {$weekStart->format('M d')} - {$weekEnd->format('M d')}...");
-
+        $w1 = $date->copy()->startOfWeek()->format('M j');
+        $w2 = $date->copy()->endOfWeek()->format('M j');
+        $this->info("🔄 Weekly {$w1}-{$w2}...");
         $this->aggregationService->updateWeeklySummaries($date);
-
-        $this->info('  ✓ Weekly store summaries updated');
+        $this->info('  ✅ Weekly');
     }
 
     protected function updateMonthly(Carbon $date): void
     {
-        $this->info("🔄 Updating monthly summaries for {$date->format('F Y')}...");
-
+        $this->info("🔄 Monthly {$date->format('F Y')}...");
         $this->aggregationService->updateMonthlySummaries($date);
+        $this->info('  ✅ Monthly');
+    }
 
-        $this->info('  ✓ Monthly store summaries updated');
+    protected function updateQuarterly(Carbon $date): void
+    {
+        $q = ceil($date->month / 3);
+        $this->info("🔄 Quarterly {$date->format('Y')} Q{$q}...");
+        $this->aggregationService->updateQuarterlySummaries($date);
+        $this->info('  ✅ Quarterly');
+    }
+
+    protected function updateYearly(Carbon $date): void
+    {
+        $this->info("🔄 Yearly {$date->format('Y')}...");
+        $this->aggregationService->updateYearlySummaries($date);
+        $this->info('  ✅ Yearly');
     }
 
     protected function updateAll(Carbon $date): void
     {
-        $this->updateDaily($date);
-        $this->newLine();
-        $this->updateWeekly($date);
-        $this->newLine();
-        $this->updateMonthly($date);
+        $this->updateDaily($date); $this->newLine();
+        $this->updateWeekly($date); $this->newLine();
+        $this->updateMonthly($date); $this->newLine();
+        $this->updateQuarterly($date); $this->newLine();
+        $this->updateYearly($date);
     }
 }
