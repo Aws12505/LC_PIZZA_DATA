@@ -7,19 +7,22 @@ use App\Services\Database\DatabaseRouter;
 use App\Services\Report\ReportService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Http\StreamedResponse;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 /**
  * ExportingController - Export data as CSV or JSON
- * 
- * Updated to use DatabaseRouter for queries spanning operational/analytics
- * Supports all models including aggregation tables
+ *
+ * - Dates are nullable:
+ *   - If start/end are omitted => NO date filter is applied.
+ * - CSV supports model=all:
+ *   - Downloads a ZIP containing one CSV per model.
+ *
+ * NOTE:
+ * - This implementation uses ->cursor() streaming instead of chunkById()
+ *   so it does NOT require an "id" primary key on every table.
  */
 class ExportingController extends Controller
 {
-    protected const CHUNK_SIZE = 5000;
     protected ReportService $reportService;
 
     public function __construct(ReportService $reportService)
@@ -29,38 +32,42 @@ class ExportingController extends Controller
 
     /**
      * Export data as CSV
-     * 
+     *
      * GET /api/export/csv?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders
+     * GET /api/export/csv?model=all&store=03795
      */
     public function exportCSV(Request $request)
-    { 
+    {
         DB::connection()->disableQueryLog();
         set_time_limit(0);
 
         $validated = $request->validate([
-            'start' => 'required|date',
-            'end' => 'required|date|after_or_equal:start',
+            'start' => 'nullable|date',
+            'end'   => 'nullable|date|after_or_equal:start',
             'store' => 'nullable|string',
-            'model' => 'required|string|in:' . implode(',', $this->getAvailableModels()),
+            'model' => 'required|string|in:' . implode(',', array_merge($this->getAvailableModels(), ['all'])),
         ]);
 
-        $startDate = Carbon::parse($validated['start']);
-        $endDate = Carbon::parse($validated['end']);
-        $store = $validated['store'] ?? null;
-        $model = $validated['model'];
+        $startDate = !empty($validated['start']) ? Carbon::parse($validated['start']) : null;
+        $endDate   = !empty($validated['end']) ? Carbon::parse($validated['end']) : null;
+        $store     = $validated['store'] ?? null;
+        $model     = $validated['model'];
 
-        // Get columns for model
-        $columns = $this->getColumnsForModel($model);
+        // model=all => ZIP of all models
+        if ($model === 'all') {
+            return $this->exportAllModelsZip($startDate, $endDate, $store);
+        }
 
+        // single-model CSV
+        $columns  = $this->getColumnsForModel($model);
         $filename = $this->makeFilename($model, $startDate, $endDate, $store, 'csv');
 
         $callback = function () use ($model, $startDate, $endDate, $store, $columns) {
             $out = fopen('php://output', 'w');
 
-            // Write header
+            // Header
             fputcsv($out, $columns);
 
-            // Build query based on model type
             $query = $this->buildQuery($model, $startDate, $endDate);
 
             if ($store) {
@@ -69,35 +76,29 @@ class ExportingController extends Controller
 
             $query->select($columns);
 
-            // Get primary key for chunking
-            $pk = $this->getPrimaryKeyForModel($model);
-
-            // Stream data in chunks
-            $query->orderBy($pk)
-                ->chunkById(self::CHUNK_SIZE, function ($rows) use ($out, $columns) {
-                    foreach ($rows as $row) {
-                        $line = [];
-                        foreach ($columns as $col) {
-                            $line[] = $row->{$col} ?? null;
-                        }
-                        fputcsv($out, $line);
-                    }
-                }, $pk);
+            // Stream rows
+            foreach ($query->cursor() as $row) {
+                $line = [];
+                foreach ($columns as $col) {
+                    $line[] = $row->{$col} ?? null;
+                }
+                fputcsv($out, $line);
+            }
 
             fclose($out);
         };
 
         return response()->streamDownload($callback, $filename, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'Content-Type'        => 'text/csv; charset=UTF-8',
+            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
             'Content-Disposition' => "attachment; filename={$filename}",
         ]);
     }
 
     /**
-     * Export data as JSON
-     * 
-     * GET /api/export/json?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders
+     * Export data as JSON (single model only)
+     *
+     * GET /api/export/json?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders&limit=1000
      */
     public function exportJson(Request $request)
     {
@@ -106,19 +107,18 @@ class ExportingController extends Controller
 
         $validated = $request->validate([
             'start' => 'nullable|date',
-            'end' => 'nullable|date|after_or_equal:start',
+            'end'   => 'nullable|date|after_or_equal:start',
             'store' => 'nullable|string',
             'model' => 'required|string|in:' . implode(',', $this->getAvailableModels()),
             'limit' => 'nullable|integer|min:1|max:50000',
         ]);
 
-        $startDate = Carbon::parse($validated['start']);
-        $endDate = Carbon::parse($validated['end']);
-        $store = $validated['store'] ?? null;
-        $model = $validated['model'];
-        $limit = $validated['limit'] ?? null;
+        $startDate = !empty($validated['start']) ? Carbon::parse($validated['start']) : null;
+        $endDate   = !empty($validated['end']) ? Carbon::parse($validated['end']) : null;
+        $store     = $validated['store'] ?? null;
+        $model     = $validated['model'];
+        $limit     = $validated['limit'] ?? null;
 
-        // Build query based on model type
         $query = $this->buildQuery($model, $startDate, $endDate);
 
         if ($store) {
@@ -132,23 +132,109 @@ class ExportingController extends Controller
         $data = $query->get();
 
         return response()->json([
-            'success' => true,
+            'success'      => true,
             'record_count' => $data->count(),
-            'data' => $data,
+            'data'         => $data,
         ]);
     }
 
     /**
-     * Build query based on model type
+     * Export all models into a ZIP (each model => CSV inside zip)
      */
-    protected function buildQuery(string $model, Carbon $startDate, Carbon $endDate)
+    protected function exportAllModelsZip(?Carbon $startDate, ?Carbon $endDate, ?string $store)
     {
-        // Check if this is an aggregation table
+        $models = $this->getAvailableModels();
+
+        $zipFilename = $this->makeFilename('all_models', $startDate, $endDate, $store, 'zip');
+
+        $callback = function () use ($models, $startDate, $endDate, $store) {
+            $tmpDir = storage_path('app/export_tmp');
+            if (!is_dir($tmpDir)) {
+                @mkdir($tmpDir, 0775, true);
+            }
+
+            $zipPath = $tmpDir . '/export_' . uniqid('', true) . '.zip';
+
+            $zip = new \ZipArchive();
+            if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+                throw new \RuntimeException('Unable to create zip file.');
+            }
+
+            $tmpCsvPaths = [];
+
+            foreach ($models as $model) {
+                $columns = $this->getColumnsForModel($model);
+
+                $tmpCsv = $tmpDir . '/' . $model . '_' . uniqid('', true) . '.csv';
+                $tmpCsvPaths[] = $tmpCsv;
+
+                $fh = fopen($tmpCsv, 'w');
+
+                // header
+                fputcsv($fh, $columns);
+
+                $query = $this->buildQuery($model, $startDate, $endDate);
+
+                if ($store) {
+                    $query->where('franchise_store', $store);
+                }
+
+                $query->select($columns);
+
+                foreach ($query->cursor() as $row) {
+                    $line = [];
+                    foreach ($columns as $col) {
+                        $line[] = $row->{$col} ?? null;
+                    }
+                    fputcsv($fh, $line);
+                }
+
+                fclose($fh);
+
+                // Add as "<model>.csv" inside zip
+                $zip->addFile($tmpCsv, $model . '.csv');
+            }
+
+            $zip->close();
+
+            // Stream the zip
+            $out = fopen('php://output', 'wb');
+            $in  = fopen($zipPath, 'rb');
+            stream_copy_to_stream($in, $out);
+            fclose($in);
+            fclose($out);
+
+            // Cleanup
+            @unlink($zipPath);
+            foreach ($tmpCsvPaths as $p) {
+                @unlink($p);
+            }
+        };
+
+        return response()->streamDownload($callback, $zipFilename, [
+            'Content-Type'        => 'application/zip',
+            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
+            'Content-Disposition' => "attachment; filename={$zipFilename}",
+        ]);
+    }
+
+    /**
+     * Build query based on model type (dates nullable)
+     */
+    protected function buildQuery(string $model, ?Carbon $startDate, ?Carbon $endDate)
+    {
+        // Aggregation tables live in analytics connection
         if ($this->isAggregationTable($model)) {
             return $this->buildAggregationQuery($model, $startDate, $endDate);
         }
 
-        // Use DatabaseRouter for operational/analytics tables
+        /**
+         * Operational/analytics tables routed via DatabaseRouter.
+         *
+         * IMPORTANT:
+         * Your DatabaseRouter::query() must accept null dates and treat them as "no date filter".
+         * If it doesn't yet, update DatabaseRouter accordingly.
+         */
         return DatabaseRouter::query($model, $startDate, $endDate);
     }
 
@@ -165,77 +251,56 @@ class ExportingController extends Controller
             'daily_store_summary', 'daily_item_summary',
         ];
 
-        return in_array($model, $aggregationTables);
+        return in_array($model, $aggregationTables, true);
     }
 
     /**
-     * Build query for aggregation tables
+     * Build query for aggregation tables (dates nullable)
      */
-    protected function buildAggregationQuery(string $model, Carbon $startDate, Carbon $endDate)
+    protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate)
     {
         $query = DB::connection('analytics')->table($model);
 
-        // Apply date filters based on table type
+        // If either date is missing => no date filter (as requested)
+        if (!$startDate || !$endDate) {
+            return $query;
+        }
+
         switch ($model) {
             case 'yearly_store_summary':
             case 'yearly_item_summary':
-                $query->whereBetween('year_num', [
-                    $startDate->year,
-                    $endDate->year
-                ]);
+                $query->whereBetween('year_num', [$startDate->year, $endDate->year]);
                 break;
 
             case 'weekly_store_summary':
             case 'weekly_item_summary':
-                // For weekly, filter by week_start_date and week_end_date
-                $query->where(function($q) use ($startDate, $endDate) {
-                    $q->whereBetween('week_start_date', [
-                        $startDate->toDateString(),
-                        $endDate->toDateString()
-                    ])->orWhereBetween('week_end_date', [
-                        $startDate->toDateString(),
-                        $endDate->toDateString()
-                    ]);
+                $query->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('week_start_date', [$startDate->toDateString(), $endDate->toDateString()])
+                      ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
             case 'quarterly_store_summary':
             case 'quarterly_item_summary':
-                // For quarterly, filter by quarter_start_date and quarter_end_date
-                $query->where(function($q) use ($startDate, $endDate) {
-                    $q->whereBetween('quarter_start_date', [
-                        $startDate->toDateString(),
-                        $endDate->toDateString()
-                    ])->orWhereBetween('quarter_end_date', [
-                        $startDate->toDateString(),
-                        $endDate->toDateString()
-                    ]);
+                $query->where(function ($q) use ($startDate, $endDate) {
+                    $q->whereBetween('quarter_start_date', [$startDate->toDateString(), $endDate->toDateString()])
+                      ->orWhereBetween('quarter_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
             case 'monthly_store_summary':
             case 'monthly_item_summary':
-                // For monthly, filter by year and month
-                $query->where(function($q) use ($startDate, $endDate) {
-                    $q->where('year_num', '>=', $startDate->year)
+                $query->where('year_num', '>=', $startDate->year)
                       ->where('year_num', '<=', $endDate->year);
-                    
-                    // If same year, apply month filter
-                    if ($startDate->year === $endDate->year) {
-                        $q->whereBetween('month_num', [
-                            $startDate->month,
-                            $endDate->month
-                        ]);
-                    }
-                });
+
+                if ($startDate->year === $endDate->year) {
+                    $query->whereBetween('month_num', [$startDate->month, $endDate->month]);
+                }
                 break;
 
             case 'daily_store_summary':
             case 'daily_item_summary':
-                $query->whereBetween('business_date', [
-                    $startDate->toDateString(),
-                    $endDate->toDateString()
-                ]);
+                $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 break;
         }
 
@@ -481,28 +546,28 @@ class ExportingController extends Controller
     }
 
     /**
-     * Get primary key for a model
-     */
-    protected function getPrimaryKeyForModel(string $model): string
-    {
-        return 'id';
-    }
-
-    /**
-     * Make filename for export
+     * Make filename for export (dates nullable)
      */
     protected function makeFilename(
         string $model,
-        Carbon $startDate,
-        Carbon $endDate,
+        ?Carbon $startDate,
+        ?Carbon $endDate,
         ?string $store,
         string $extension
     ): string {
-        $parts = [
-            $model,
-            $startDate->format('Ymd'),
-            $endDate->format('Ymd')
-        ];
+        $parts = [$model];
+
+        if ($startDate) {
+            $parts[] = $startDate->format('Ymd');
+        } else {
+            $parts[] = 'start_any';
+        }
+
+        if ($endDate) {
+            $parts[] = $endDate->format('Ymd');
+        } else {
+            $parts[] = 'end_any';
+        }
 
         if ($store) {
             $parts[] = $store;

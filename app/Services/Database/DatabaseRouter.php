@@ -9,16 +9,13 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * DatabaseRouter - Smart query routing between operational and analytics databases
- * 
- * Automatically routes queries based on date ranges:
- * - Last 90 days: operational database (hot tables)
- * - 91+ days: analytics database (archive tables)
- * - Spanning queries: UNION across both databases
- * 
- * Usage:
- * $orders = DatabaseRouter::query('detail_orders', $startDate, $endDate)
- *     ->where('franchise_store', 'STORE001')
- *     ->get();
+ *
+ * Supports nullable date ranges:
+ * - startDate = null AND endDate = null  => all data (hot + archive UNION)
+ * - startDate only => from startDate to today
+ * - endDate only   => from earliest to endDate
+ *
+ * Hot/archive routing is preserved.
  */
 class DatabaseRouter
 {
@@ -28,144 +25,141 @@ class DatabaseRouter
     protected const HOT_DATA_DAYS = 90;
 
     /**
-     * Get the appropriate database connection for a given date
-     * 
-     * @param Carbon $date Date to check
-     * @return string 'operational' or 'analytics'
+     * Get cutoff date
      */
-    public static function getDatabase(Carbon $date): string
-    {
-        $cutoff = Carbon::now()->subDays(self::HOT_DATA_DAYS);
-        return $date >= $cutoff ? 'operational' : 'analytics';
-    }
-
-    /**
-     * Get the appropriate table name for a given base table and date
-     * 
-     * @param string $baseTable Base table name (without suffix)
-     * @param Carbon $date Date to check
-     * @return string Full table name with suffix
-     */
-    public static function getTableName(string $baseTable, Carbon $date): string
-    {
-        $db = self::getDatabase($date);
-
-        if ($db === 'operational') {
-            return "{$baseTable}_hot";
-        } else {
-            return "{$baseTable}_archive";
-        }
-    }
-
-    /**
-     * Create a query builder that automatically routes to correct database(s)
-     * 
-     * Handles three cases:
-     * 1. All data in hot (recent queries)
-     * 2. All data in archive (historical queries)
-     * 3. Data spans both (uses UNION)
-     * 
-     * @param string $baseTable Base table name (without _hot or _archive suffix)
-     * @param Carbon $startDate Start date of query range
-     * @param Carbon $endDate End date of query range
-     * @return Builder Query builder ready for additional filtering
-     */
-    public static function query(string $baseTable, Carbon $startDate, Carbon $endDate): Builder
-    {
-        $cutoff = Carbon::now()->subDays(self::HOT_DATA_DAYS);
-
-        // Case 1: All data is in archive (end date is older than cutoff)
-        if ($endDate < $cutoff) {
-            Log::debug("Routing to archive only", [
-                'table' => $baseTable,
-                'start' => $startDate->toDateString(),
-                'end' => $endDate->toDateString()
-            ]);
-
-            return DB::connection('analytics')
-                ->table("{$baseTable}_archive")
-                ->whereBetween('business_date', [
-                    $startDate->toDateString(), 
-                    $endDate->toDateString()
-                ]);
-        }
-
-        // Case 2: All data is in hot (start date is within hot period)
-        if ($startDate >= $cutoff) {
-            Log::debug("Routing to operational only", [
-                'table' => $baseTable,
-                'start' => $startDate->toDateString(),
-                'end' => $endDate->toDateString()
-            ]);
-
-            return DB::connection('operational')
-                ->table("{$baseTable}_hot")
-                ->whereBetween('business_date', [
-                    $startDate->toDateString(), 
-                    $endDate->toDateString()
-                ]);
-        }
-
-        // Case 3: Query spans both databases - use UNION
-        Log::debug("Routing to UNION (spans both databases)", [
-            'table' => $baseTable,
-            'start' => $startDate->toDateString(),
-            'end' => $endDate->toDateString(),
-            'cutoff' => $cutoff->toDateString()
-        ]);
-
-        $hotQuery = DB::connection('operational')
-            ->table("{$baseTable}_hot")
-            ->whereBetween('business_date', [
-                $cutoff->toDateString(), 
-                $endDate->toDateString()
-            ]);
-
-        $archiveQuery = DB::connection('analytics')
-            ->table("{$baseTable}_archive")
-            ->whereBetween('business_date', [
-                $startDate->toDateString(), 
-                $cutoff->copy()->subDay()->toDateString()
-            ]);
-
-        // Return UNION query
-        return $archiveQuery->union($hotQuery);
-    }
-
-    /**
-     * Check if a date range spans both databases
-     * 
-     * @param Carbon $startDate Start date
-     * @param Carbon $endDate End date
-     * @return bool True if query needs UNION
-     */
-    public static function spansDatabase(Carbon $startDate, Carbon $endDate): bool
-    {
-        $cutoff = Carbon::now()->subDays(self::HOT_DATA_DAYS);
-        return $startDate < $cutoff && $endDate >= $cutoff;
-    }
-
-    /**
-     * Get cutoff date between hot and archive data
-     * 
-     * @return Carbon Cutoff date
-     */
-    public static function getCutoffDate(): Carbon
+    protected static function cutoff(): Carbon
     {
         return Carbon::now()->subDays(self::HOT_DATA_DAYS);
     }
 
     /**
+     * Create a query builder that automatically routes to correct database(s)
+     *
+     * @param string $baseTable
+     * @param Carbon|null $startDate
+     * @param Carbon|null $endDate
+     * @return Builder
+     */
+    public static function query(
+        string $baseTable,
+        ?Carbon $startDate = null,
+        ?Carbon $endDate = null
+    ): Builder {
+        $cutoff = self::cutoff();
+
+        // Normalize open-ended ranges
+        if ($startDate && !$endDate) {
+            $endDate = Carbon::now();
+        }
+
+        if (!$startDate && $endDate) {
+            // Arbitrary "old enough" date
+            $startDate = Carbon::create(2000, 1, 1);
+        }
+
+        /**
+         * CASE 0: No dates at all → UNION ALL (hot + archive)
+         */
+        if (!$startDate && !$endDate) {
+            Log::debug('Routing ALL data (no date filter)', [
+                'table' => $baseTable,
+            ]);
+
+            $archive = DB::connection('analytics')
+                ->table("{$baseTable}_archive");
+
+            $hot = DB::connection('operational')
+                ->table("{$baseTable}_hot");
+
+            return $archive->unionAll($hot);
+        }
+
+        /**
+         * CASE 1: Entire range in ARCHIVE
+         */
+        if ($endDate < $cutoff) {
+            Log::debug('Routing to archive only', [
+                'table' => $baseTable,
+                'start' => $startDate->toDateString(),
+                'end'   => $endDate->toDateString(),
+            ]);
+
+            return DB::connection('analytics')
+                ->table("{$baseTable}_archive")
+                ->whereBetween('business_date', [
+                    $startDate->toDateString(),
+                    $endDate->toDateString(),
+                ]);
+        }
+
+        /**
+         * CASE 2: Entire range in HOT
+         */
+        if ($startDate >= $cutoff) {
+            Log::debug('Routing to operational only', [
+                'table' => $baseTable,
+                'start' => $startDate->toDateString(),
+                'end'   => $endDate->toDateString(),
+            ]);
+
+            return DB::connection('operational')
+                ->table("{$baseTable}_hot")
+                ->whereBetween('business_date', [
+                    $startDate->toDateString(),
+                    $endDate->toDateString(),
+                ]);
+        }
+
+        /**
+         * CASE 3: Spans both → UNION
+         */
+        Log::debug('Routing to UNION (spans hot + archive)', [
+            'table'  => $baseTable,
+            'start'  => $startDate->toDateString(),
+            'end'    => $endDate->toDateString(),
+            'cutoff' => $cutoff->toDateString(),
+        ]);
+
+        $archiveQuery = DB::connection('analytics')
+            ->table("{$baseTable}_archive")
+            ->whereBetween('business_date', [
+                $startDate->toDateString(),
+                $cutoff->copy()->subDay()->toDateString(),
+            ]);
+
+        $hotQuery = DB::connection('operational')
+            ->table("{$baseTable}_hot")
+            ->whereBetween('business_date', [
+                $cutoff->toDateString(),
+                $endDate->toDateString(),
+            ]);
+
+        return $archiveQuery->unionAll($hotQuery);
+    }
+
+    /**
+     * Check if a date range spans both databases
+     */
+    public static function spansDatabase(Carbon $startDate, Carbon $endDate): bool
+    {
+        $cutoff = self::cutoff();
+        return $startDate < $cutoff && $endDate >= $cutoff;
+    }
+
+    /**
+     * Get cutoff date between hot and archive data
+     */
+    public static function getCutoffDate(): Carbon
+    {
+        return self::cutoff();
+    }
+
+    /**
      * Get statistics about data distribution across databases
-     * 
-     * Useful for monitoring and capacity planning
-     * 
-     * @param string $baseTable Base table name
-     * @return array Statistics array
      */
     public static function getDataDistribution(string $baseTable): array
     {
-        $cutoff = self::getCutoffDate();
+        $cutoff = self::cutoff();
 
         $hotCount = DB::connection('operational')
             ->table("{$baseTable}_hot")
@@ -178,20 +172,18 @@ class DatabaseRouter
         $totalRows = $hotCount + $archiveCount;
 
         return [
-            'table' => $baseTable,
-            'hot_rows' => $hotCount,
-            'archive_rows' => $archiveCount,
-            'total_rows' => $totalRows,
-            'cutoff_date' => $cutoff->toDateString(),
-            'hot_percentage' => $totalRows > 0 ? round(($hotCount / $totalRows) * 100, 2) : 0,
-            'archive_percentage' => $totalRows > 0 ? round(($archiveCount / $totalRows) * 100, 2) : 0,
+            'table'               => $baseTable,
+            'hot_rows'            => $hotCount,
+            'archive_rows'        => $archiveCount,
+            'total_rows'          => $totalRows,
+            'cutoff_date'         => $cutoff->toDateString(),
+            'hot_percentage'      => $totalRows > 0 ? round(($hotCount / $totalRows) * 100, 2) : 0,
+            'archive_percentage'  => $totalRows > 0 ? round(($archiveCount / $totalRows) * 100, 2) : 0,
         ];
     }
 
     /**
      * Get data distribution for all tables
-     * 
-     * @return array Array of table statistics
      */
     public static function getAllDataDistribution(): array
     {
