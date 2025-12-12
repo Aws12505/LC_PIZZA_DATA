@@ -105,8 +105,8 @@ class ExportingController extends Controller
         set_time_limit(0);
 
         $validated = $request->validate([
-            'start' => 'required|date',
-            'end' => 'required|date|after_or_equal:start',
+            'start' => 'nullable|date',
+            'end' => 'nullable|date|after_or_equal:start',
             'store' => 'nullable|string',
             'model' => 'required|string|in:' . implode(',', $this->getAvailableModels()),
             'limit' => 'nullable|integer|min:1|max:50000',
