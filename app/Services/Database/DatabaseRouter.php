@@ -127,7 +127,7 @@ class DatabaseRouter
         ]);
 
         $archive = self::archiveQuery($baseTable);
-        $hot = self::hotQuery($baseTable);
+        $hot     = self::hotQuery($baseTable);
 
         $queries = [];
 
