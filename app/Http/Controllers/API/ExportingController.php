@@ -267,7 +267,7 @@ class ExportingController extends Controller
             if ($store) $q->where('franchise_store', $store);
 
             $rowCount = 0;
-            $q->orderBy('id')->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$rowCount) {
+            $q->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$rowCount) {
                 foreach ($rows as $row) {
                     $line = [];
                     foreach ($columns as $col) {
@@ -293,7 +293,9 @@ class ExportingController extends Controller
             $queryRows = 0;
 
             try {
-                $q->orderBy('id')->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$queryRows) {
+                Log::info("Starting chunk streaming for: {$tableName}");
+
+                $q->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$queryRows) {
                     foreach ($rows as $row) {
                         $line = [];
                         foreach ($columns as $col) {
@@ -308,7 +310,12 @@ class ExportingController extends Controller
                 $totalRows += $queryRows;
 
             } catch (\Throwable $e) {
-                Log::error("Failed streaming from {$tableName}: " . $e->getMessage());
+                Log::error("Failed streaming from {$tableName}", [
+                    'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
                 throw $e;
             }
         }
