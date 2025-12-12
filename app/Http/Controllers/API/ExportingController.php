@@ -10,19 +10,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-/**
- * ExportingController - Export data as CSV or JSON
- *
- * Updates:
- * - start/end are nullable:
- *   - if missing => no date filter
- * - model=all (CSV endpoint only):
- *   - returns a ZIP with one CSV per model
- *
- * IMPORTANT:
- * - For operational/analytics tables we DO NOT UNION across connections.
- *   We stream archive and hot sequentially when needed via DatabaseRouter::routedQueries().
- */
 class ExportingController extends Controller
 {
     protected ReportService $reportService;
@@ -33,11 +20,9 @@ class ExportingController extends Controller
     }
 
     /**
-     * Export data as CSV
-     *
-     * GET /api/export/csv?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders
-     * GET /api/export/csv?model=all&store=03795
-     * GET /api/export/csv?model=all  (no date filter)
+     * CSV export
+     * - start/end nullable
+     * - model=all => zip with one csv per model
      */
     public function exportCSV(Request $request)
     {
@@ -64,27 +49,25 @@ class ExportingController extends Controller
         $filename = $this->makeFilename($model, $startDate, $endDate, $store, 'csv');
 
         $callback = function () use ($model, $startDate, $endDate, $store, $columns) {
-            try {
-                $out = fopen('php://output', 'w');
+            $out = fopen('php://output', 'w');
 
-                // header
+            try {
                 fputcsv($out, $columns);
 
-                // rows
                 $this->streamCsvRowsForModel($out, $model, $startDate, $endDate, $store, $columns);
-
-                fclose($out);
             } catch (\Throwable $e) {
-                Log::error('CSV export failed', [
+                $this->logExportException($e, [
+                    'type'  => 'csv',
                     'model' => $model,
                     'start' => $startDate?->toDateString(),
                     'end'   => $endDate?->toDateString(),
                     'store' => $store,
-                    'error' => $e->getMessage(),
-                    'file'  => $e->getFile(),
-                    'line'  => $e->getLine(),
                 ]);
-                throw $e;
+
+                // IMPORTANT: don't rethrow during streaming, or Laravel will append JSON into CSV.
+                // Just stop.
+            } finally {
+                fclose($out);
             }
         };
 
@@ -96,10 +79,7 @@ class ExportingController extends Controller
     }
 
     /**
-     * Export data as JSON (single model only)
-     *
-     * GET /api/export/json?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders&limit=1000
-     * GET /api/export/json?model=detail_orders (no date filter)
+     * JSON export (single model)
      */
     public function exportJson(Request $request)
     {
@@ -121,13 +101,12 @@ class ExportingController extends Controller
         $limit     = $validated['limit'] ?? null;
 
         try {
-            // Aggregation tables: single query on analytics connection
             if ($this->isAggregationTable($model)) {
-                $query = $this->buildAggregationQuery($model, $startDate, $endDate);
-                if ($store) $query->where('franchise_store', $store);
-                if ($limit) $query->limit($limit);
+                $q = $this->buildAggregationQuery($model, $startDate, $endDate);
+                if ($store) $q->where('franchise_store', $store);
+                if ($limit) $q->limit($limit);
 
-                $data = $query->get();
+                $data = $q->get();
 
                 return response()->json([
                     'success'      => true,
@@ -136,20 +115,19 @@ class ExportingController extends Controller
                 ]);
             }
 
-            // Operational/analytics tables:
-            // If range spans, merge results from both queries in-memory.
-            // (JSON is limited to 50k so acceptable.)
             $queries = DatabaseRouter::routedQueries($model, $startDate, $endDate);
 
             $all = collect();
             foreach ($queries as $q) {
                 if ($store) $q->where('franchise_store', $store);
-                if ($limit) $q->limit($limit); // applies per query; overall cap not guaranteed across 2
-                $all = $all->concat($q->get());
-                if ($limit && $all->count() >= $limit) {
-                    $all = $all->take($limit);
-                    break;
+
+                if ($limit) {
+                    $remaining = $limit - $all->count();
+                    if ($remaining <= 0) break;
+                    $q->limit($remaining);
                 }
+
+                $all = $all->concat($q->get());
             }
 
             return response()->json([
@@ -158,27 +136,24 @@ class ExportingController extends Controller
                 'data'         => $all->values(),
             ]);
         } catch (\Throwable $e) {
-            Log::error('JSON export failed', [
+            $this->logExportException($e, [
+                'type'  => 'json',
                 'model' => $model,
                 'start' => $startDate?->toDateString(),
                 'end'   => $endDate?->toDateString(),
                 'store' => $store,
                 'limit' => $limit,
-                'error' => $e->getMessage(),
-                'file'  => $e->getFile(),
-                'line'  => $e->getLine(),
             ]);
-            throw $e;
+            throw $e; // normal JSON request: safe to rethrow
         }
     }
 
     /**
-     * Export all models into a ZIP (each model => CSV inside zip)
+     * ZIP export for model=all
      */
     protected function exportAllModelsZip(?Carbon $startDate, ?Carbon $endDate, ?string $store)
     {
         $models = $this->getAvailableModels();
-
         $zipFilename = $this->makeFilename('all_models', $startDate, $endDate, $store, 'zip');
 
         $callback = function () use ($models, $startDate, $endDate, $store) {
@@ -203,46 +178,47 @@ class ExportingController extends Controller
                     $tmpCsvPaths[] = $tmpCsv;
 
                     $fh = fopen($tmpCsv, 'w');
-
-                    // header
                     fputcsv($fh, $columns);
 
-                    // rows
-                    $this->streamCsvRowsForModel($fh, $model, $startDate, $endDate, $store, $columns);
+                    try {
+                        $this->streamCsvRowsForModel($fh, $model, $startDate, $endDate, $store, $columns);
+                    } catch (\Throwable $e) {
+                        // log and continue to next model (so 1 broken table doesn't kill the whole zip)
+                        $this->logExportException($e, [
+                            'type'  => 'zip-model',
+                            'model' => $model,
+                            'start' => $startDate?->toDateString(),
+                            'end'   => $endDate?->toDateString(),
+                            'store' => $store,
+                        ]);
+                    } finally {
+                        fclose($fh);
+                    }
 
-                    fclose($fh);
-
-                    // Add as "<model>.csv" inside zip
                     $zip->addFile($tmpCsv, $model . '.csv');
                 }
 
                 $zip->close();
 
-                // Stream zip file to output
                 $out = fopen('php://output', 'wb');
                 $in  = fopen($zipPath, 'rb');
                 stream_copy_to_stream($in, $out);
                 fclose($in);
                 fclose($out);
             } catch (\Throwable $e) {
-                Log::error('ZIP export failed', [
+                $this->logExportException($e, [
+                    'type'  => 'zip',
+                    'model' => 'all_models',
                     'start' => $startDate?->toDateString(),
                     'end'   => $endDate?->toDateString(),
                     'store' => $store,
-                    'error' => $e->getMessage(),
-                    'file'  => $e->getFile(),
-                    'line'  => $e->getLine(),
                 ]);
-                throw $e;
+
+                // IMPORTANT: don't rethrow during streaming
             } finally {
-                // Cleanup
-                if (file_exists($zipPath)) {
-                    @unlink($zipPath);
-                }
+                if (file_exists($zipPath)) @unlink($zipPath);
                 foreach ($tmpCsvPaths as $p) {
-                    if (file_exists($p)) {
-                        @unlink($p);
-                    }
+                    if (file_exists($p)) @unlink($p);
                 }
             }
         };
@@ -255,27 +231,25 @@ class ExportingController extends Controller
     }
 
     /**
-     * Stream rows for a model to an already-open CSV file handle.
-     *
-     * - Aggregation tables: single query in analytics
-     * - Operational tables: 1 or 2 queries via DatabaseRouter::routedQueries()
+     * Streams rows for a model into an open CSV handle.
+     * - For hot/archive tables: routes queries and streams sequentially (no union).
+     * - For aggregation: analytics only.
+     * - Safe column selection per underlying table to avoid "unknown column" crashes.
      */
     protected function streamCsvRowsForModel($fh, string $model, ?Carbon $startDate, ?Carbon $endDate, ?string $store, array $columns): void
     {
-        // Aggregation tables live entirely in analytics connection
         if ($this->isAggregationTable($model)) {
-            $query = $this->buildAggregationQuery($model, $startDate, $endDate);
+            $q = $this->buildAggregationQuery($model, $startDate, $endDate);
 
-            if ($store) {
-                $query->where('franchise_store', $store);
-            }
+            if ($store) $q->where('franchise_store', $store);
 
-            $query->select($columns);
+            $safeCols = $this->safeSelectColumns($q, $columns);
+            $q->select($safeCols);
 
-            foreach ($query->cursor() as $row) {
+            foreach ($q->cursor() as $row) {
                 $line = [];
                 foreach ($columns as $col) {
-                    $line[] = $row->{$col} ?? null;
+                    $line[] = in_array($col, $safeCols, true) ? ($row->{$col} ?? null) : null;
                 }
                 fputcsv($fh, $line);
             }
@@ -283,20 +257,18 @@ class ExportingController extends Controller
             return;
         }
 
-        // Operational/Analytics split routing (no cross-connection unions)
         $queries = DatabaseRouter::routedQueries($model, $startDate, $endDate);
 
-        foreach ($queries as $query) {
-            if ($store) {
-                $query->where('franchise_store', $store);
-            }
+        foreach ($queries as $q) {
+            if ($store) $q->where('franchise_store', $store);
 
-            $query->select($columns);
+            $safeCols = $this->safeSelectColumns($q, $columns);
+            $q->select($safeCols);
 
-            foreach ($query->cursor() as $row) {
+            foreach ($q->cursor() as $row) {
                 $line = [];
                 foreach ($columns as $col) {
-                    $line[] = $row->{$col} ?? null;
+                    $line[] = in_array($col, $safeCols, true) ? ($row->{$col} ?? null) : null;
                 }
                 fputcsv($fh, $line);
             }
@@ -304,8 +276,50 @@ class ExportingController extends Controller
     }
 
     /**
-     * Check if model is an aggregation table
+     * Returns the subset of desired columns that actually exist on the query's table.
+     * (Avoids "Unknown column" errors when hot/archive schemas differ.)
      */
+    protected function safeSelectColumns($query, array $desiredColumns): array
+    {
+        $conn = $query->getConnection();
+        $table = $query->from; // Query\Builder exposes ->from
+
+        $actual = $conn->getSchemaBuilder()->getColumnListing($table);
+
+        $safe = array_values(array_intersect($desiredColumns, $actual));
+
+        if (empty($safe)) {
+            throw new \RuntimeException("No matching columns found for table: {$table}");
+        }
+
+        return $safe;
+    }
+
+    /**
+     * Log exceptions even when laravel.log isn't writing.
+     */
+    protected function logExportException(\Throwable $e, array $context = []): void
+    {
+        $payload = [
+            'when'    => now()->toDateTimeString(),
+            'context' => $context,
+            'error'   => $e->getMessage(),
+            'file'    => $e->getFile(),
+            'line'    => $e->getLine(),
+        ];
+
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES);
+
+        // 1) Laravel logger (may fail silently depending on config/permissions)
+        try { Log::error('EXPORT FAILED: ' . $json); } catch (\Throwable $x) {}
+
+        // 2) Dedicated file in storage/logs
+        @file_put_contents(storage_path('logs/export_errors.log'), $json . PHP_EOL, FILE_APPEND);
+
+        // 3) PHP error log
+        @error_log('EXPORT FAILED: ' . $json);
+    }
+
     protected function isAggregationTable(string $model): bool
     {
         return in_array($model, [
@@ -317,15 +331,11 @@ class ExportingController extends Controller
         ], true);
     }
 
-    /**
-     * Build query for aggregation tables (dates nullable)
-     * If either date missing => no date filter applied.
-     */
     protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate)
     {
         $query = DB::connection('analytics')->table($model);
 
-        // If either date is missing => no filtering
+        // If either date missing => no date filter
         if (!$startDate || !$endDate) {
             return $query;
         }
@@ -371,18 +381,13 @@ class ExportingController extends Controller
         return $query;
     }
 
-    /**
-     * Get available models
-     */
     protected function getAvailableModels(): array
     {
         return [
-            // Operational/Analytics tables (with hot/archive)
             'detail_orders', 'order_line', 'summary_sales', 'summary_items',
             'summary_transactions', 'waste', 'cash_management', 'financial_views',
             'alta_inventory_waste', 'alta_inventory_ingredient_usage',
             'alta_inventory_ingredient_orders', 'alta_inventory_cogs',
-            // Aggregation tables
             'yearly_store_summary', 'yearly_item_summary',
             'weekly_store_summary', 'weekly_item_summary',
             'quarterly_store_summary', 'quarterly_item_summary',
@@ -391,10 +396,7 @@ class ExportingController extends Controller
         ];
     }
 
-    /**
-     * Get columns for a model
-     */
-    protected function getColumnsForModel(string $model): array
+        protected function getColumnsForModel(string $model): array
     {
         // (Your existing huge column map unchanged)
         // Paste your existing $columnMap here exactly as-is.
@@ -614,9 +616,6 @@ class ExportingController extends Controller
         return $columnMap[$model] ?? ['*'];
     }
 
-    /**
-     * Make filename for export (dates nullable)
-     */
     protected function makeFilename(
         string $model,
         ?Carbon $startDate,
@@ -625,13 +624,9 @@ class ExportingController extends Controller
         string $extension
     ): string {
         $parts = [$model];
-
         $parts[] = $startDate ? $startDate->format('Ymd') : 'start_any';
         $parts[] = $endDate ? $endDate->format('Ymd') : 'end_any';
-
-        if ($store) {
-            $parts[] = $store;
-        }
+        if ($store) $parts[] = $store;
 
         return implode('_', $parts) . '.' . $extension;
     }
