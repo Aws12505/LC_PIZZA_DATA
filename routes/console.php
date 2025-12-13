@@ -132,6 +132,14 @@ Schedule::call(function () {
     ->timezone('America/New_York')
     ->name('clear-old-logs');
 
+
+
+Schedule::command('uploads:cleanup-temp')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->appendOutputTo(storage_path('logs/cleanup-temp-uploads.log'))
+    ->name('cleanup-temp-uploads');
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // SCHEDULER INFO
 // ════════════════════════════════════════════════════════════════════════════════════════════
