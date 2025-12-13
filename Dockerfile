@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
 # GD with jpeg/freetype/webp
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp
 
-# Big practical “top options” extension set
+# Big practical "top options" extension set
 RUN docker-php-ext-install -j"$(nproc)" \
     bcmath \
     calendar \
@@ -70,4 +70,12 @@ RUN { \
       echo "max_input_time=600"; \
     } > /usr/local/etc/php/conf.d/custom.ini
 
+# ====== ENTRYPOINT SETUP ======
+# Copy entrypoint script
+COPY docker-entrypoint-backend.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 EXPOSE 80
+
+# Use entrypoint instead of default CMD
+ENTRYPOINT ["docker-entrypoint.sh"]

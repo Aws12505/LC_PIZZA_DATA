@@ -44,4 +44,10 @@ COPY supervisord-worker.conf /etc/supervisor/conf.d/supervisord.conf
 # Create log directory
 RUN mkdir -p /var/log/supervisor
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# ====== ENTRYPOINT SETUP ======
+# Copy entrypoint script
+COPY docker-entrypoint-worker.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Use entrypoint
+ENTRYPOINT ["docker-entrypoint.sh"]
