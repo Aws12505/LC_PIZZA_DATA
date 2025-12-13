@@ -151,4 +151,48 @@ class DatabaseRouter
 
         return $queries;
     }
+
+    public static function getDataDistribution(string $baseTable): array
+    {
+        $cutoff = self::getCutoffDate();
+
+        $hotCount = DB::connection('operational')
+            ->table("{$baseTable}_hot")
+            ->count();
+
+        $archiveCount = DB::connection('analytics')
+            ->table("{$baseTable}_archive")
+            ->count();
+
+        $totalRows = $hotCount + $archiveCount;
+
+        return [
+            'table'              => $baseTable,
+            'hot_rows'           => $hotCount,
+            'archive_rows'       => $archiveCount,
+            'total_rows'         => $totalRows,
+            'cutoff_date'        => $cutoff->toDateString(),
+            'hot_percentage'     => $totalRows > 0 ? round(($hotCount / $totalRows) * 100, 2) : 0,
+            'archive_percentage' => $totalRows > 0 ? round(($archiveCount / $totalRows) * 100, 2) : 0,
+        ];
+    }
+
+    /**
+     * Get data distribution for all tables
+     */
+    public static function getAllDataDistribution(): array
+    {
+        $tables = [
+            'detail_orders', 'order_line', 'summary_sales', 'summary_items',
+            'summary_transactions', 'waste', 'cash_management', 'financial_views',
+            'finance_data', 'final_summaries', 'hourly_sales'
+        ];
+
+        $stats = [];
+        foreach ($tables as $table) {
+            $stats[$table] = self::getDataDistribution($table);
+        }
+
+        return $stats;
+    }
 }
