@@ -63,11 +63,11 @@ WORKDIR /var/www/html
 
 # Sensible PHP limits
 RUN { \
-      echo "memory_limit=512M"; \
-      echo "upload_max_filesize=512M"; \
-      echo "post_max_size=512M"; \
-      echo "max_execution_time=300"; \
-      echo "max_input_time=300"; \
+      echo "memory_limit=2G"; \
+      echo "upload_max_filesize=1G"; \
+      echo "post_max_size=1G"; \
+      echo "max_execution_time=600"; \
+      echo "max_input_time=600"; \
     } > /usr/local/etc/php/conf.d/custom.ini
 
 EXPOSE 80

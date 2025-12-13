@@ -7,7 +7,16 @@ services:
       dockerfile: Dockerfile
     container_name: Data
     ports:
-      - "49153:80"   # <-- change 49153 to whatever random host port you want
+      - "49153:80"
+    volumes:
+      - ./:/var/www/html
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: Data_Worker
     volumes:
       - ./:/var/www/html
     restart: unless-stopped
