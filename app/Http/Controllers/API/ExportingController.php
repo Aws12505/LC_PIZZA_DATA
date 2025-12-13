@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\Log;
 class ExportingController extends Controller
 {
     protected const CHUNK_SIZE = 5000;
-
     protected ReportService $reportService;
 
     public function __construct(ReportService $reportService)
@@ -23,8 +22,8 @@ class ExportingController extends Controller
 
     /**
      * CSV export
-     * - start/end nullable
-     * - model=all => zip with one csv per model
+     * GET /api/export/csv?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders
+     * GET /api/export/csv?model=all (exports all models as ZIP)
      */
     public function exportCSV(Request $request)
     {
@@ -32,47 +31,53 @@ class ExportingController extends Controller
         set_time_limit(0);
         ini_set('memory_limit', '512M');
 
-        $validated = $request->validate([
-            'start' => 'nullable|date',
-            'end'   => 'nullable|date|after_or_equal:start',
-            'store' => 'nullable|string',
-            'model' => 'required|string|in:' . implode(',', array_merge($this->getAvailableModels(), ['all'])),
-        ]);
-
-        $startDate = !empty($validated['start']) ? Carbon::parse($validated['start']) : null;
-        $endDate   = !empty($validated['end'])   ? Carbon::parse($validated['end'])   : null;
-        $store     = $validated['store'] ?? null;
-        $model     = $validated['model'];
-
-        Log::info('EXPORT CSV REQUEST', [
-            'model' => $model,
-            'start' => $startDate?->toDateString(),
-            'end'   => $endDate?->toDateString(),
-            'store' => $store,
-        ]);
-
         try {
-            if ($model === 'all') {
-                return $this->exportAllModelsZip($startDate, $endDate, $store);
-            }
+            $validated = $request->validate([
+                'start' => 'nullable|date',
+                'end'   => 'nullable|date|after_or_equal:start',
+                'store' => 'nullable|string',
+                'model' => 'required|string|in:' . implode(',', array_merge($this->getAvailableModels(), ['all'])),
+            ]);
 
-            return $this->exportSingleModelCsv($model, $startDate, $endDate, $store);
-        } catch (\Throwable $e) {
-            $this->logExportException($e, [
-                'type'  => 'csv',
+            $startDate = !empty($validated['start']) ? Carbon::parse($validated['start']) : null;
+            $endDate   = !empty($validated['end'])   ? Carbon::parse($validated['end'])   : null;
+            $store     = $validated['store'] ?? null;
+            $model     = $validated['model'];
+
+            Log::info('EXPORT CSV REQUEST', [
                 'model' => $model,
                 'start' => $startDate?->toDateString(),
                 'end'   => $endDate?->toDateString(),
                 'store' => $store,
             ]);
 
-            // Let Laravel return proper JSON/HTML error instead of a silent 500
-            throw $e;
+            if ($model === 'all') {
+                return $this->exportAllModelsZip($startDate, $endDate, $store);
+            }
+
+            return $this->exportSingleModelCsv($model, $startDate, $endDate, $store);
+
+        } catch (\Throwable $e) {
+            $this->logExportException($e, [
+                'type'  => 'csv',
+                'model' => $request->get('model'),
+                'start' => $startDate?->toDateString() ?? null,
+                'end'   => $endDate?->toDateString() ?? null,
+                'store' => $store ?? null,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+            ], 500);
         }
     }
 
     /**
-     * JSON export (single model)
+     * JSON export
+     * GET /api/export/json?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders&limit=1000
      */
     public function exportJson(Request $request)
     {
@@ -146,12 +151,17 @@ class ExportingController extends Controller
                 'limit' => $limit,
             ]);
 
-            throw $e;
+            return response()->json([
+                'success' => false,
+                'error'   => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+            ], 500);
         }
     }
 
     /**
-     * Single‑model CSV -> temp file -> download
+     * Single model CSV export
      */
     protected function exportSingleModelCsv(
         string $model,
@@ -162,25 +172,19 @@ class ExportingController extends Controller
         $columns  = $this->getColumnsForModel($model);
         $filename = $this->makeFilename($model, $startDate, $endDate, $store, 'csv');
 
-        $tmpDir  = storage_path('app/export_tmp');
+        $tmpDir = storage_path('app/export_tmp');
         if (!is_dir($tmpDir)) {
             @mkdir($tmpDir, 0775, true);
         }
         $tmpPath = $tmpDir . '/' . $filename . '.' . uniqid('tmp_', true);
 
-        Log::info('EXPORT CSV FILE PREP', [
-            'model'    => $model,
-            'tmp_path' => $tmpPath,
-        ]);
-
         $fh = fopen($tmpPath, 'w');
         if ($fh === false) {
-            throw new \RuntimeException("Cannot open temp CSV file for writing: {$tmpPath}");
+            throw new \RuntimeException("Cannot open temp CSV file: {$tmpPath}");
         }
 
         try {
             fputcsv($fh, $columns);
-
             $this->writeCsvRowsForModel($fh, $model, $startDate, $endDate, $store, $columns);
         } finally {
             fclose($fh);
@@ -212,10 +216,7 @@ class ExportingController extends Controller
         $zipPath     = $tmpDir . '/export_' . uniqid('', true) . '.zip';
         $tmpCsvPaths = [];
 
-        Log::info('EXPORT ZIP PREP', [
-            'zip'    => $zipPath,
-            'models' => $models,
-        ]);
+        Log::info('EXPORT ALL MODELS ZIP', ['models' => count($models)]);
 
         $zip = new \ZipArchive();
         if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
@@ -255,18 +256,12 @@ class ExportingController extends Controller
             }
 
             $zip->close();
-        } catch (\Throwable $e) {
-            $this->logExportException($e, [
-                'type'  => 'zip',
-                'model' => 'all_models',
-                'start' => $startDate?->toDateString(),
-                'end'   => $endDate?->toDateString(),
-                'store' => $store,
-            ]);
-            throw $e;
+        } finally {
+            foreach ($tmpCsvPaths as $p) {
+                if (file_exists($p)) @unlink($p);
+            }
         }
 
-        // Download response; delete zip after
         return response()->download($zipPath, $zipFilename, [
             'Content-Type'  => 'application/zip',
             'Cache-Control' => 'no-store, no-cache, must-revalidate',
@@ -274,8 +269,8 @@ class ExportingController extends Controller
     }
 
     /**
-     * Core write logic: write rows for a model into an open CSV handle.
-     * Uses routedQueries() for hot/archive; aggregation tables hit analytics directly.
+     * Write CSV rows for a model
+     * **KEY FIX: Adds orderBy before chunk()**
      */
     protected function writeCsvRowsForModel(
         $fh,
@@ -289,8 +284,13 @@ class ExportingController extends Controller
             $q = $this->buildAggregationQuery($model, $startDate, $endDate);
             if ($store) $q->where('franchise_store', $store);
 
+            $orderColumns = $this->getOrderColumnsForModel($model);
+            foreach ($orderColumns as $col) {
+                $q->orderBy($col);
+            }
+
             $rowCount = 0;
-            $q->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$rowCount, $model) {
+            $q->select($columns)->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$rowCount) {
                 foreach ($rows as $row) {
                     $line = [];
                     foreach ($columns as $col) {
@@ -301,7 +301,7 @@ class ExportingController extends Controller
                 }
             });
 
-            Log::info("WROTE CSV ROWS FOR AGGREGATION", [
+            Log::info("CSV ROWS WRITTEN (AGGREGATION)", [
                 'model'     => $model,
                 'row_count' => $rowCount,
             ]);
@@ -317,15 +317,15 @@ class ExportingController extends Controller
             if ($store) $q->where('franchise_store', $store);
 
             $tableName = $q->from;
+
+            // **FIX: Add orderBy before chunk**
+            $orderColumns = $this->getOrderColumnsForModel($model);
+            foreach ($orderColumns as $col) {
+                $q->orderBy($col);
+            }
+
             $queryRows = 0;
-
-            Log::info("WRITING CSV FROM TABLE", [
-                'model' => $model,
-                'table' => $tableName,
-                'idx'   => $idx,
-            ]);
-
-            $q->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$queryRows, $tableName) {
+            $q->select($columns)->chunk(self::CHUNK_SIZE, function ($rows) use ($fh, $columns, &$queryRows) {
                 foreach ($rows as $row) {
                     $line = [];
                     foreach ($columns as $col) {
@@ -336,22 +336,55 @@ class ExportingController extends Controller
                 }
             });
 
-            Log::info("FINISHED TABLE CHUNKING", [
-                'table'      => $tableName,
-                'row_count'  => $queryRows,
+            Log::info("CSV ROWS WRITTEN (TABLE)", [
+                'table'     => $tableName,
+                'row_count' => $queryRows,
             ]);
 
             $totalRows += $queryRows;
         }
 
-        Log::info("FINISHED MODEL CSV", [
+        Log::info("CSV ROWS WRITTEN (TOTAL)", [
             'model'      => $model,
             'total_rows' => $totalRows,
         ]);
     }
 
     /**
-     * Log exceptions even when normal log might fail.
+     * Get order columns for chunk() - since tables don't have auto-increment 'id'
+     */
+    protected function getOrderColumnsForModel(string $model): array
+    {
+        $orderMap = [
+            'detail_orders' => ['franchise_store', 'business_date'],
+            'order_line' => ['franchise_store', 'business_date'],
+            'summary_sales' => ['franchise_store', 'business_date'],
+            'summary_items' => ['franchise_store', 'business_date'],
+            'summary_transactions' => ['franchise_store', 'business_date'],
+            'waste' => ['franchise_store', 'business_date'],
+            'cash_management' => ['franchise_store', 'business_date'],
+            'financial_views' => ['franchise_store', 'business_date'],
+            'alta_inventory_waste' => ['franchise_store', 'business_date'],
+            'alta_inventory_ingredient_usage' => ['franchise_store', 'business_date'],
+            'alta_inventory_ingredient_orders' => ['franchise_store', 'business_date'],
+            'alta_inventory_cogs' => ['franchise_store', 'business_date'],
+            'yearly_store_summary' => ['franchise_store', 'year_num'],
+            'yearly_item_summary' => ['franchise_store', 'year_num'],
+            'weekly_store_summary' => ['franchise_store', 'year_num', 'week_num'],
+            'weekly_item_summary' => ['franchise_store', 'year_num', 'week_num'],
+            'quarterly_store_summary' => ['franchise_store', 'year_num', 'quarter_num'],
+            'quarterly_item_summary' => ['franchise_store', 'year_num', 'quarter_num'],
+            'monthly_store_summary' => ['franchise_store', 'year_num', 'month_num'],
+            'monthly_item_summary' => ['franchise_store', 'year_num', 'month_num'],
+            'daily_store_summary' => ['franchise_store', 'business_date'],
+            'daily_item_summary' => ['franchise_store', 'business_date'],
+        ];
+
+        return $orderMap[$model] ?? ['franchise_store', 'business_date'];
+    }
+
+    /**
+     * Log exceptions
      */
     protected function logExportException(\Throwable $e, array $context = []): void
     {
@@ -363,14 +396,11 @@ class ExportingController extends Controller
             'line'    => $e->getLine(),
         ];
 
-        $json = json_encode($payload, JSON_UNESCAPED_SLASHES);
-
         try {
             Log::error('EXPORT FAILED', $payload);
         } catch (\Throwable $x) {}
 
-        @file_put_contents(storage_path('logs/export_errors.log'), $json . PHP_EOL, FILE_APPEND);
-        @error_log('EXPORT FAILED: ' . $json);
+        @file_put_contents(storage_path('logs/export_errors.log'), json_encode($payload) . PHP_EOL, FILE_APPEND);
     }
 
     protected function isAggregationTable(string $model): bool
@@ -388,7 +418,6 @@ class ExportingController extends Controller
     {
         $query = DB::connection('analytics')->table($model);
 
-        // If either date missing => no date filter
         if (!$startDate || !$endDate) {
             return $query;
         }
@@ -403,7 +432,7 @@ class ExportingController extends Controller
             case 'weekly_item_summary':
                 $query->where(function ($q) use ($startDate, $endDate) {
                     $q->whereBetween('week_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                      ->orWhereBetween('week_end_date',   [$startDate->toDateString(), $endDate->toDateString()]);
+                      ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
@@ -411,7 +440,7 @@ class ExportingController extends Controller
             case 'quarterly_item_summary':
                 $query->where(function ($q) use ($startDate, $endDate) {
                     $q->whereBetween('quarter_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                      ->orWhereBetween('quarter_end_date',   [$startDate->toDateString(), $endDate->toDateString()]);
+                      ->orWhereBetween('quarter_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
@@ -664,17 +693,11 @@ class ExportingController extends Controller
         return $columnMap[$model] ?? ['*'];
     }
 
-
-    protected function makeFilename(
-        string $model,
-        ?Carbon $startDate,
-        ?Carbon $endDate,
-        ?string $store,
-        string $extension
-    ): string {
-        $parts   = [$model];
-        $parts[] = $startDate ? $startDate->format('Ymd') : 'start_any';
-        $parts[] = $endDate   ? $endDate->format('Ymd')   : 'end_any';
+    protected function makeFilename(string $model, ?Carbon $startDate, ?Carbon $endDate, ?string $store, string $extension): string
+    {
+        $parts = [$model];
+        $parts[] = $startDate ? $startDate->format('Ymd') : 'all';
+        $parts[] = $endDate ? $endDate->format('Ymd') : 'all';
         if ($store) $parts[] = $store;
 
         return implode('_', $parts) . '.' . $extension;
