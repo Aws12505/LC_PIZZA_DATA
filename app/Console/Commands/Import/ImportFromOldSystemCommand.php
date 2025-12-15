@@ -4,22 +4,22 @@ namespace App\Console\Commands\Import;
 
 use App\Services\Main\LCReportDataService;
 use App\Jobs\ProcessCsvImportJob;
+use App\Jobs\ProcessAggregationJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
-use ZipArchive;
 
 /**
  * Import data from old system API in batches
  * 
- * Fetches data from old system, saves as CSVs, and dispatches 
- * queue jobs for processing (async, won't hang!)
+ * Fetches data from old system, saves as CSVs, dispatches queue jobs
+ * for processing, and triggers aggregation rebuild afterward.
  * 
  * Usage:
  *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30
- *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30 --batch-days=7
+ *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30 --no-aggregation
  */
 class ImportFromOldSystemCommand extends Command
 {
@@ -27,9 +27,11 @@ class ImportFromOldSystemCommand extends Command
                             {--start= : Start date (Y-m-d format)}
                             {--end= : End date (Y-m-d format)}
                             {--batch-days=7 : Number of days per batch request}
-                            {--delay=5 : Seconds to wait between batch imports}';
+                            {--delay=5 : Seconds to wait between batch imports}
+                            {--no-aggregation : Skip aggregation rebuild after import}
+                            {--aggregation-type=all : Aggregation type (daily, weekly, monthly, quarterly, yearly, all)}';
 
-    protected $description = 'Import data from old system API in date range batches';
+    protected $description = 'Import data from old system API in date range batches with auto-aggregation';
 
     // Old system API configuration
     protected string $oldSystemBaseUrl;
@@ -37,7 +39,6 @@ class ImportFromOldSystemCommand extends Command
 
     /**
      * Model mapping: old_system_export_name => [csv_filename, processor_class]
-     * Matches the pattern from ManualCsvImportController
      */
     protected array $modelMap = [
         'detailOrder' => [
@@ -125,6 +126,8 @@ class ImportFromOldSystemCommand extends Command
 
         $batchDays = (int) $this->option('batch-days');
         $delay = (int) $this->option('delay');
+        $skipAggregation = $this->option('no-aggregation');
+        $aggregationType = $this->option('aggregation-type');
 
         $totalDays = $startDate->diffInDays($endDate) + 1;
         $totalBatches = (int) ceil($totalDays / $batchDays);
@@ -135,6 +138,13 @@ class ImportFromOldSystemCommand extends Command
         $this->info("🔢 Total Batches: {$totalBatches}");
         $this->info("⏱️  Delay Between Batches: {$delay} seconds");
         $this->info("⚡ Processing: Jobs will be queued (async)");
+
+        if (!$skipAggregation) {
+            $this->info("🔄 Aggregation: {$aggregationType} (will be queued after import)");
+        } else {
+            $this->warn("⊘ Aggregation: SKIPPED");
+        }
+
         $this->newLine();
 
         if (!$this->confirm('Do you want to continue?', true)) {
@@ -199,6 +209,31 @@ class ImportFromOldSystemCommand extends Command
         $progressBar->finish();
         $this->newLine(2);
 
+        // Dispatch aggregation job if not skipped
+        $aggregationId = null;
+        if (!$skipAggregation && $successful > 0) {
+            $this->newLine();
+            $this->info('🔄 Dispatching aggregation job...');
+
+            try {
+                $aggregationId = $this->dispatchAggregation(
+                    $startDate->toDateString(),
+                    $endDate->toDateString(),
+                    $aggregationType
+                );
+
+                $this->info("  ✓ Aggregation job queued (ID: {$aggregationId})");
+
+            } catch (\Exception $e) {
+                $this->warn('  ⚠️  Failed to queue aggregation: ' . $e->getMessage());
+                Log::error('Failed to dispatch aggregation job', [
+                    'start' => $startDate->toDateString(),
+                    'end' => $endDate->toDateString(),
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
         $this->newLine();
         $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         $this->info('  Import Results');
@@ -206,11 +241,20 @@ class ImportFromOldSystemCommand extends Command
         $this->info("✅ Successful Batches: {$successful}");
         $this->error("❌ Failed Batches: {$failed}");
         $this->info("📦 Total Batches: {$totalBatches}");
-        $this->info("⚡ Total Jobs Queued: {$totalJobs}");
+        $this->info("⚡ Total Import Jobs Queued: {$totalJobs}");
+
+        if ($aggregationId) {
+            $this->info("🔄 Aggregation Job Queued: {$aggregationId}");
+        }
+
         $this->newLine();
-        $this->info("💡 Jobs are processing in the background. Monitor with:");
-        $this->info("   php artisan queue:work");
-        $this->info("   Check logs: storage/logs/laravel.log");
+        $this->info("💡 Monitor progress:");
+        $this->info("   • Run queue worker: php artisan queue:work");
+        $this->info("   • Check logs: storage/logs/laravel.log");
+
+        if ($aggregationId) {
+            $this->info("   • Aggregation will run AFTER all import jobs complete");
+        }
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
@@ -229,6 +273,14 @@ class ImportFromOldSystemCommand extends Command
 
         if (empty($this->oldSystemApiKey)) {
             $this->error('Old system API key not configured');
+            return false;
+        }
+
+        // Validate aggregation type
+        $validTypes = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'all'];
+        $aggType = $this->option('aggregation-type');
+        if (!in_array($aggType, $validTypes)) {
+            $this->error("Invalid aggregation type. Must be one of: " . implode(', ', $validTypes));
             return false;
         }
 
@@ -288,7 +340,7 @@ class ImportFromOldSystemCommand extends Command
                 return 0;
             }
 
-            // Initialize progress tracking (same pattern as ManualCsvImportController)
+            // Initialize progress tracking
             Cache::put("import_progress_{$uploadId}", [
                 'status' => 'queued',
                 'total_files' => count($csvFiles),
@@ -345,6 +397,44 @@ class ImportFromOldSystemCommand extends Command
 
             throw $e;
         }
+    }
+
+    /**
+     * Dispatch aggregation job (same pattern as ManualCsvImportController)
+     */
+    protected function dispatchAggregation(string $startDate, string $endDate, string $type): string
+    {
+        $aggregationId = uniqid('agg_', true);
+
+        // Initialize progress tracking
+        Cache::put("agg_progress_{$aggregationId}", [
+            'status' => 'queued',
+            'processed' => 0,
+            'total' => 0,
+            'started_at' => now()->toISOString(),
+            'source' => 'old_system_import',
+            'date_range' => [
+                'start' => $startDate,
+                'end' => $endDate
+            ]
+        ], 7200); // 2 hours TTL
+
+        // Dispatch the aggregation job
+        ProcessAggregationJob::dispatch(
+            $aggregationId,
+            $startDate,
+            $endDate,
+            $type
+        );
+
+        Log::info("Aggregation job dispatched", [
+            'aggregation_id' => $aggregationId,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'type' => $type
+        ]);
+
+        return $aggregationId;
     }
 
     protected function fetchFromOldSystem(string $model, Carbon $startDate, Carbon $endDate): array
