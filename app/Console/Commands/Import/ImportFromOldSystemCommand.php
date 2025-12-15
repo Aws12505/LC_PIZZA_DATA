@@ -3,61 +3,96 @@
 namespace App\Console\Commands\Import;
 
 use App\Services\Main\LCReportDataService;
+use App\Jobs\ProcessCsvImportJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
+use ZipArchive;
 
 /**
  * Import data from old system API in batches
  * 
- * This command fetches data from the legacy system's export API endpoint,
- * saves it as CSV files, and uses the existing LCReportDataService 
- * to process them with proper duplicate handling.
+ * Fetches data from old system, saves as CSVs, and dispatches 
+ * queue jobs for processing (async, won't hang!)
  * 
  * Usage:
- *   php artisan import:from-old-system --start=2025-01-01 --end=2025-04-30
- *   php artisan import:from-old-system --start=2025-01-01 --end=2025-04-30 --batch-days=15
+ *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30
+ *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30 --batch-days=7
  */
 class ImportFromOldSystemCommand extends Command
 {
     protected $signature = 'import:from-old-system 
                             {--start= : Start date (Y-m-d format)}
                             {--end= : End date (Y-m-d format)}
-                            {--batch-days=15 : Number of days per batch request}
+                            {--batch-days=7 : Number of days per batch request}
                             {--delay=5 : Seconds to wait between batch imports}';
 
     protected $description = 'Import data from old system API in date range batches';
-
-    protected LCReportDataService $importService;
 
     // Old system API configuration
     protected string $oldSystemBaseUrl;
     protected string $oldSystemApiKey;
 
     /**
-     * Model mapping: old_system_export_name => csv_filename_pattern
+     * Model mapping: old_system_export_name => [csv_filename, processor_class]
+     * Matches the pattern from ManualCsvImportController
      */
     protected array $modelMap = [
-        'detailOrder'                          => 'detail-orders.csv',
-        'orderLine'                            => 'detail-orderlines.csv',
-        'summarySale'                          => 'summary-sales.csv',
-        'summaryItem'                          => 'summary-items.csv',
-        'summaryTransaction'                   => 'summary-transactions.csv',
-        'waste'                                => 'waste-report.csv',
-        'cashManagement'                       => 'cash-management.csv',
-        'financialView'                        => 'financial-views.csv',
-        'altaInventoryCogs'                    => 'inventory/cogs.csv',
-        'altaInventoryIngredientOrder'         => 'inventory/purchase-orders.csv',
-        'altaInventoryIngredientUsage'         => 'inventory/ingredient-usage.csv',
-        'altaInventoryWaste'                   => 'inventory/waste.csv',
+        'detailOrder' => [
+            'filename' => 'detail-orders.csv',
+            'processor' => \App\Services\Import\Processors\DetailOrdersProcessor::class
+        ],
+        'orderLine' => [
+            'filename' => 'detail-orderlines.csv',
+            'processor' => \App\Services\Import\Processors\OrderLineProcessor::class
+        ],
+        'summarySale' => [
+            'filename' => 'summary-sales.csv',
+            'processor' => \App\Services\Import\Processors\SummarySalesProcessor::class
+        ],
+        'summaryItem' => [
+            'filename' => 'summary-items.csv',
+            'processor' => \App\Services\Import\Processors\SummaryItemsProcessor::class
+        ],
+        'summaryTransaction' => [
+            'filename' => 'summary-transactions.csv',
+            'processor' => \App\Services\Import\Processors\SummaryTransactionsProcessor::class
+        ],
+        'waste' => [
+            'filename' => 'waste-report.csv',
+            'processor' => \App\Services\Import\Processors\WasteProcessor::class
+        ],
+        'cashManagement' => [
+            'filename' => 'cash-management.csv',
+            'processor' => \App\Services\Import\Processors\CashManagementProcessor::class
+        ],
+        'financialView' => [
+            'filename' => 'financial-views.csv',
+            'processor' => \App\Services\Import\Processors\FinancialViewsProcessor::class
+        ],
+        'altaInventoryCogs' => [
+            'filename' => 'inventory/cogs.csv',
+            'processor' => \App\Services\Import\Processors\AltaInventoryCogsProcessor::class
+        ],
+        'altaInventoryIngredientOrder' => [
+            'filename' => 'inventory/purchase-orders.csv',
+            'processor' => \App\Services\Import\Processors\AltaInventoryIngredientOrdersProcessor::class
+        ],
+        'altaInventoryIngredientUsage' => [
+            'filename' => 'inventory/ingredient-usage.csv',
+            'processor' => \App\Services\Import\Processors\AltaInventoryIngredientUsageProcessor::class
+        ],
+        'altaInventoryWaste' => [
+            'filename' => 'inventory/waste.csv',
+            'processor' => \App\Services\Import\Processors\AltaInventoryWasteProcessor::class
+        ],
     ];
 
-    public function __construct(LCReportDataService $importService)
+    public function __construct()
     {
         parent::__construct();
-        $this->importService = $importService;
 
         // Load old system configuration
         $this->oldSystemBaseUrl = config('services.old_api.base_url', 'http://localhost');
@@ -99,6 +134,7 @@ class ImportFromOldSystemCommand extends Command
         $this->info("📦 Batch Size: {$batchDays} days");
         $this->info("🔢 Total Batches: {$totalBatches}");
         $this->info("⏱️  Delay Between Batches: {$delay} seconds");
+        $this->info("⚡ Processing: Jobs will be queued (async)");
         $this->newLine();
 
         if (!$this->confirm('Do you want to continue?', true)) {
@@ -110,6 +146,7 @@ class ImportFromOldSystemCommand extends Command
 
         $successful = 0;
         $failed = 0;
+        $totalJobs = 0;
 
         $progressBar = $this->output->createProgressBar($totalBatches);
         $progressBar->start();
@@ -127,14 +164,15 @@ class ImportFromOldSystemCommand extends Command
             $this->info("\n[Batch {$batchNumber}/{$totalBatches}] {$currentDate->toDateString()} → {$batchEnd->toDateString()}");
 
             try {
-                $success = $this->importBatch($currentDate, $batchEnd);
+                $jobsDispatched = $this->importBatch($currentDate, $batchEnd);
 
-                if ($success) {
+                if ($jobsDispatched > 0) {
                     $successful++;
-                    $this->info("  ✓ Batch complete");
+                    $totalJobs += $jobsDispatched;
+                    $this->info("  ✓ Dispatched {$jobsDispatched} jobs");
                 } else {
                     $failed++;
-                    $this->error("  ✗ Batch failed");
+                    $this->error("  ✗ No jobs dispatched");
                 }
 
             } catch (\Exception $e) {
@@ -168,6 +206,11 @@ class ImportFromOldSystemCommand extends Command
         $this->info("✅ Successful Batches: {$successful}");
         $this->error("❌ Failed Batches: {$failed}");
         $this->info("📦 Total Batches: {$totalBatches}");
+        $this->info("⚡ Total Jobs Queued: {$totalJobs}");
+        $this->newLine();
+        $this->info("💡 Jobs are processing in the background. Monitor with:");
+        $this->info("   php artisan queue:work");
+        $this->info("   Check logs: storage/logs/laravel.log");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
     }
@@ -192,18 +235,25 @@ class ImportFromOldSystemCommand extends Command
         return true;
     }
 
-    protected function importBatch(Carbon $startDate, Carbon $endDate): bool
+    /**
+     * Import a batch and dispatch queue jobs
+     * Returns number of jobs dispatched
+     */
+    protected function importBatch(Carbon $startDate, Carbon $endDate): int
     {
-        $tempDir = storage_path('app/temp/import_' . uniqid());
+        $uploadId = uniqid('import_', true);
+        $storagePath = storage_path("app/uploads/{$uploadId}");
 
         try {
-            // Create temp directory
-            if (!is_dir($tempDir)) {
-                mkdir($tempDir, 0755, true);
+            // Create storage directory
+            if (!is_dir($storagePath)) {
+                mkdir($storagePath, 0755, true);
             }
 
+            $csvFiles = [];
+
             // Fetch and save CSV files from old system
-            foreach ($this->modelMap as $modelName => $csvFilename) {
+            foreach ($this->modelMap as $modelName => $config) {
                 try {
                     $data = $this->fetchFromOldSystem($modelName, $startDate, $endDate);
 
@@ -212,9 +262,15 @@ class ImportFromOldSystemCommand extends Command
                         continue;
                     }
 
-                    // Save as CSV file with proper structure
-                    $csvPath = $tempDir . '/' . $csvFilename;
+                    // Save as CSV file
+                    $csvPath = $storagePath . '/' . $config['filename'];
                     $this->saveToCsv($csvPath, $data);
+
+                    $csvFiles[$config['filename']] = [
+                        'path' => $csvPath,
+                        'processor' => $config['processor'],
+                        'records' => count($data)
+                    ];
 
                     $this->line("  ✓ {$modelName}: " . number_format(count($data)) . " records");
 
@@ -228,18 +284,52 @@ class ImportFromOldSystemCommand extends Command
                 }
             }
 
-            // Process the CSV files using existing LCReportDataService
-            // This will handle all the upsert/replace logic, generated columns, etc.
-            $this->info("  🔄 Processing with LCReportDataService...");
-
-            // For each date in the batch, process the CSVs
-            $current = $startDate->copy();
-            while ($current <= $endDate) {
-                $result = $this->importService->processExtractedCsv($tempDir, $current->toDateString());
-                $current->addDay();
+            if (empty($csvFiles)) {
+                return 0;
             }
 
-            return true;
+            // Initialize progress tracking (same pattern as ManualCsvImportController)
+            Cache::put("import_progress_{$uploadId}", [
+                'status' => 'queued',
+                'total_files' => count($csvFiles),
+                'processed_files' => 0,
+                'total_rows' => 0,
+                'current_file' => null,
+                'results' => [],
+                'storage_path' => $storagePath,
+                'started_at' => now()->toISOString(),
+                'source' => 'old_system_import',
+                'date_range' => [
+                    'start' => $startDate->toDateString(),
+                    'end' => $endDate->toDateString()
+                ]
+            ], 7200); // 2 hours TTL
+
+            // Dispatch jobs for each CSV file
+            $jobsDispatched = 0;
+            foreach ($csvFiles as $filename => $info) {
+                ProcessCsvImportJob::dispatch(
+                    $uploadId,
+                    $info['path'],
+                    $filename,
+                    $info['processor'],
+                    count($csvFiles)
+                );
+
+                $jobsDispatched++;
+            }
+
+            Log::info("Old system import jobs dispatched", [
+                'upload_id' => $uploadId,
+                'total_files' => count($csvFiles),
+                'jobs_dispatched' => $jobsDispatched,
+                'date_range' => [
+                    'start' => $startDate->toDateString(),
+                    'end' => $endDate->toDateString()
+                ]
+            ]);
+
+            return $jobsDispatched;
 
         } catch (\Exception $e) {
             Log::error("Batch import failed", [
@@ -247,13 +337,13 @@ class ImportFromOldSystemCommand extends Command
                 'end' => $endDate->toDateString(),
                 'error' => $e->getMessage()
             ]);
-            throw $e;
 
-        } finally {
-            // Cleanup temp directory
-            if (is_dir($tempDir)) {
-                $this->deleteDirectory($tempDir);
+            // Cleanup on failure
+            if (is_dir($storagePath)) {
+                $this->deleteDirectory($storagePath);
             }
+
+            throw $e;
         }
     }
 
@@ -276,7 +366,7 @@ class ImportFromOldSystemCommand extends Command
 
             $result = $response->json();
 
-            // Handle the response format: {"success":true,"record_count":X,"data":[...]}
+            // Handle response format: {"success":true,"record_count":X,"data":[...]}
             if (isset($result['success']) && $result['success'] === true) {
                 return $result['data'] ?? [];
             }
