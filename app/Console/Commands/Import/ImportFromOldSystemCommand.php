@@ -56,6 +56,21 @@ class ImportFromOldSystemCommand extends Command
         'altaInventoryWaste'                 => 'alta_inventory_waste',
     ];
 
+    /**
+     * Generated columns that should NOT be inserted (MySQL calculates them)
+     * These are GENERATED ALWAYS AS columns
+     */
+    protected array $generatedColumns = [
+        'order_line' => [
+            'is_pizza',
+            'is_bread',
+            'is_wings',
+            'is_beverages',
+            'is_crazy_puffs',
+            'is_caesar_dip',
+        ],
+    ];
+
     public function __construct(LCReportDataService $importService)
     {
         parent::__construct();
@@ -360,6 +375,9 @@ class ImportFromOldSystemCommand extends Command
                 $archiveData = [];
 
                 foreach ($chunk as $row) {
+                    // Remove generated columns (MySQL will calculate them)
+                    $row = $this->removeGeneratedColumns($tableBaseName, $row);
+
                     // Ensure timestamps are set
                     if (!isset($row['created_at'])) {
                         $row['created_at'] = now();
@@ -386,7 +404,7 @@ class ImportFromOldSystemCommand extends Command
                 if (!empty($hotData)) {
                     \Illuminate\Support\Facades\DB::connection('operational')
                         ->table("{$tableBaseName}_hot")
-                        ->insertOrIgnore($hotData);
+                        ->insert($hotData); // Use insert instead of insertOrIgnore for better error messages
                     $hotInserted += count($hotData);
                 }
 
@@ -394,7 +412,7 @@ class ImportFromOldSystemCommand extends Command
                 if (!empty($archiveData)) {
                     \Illuminate\Support\Facades\DB::connection('analytics')
                         ->table("{$tableBaseName}_archive")
-                        ->insertOrIgnore($archiveData);
+                        ->insert($archiveData);
                     $archiveInserted += count($archiveData);
                 }
             }
@@ -417,6 +435,25 @@ class ImportFromOldSystemCommand extends Command
             ]);
             throw $e;
         }
+    }
+
+    /**
+     * Remove generated columns from row data before insert
+     * Generated columns are calculated by MySQL and cannot be inserted
+     */
+    protected function removeGeneratedColumns(string $tableBaseName, array $row): array
+    {
+        // Check if this table has generated columns
+        if (!isset($this->generatedColumns[$tableBaseName])) {
+            return $row;
+        }
+
+        // Remove each generated column from the row
+        foreach ($this->generatedColumns[$tableBaseName] as $generatedColumn) {
+            unset($row[$generatedColumn]);
+        }
+
+        return $row;
     }
 
     protected function hasData(string $tableBaseName, Carbon $startDate, Carbon $endDate): bool
