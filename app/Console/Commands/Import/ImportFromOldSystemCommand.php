@@ -7,17 +7,18 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Import data from old system API in batches
  * 
- * This command fetches data from the legacy system's export API endpoint
- * and imports it to the new system in configurable date range batches.
+ * This command fetches data from the legacy system's export API endpoint,
+ * saves it as CSV files, and uses the existing LCReportDataService 
+ * to process them with proper duplicate handling.
  * 
  * Usage:
  *   php artisan import:from-old-system --start=2025-01-01 --end=2025-04-30
  *   php artisan import:from-old-system --start=2025-01-01 --end=2025-04-30 --batch-days=15
- *   php artisan import:from-old-system --start=2025-01-01 --end=2025-04-30 --batch-days=15 --delay=10
  */
 class ImportFromOldSystemCommand extends Command
 {
@@ -25,9 +26,7 @@ class ImportFromOldSystemCommand extends Command
                             {--start= : Start date (Y-m-d format)}
                             {--end= : End date (Y-m-d format)}
                             {--batch-days=15 : Number of days per batch request}
-                            {--delay=5 : Seconds to wait between batch imports}
-                            {--skip-existing : Skip dates that already have data}
-                            {--models=* : Specific models to import (default: all)}';
+                            {--delay=5 : Seconds to wait between batch imports}';
 
     protected $description = 'Import data from old system API in date range batches';
 
@@ -38,37 +37,21 @@ class ImportFromOldSystemCommand extends Command
     protected string $oldSystemApiKey;
 
     /**
-     * Model mapping: old_system_export_name => new_system_table_base_name
-     * Only includes models that exist in BOTH systems
+     * Model mapping: old_system_export_name => csv_filename_pattern
      */
     protected array $modelMap = [
-        'detailOrder'                        => 'detail_orders',
-        'orderLine'                           => 'order_line',
-        'summarySale'                        => 'summary_sales',
-        'summaryItem'                        => 'summary_items',
-        'summaryTransaction'                 => 'summary_transactions',
-        'waste'                                => 'waste',
-        'cashManagement'                      => 'cash_management',
-        'financialView'                      => 'financial_views',
-        'altaInventoryCogs'                  => 'alta_inventory_cogs',
-        'altaInventoryIngredientOrder'     => 'alta_inventory_ingredient_orders',
-        'altaInventoryIngredientUsage'      => 'alta_inventory_ingredient_usage',
-        'altaInventoryWaste'                 => 'alta_inventory_waste',
-    ];
-
-    /**
-     * Generated columns that should NOT be inserted (MySQL calculates them)
-     * These are GENERATED ALWAYS AS columns
-     */
-    protected array $generatedColumns = [
-        'order_line' => [
-            'is_pizza',
-            'is_bread',
-            'is_wings',
-            'is_beverages',
-            'is_crazy_puffs',
-            'is_caesar_dip',
-        ],
+        'detailOrder'                          => 'detail-orders.csv',
+        'orderLine'                            => 'detail-orderlines.csv',
+        'summarySale'                          => 'summary-sales.csv',
+        'summaryItem'                          => 'summary-items.csv',
+        'summaryTransaction'                   => 'summary-transactions.csv',
+        'waste'                                => 'waste-report.csv',
+        'cashManagement'                       => 'cash-management.csv',
+        'financialView'                        => 'financial-views.csv',
+        'altaInventoryCogs'                    => 'inventory/cogs.csv',
+        'altaInventoryIngredientOrder'         => 'inventory/purchase-orders.csv',
+        'altaInventoryIngredientUsage'         => 'inventory/ingredient-usage.csv',
+        'altaInventoryWaste'                   => 'inventory/waste.csv',
     ];
 
     public function __construct(LCReportDataService $importService)
@@ -107,18 +90,6 @@ class ImportFromOldSystemCommand extends Command
 
         $batchDays = (int) $this->option('batch-days');
         $delay = (int) $this->option('delay');
-        $skipExisting = $this->option('skip-existing');
-
-        // Determine which models to import
-        $requestedModels = $this->option('models');
-        $modelsToImport = empty($requestedModels) 
-            ? array_keys($this->modelMap) 
-            : array_intersect(array_keys($this->modelMap), $requestedModels);
-
-        if (empty($modelsToImport)) {
-            $this->error('No valid models to import. Available models: ' . implode(', ', array_keys($this->modelMap)));
-            return self::FAILURE;
-        }
 
         $totalDays = $startDate->diffInDays($endDate) + 1;
         $totalBatches = (int) ceil($totalDays / $batchDays);
@@ -128,7 +99,6 @@ class ImportFromOldSystemCommand extends Command
         $this->info("📦 Batch Size: {$batchDays} days");
         $this->info("🔢 Total Batches: {$totalBatches}");
         $this->info("⏱️  Delay Between Batches: {$delay} seconds");
-        $this->info("📋 Models: " . count($modelsToImport) . ' tables');
         $this->newLine();
 
         if (!$this->confirm('Do you want to continue?', true)) {
@@ -140,8 +110,6 @@ class ImportFromOldSystemCommand extends Command
 
         $successful = 0;
         $failed = 0;
-        $skipped = 0;
-        $totalRecords = 0;
 
         $progressBar = $this->output->createProgressBar($totalBatches);
         $progressBar->start();
@@ -159,19 +127,15 @@ class ImportFromOldSystemCommand extends Command
             $this->info("\n[Batch {$batchNumber}/{$totalBatches}] {$currentDate->toDateString()} → {$batchEnd->toDateString()}");
 
             try {
-                $result = $this->importBatch(
-                    $currentDate,
-                    $batchEnd,
-                    $modelsToImport,
-                    $skipExisting
-                );
+                $success = $this->importBatch($currentDate, $batchEnd);
 
-                $successful += $result['successful'];
-                $failed += $result['failed'];
-                $skipped += $result['skipped'];
-                $totalRecords += $result['records'];
-
-                $this->info("  ✓ Batch complete: {$result['successful']} models, {$result['records']} records");
+                if ($success) {
+                    $successful++;
+                    $this->info("  ✓ Batch complete");
+                } else {
+                    $failed++;
+                    $this->error("  ✗ Batch failed");
+                }
 
             } catch (\Exception $e) {
                 $failed++;
@@ -197,26 +161,12 @@ class ImportFromOldSystemCommand extends Command
         $progressBar->finish();
         $this->newLine(2);
 
-        // Trigger aggregations after all imports
-        $this->info('🔄 Updating aggregations...');
-        try {
-            $this->call('aggregation:rebuild', [
-                '--start' => $startDate->toDateString(),
-                '--end' => $endDate->toDateString(),
-                '--type' => 'all'
-            ]);
-        } catch (\Exception $e) {
-            $this->warn('⚠️  Aggregation update failed: ' . $e->getMessage());
-        }
-
         $this->newLine();
         $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         $this->info('  Import Results');
         $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->info("✅ Successful Models: {$successful}");
-        $this->error("❌ Failed Models: {$failed}");
-        $this->warn("⊘ Skipped Models: {$skipped}");
-        $this->info("📊 Total Records: " . number_format($totalRecords));
+        $this->info("✅ Successful Batches: {$successful}");
+        $this->error("❌ Failed Batches: {$failed}");
         $this->info("📦 Total Batches: {$totalBatches}");
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
@@ -230,117 +180,107 @@ class ImportFromOldSystemCommand extends Command
         }
 
         if (empty($this->oldSystemBaseUrl)) {
-            $this->error('Old system API base URL not configured. Set OLD_API_BASE_URL in .env');
+            $this->error('Old system API base URL not configured');
             return false;
         }
 
         if (empty($this->oldSystemApiKey)) {
-            $this->error('Old system API key not configured. Set OLD_API_KEY in .env');
+            $this->error('Old system API key not configured');
             return false;
         }
 
         return true;
     }
 
-    protected function importBatch(
-        Carbon $startDate,
-        Carbon $endDate,
-        array $modelsToImport,
-        bool $skipExisting
-    ): array {
-        $successful = 0;
-        $failed = 0;
-        $skipped = 0;
-        $totalRecords = 0;
+    protected function importBatch(Carbon $startDate, Carbon $endDate): bool
+    {
+        $tempDir = storage_path('app/temp/import_' . uniqid());
 
-        foreach ($modelsToImport as $oldModelName) {
-            $newTableBase = $this->modelMap[$oldModelName];
+        try {
+            // Create temp directory
+            if (!is_dir($tempDir)) {
+                mkdir($tempDir, 0755, true);
+            }
 
-            try {
-                // Check if data exists
-                if ($skipExisting && $this->hasData($newTableBase, $startDate, $endDate)) {
-                    $this->line("  ⊘ {$oldModelName}: Already exists");
-                    $skipped++;
-                    continue;
+            // Fetch and save CSV files from old system
+            foreach ($this->modelMap as $modelName => $csvFilename) {
+                try {
+                    $data = $this->fetchFromOldSystem($modelName, $startDate, $endDate);
+
+                    if (empty($data)) {
+                        $this->line("  ⚠ {$modelName}: No data");
+                        continue;
+                    }
+
+                    // Save as CSV file with proper structure
+                    $csvPath = $tempDir . '/' . $csvFilename;
+                    $this->saveToCsv($csvPath, $data);
+
+                    $this->line("  ✓ {$modelName}: " . number_format(count($data)) . " records");
+
+                } catch (\Exception $e) {
+                    $this->error("  ✗ {$modelName}: " . $e->getMessage());
+                    Log::error("Failed to fetch {$modelName}", [
+                        'exception' => $e->getMessage(),
+                        'start' => $startDate->toDateString(),
+                        'end' => $endDate->toDateString()
+                    ]);
                 }
+            }
 
-                // Fetch data from old system
-                $data = $this->fetchFromOldSystem($oldModelName, $startDate, $endDate);
+            // Process the CSV files using existing LCReportDataService
+            // This will handle all the upsert/replace logic, generated columns, etc.
+            $this->info("  🔄 Processing with LCReportDataService...");
 
-                if (empty($data)) {
-                    $this->line("  ⚠ {$oldModelName}: No data");
-                    $skipped++;
-                    continue;
-                }
+            // For each date in the batch, process the CSVs
+            $current = $startDate->copy();
+            while ($current <= $endDate) {
+                $result = $this->importService->processExtractedCsv($tempDir, $current->toDateString());
+                $current->addDay();
+            }
 
-                // Import to new system
-                $recordCount = $this->importToNewSystem($newTableBase, $data);
+            return true;
 
-                if ($recordCount > 0) {
-                    $successful++;
-                    $totalRecords += $recordCount;
-                    $this->line("  ✓ {$oldModelName}: " . number_format($recordCount) . " records");
-                } else {
-                    $failed++;
-                    $this->error("  ✗ {$oldModelName}: Import failed");
-                }
+        } catch (\Exception $e) {
+            Log::error("Batch import failed", [
+                'start' => $startDate->toDateString(),
+                'end' => $endDate->toDateString(),
+                'error' => $e->getMessage()
+            ]);
+            throw $e;
 
-            } catch (\Exception $e) {
-                $failed++;
-                $this->error("  ✗ {$oldModelName}: " . $e->getMessage());
-                Log::error("Model import failed: {$oldModelName}", [
-                    'exception' => $e->getMessage(),
-                    'start' => $startDate->toDateString(),
-                    'end' => $endDate->toDateString()
-                ]);
+        } finally {
+            // Cleanup temp directory
+            if (is_dir($tempDir)) {
+                $this->deleteDirectory($tempDir);
             }
         }
-
-        return [
-            'successful' => $successful,
-            'failed' => $failed,
-            'skipped' => $skipped,
-            'records' => $totalRecords
-        ];
     }
 
     protected function fetchFromOldSystem(string $model, Carbon $startDate, Carbon $endDate): array
     {
-        // Build URL matching old system's export route pattern
-        // Route: /export/{model}/json/{start}/{end}
         $url = "{$this->oldSystemBaseUrl}/export/{$model}/json/{$startDate->toDateString()}/{$endDate->toDateString()}";
-
-        Log::info("Fetching from old system", [
-            'model' => $model,
-            'url' => $url,
-            'start' => $startDate->toDateString(),
-            'end' => $endDate->toDateString()
-        ]);
 
         try {
             $response = Http::withHeaders([
                 'Authorization' => "Bearer {$this->oldSystemApiKey}",
                 'Accept' => 'application/json',
-                'Content-Type' => 'application/json',
             ])
             ->timeout(120)
-            ->retry(3, 100) // Retry 3 times with 100ms delay
+            ->retry(3, 100)
             ->get($url);
 
             if (!$response->successful()) {
-                throw new \Exception("API returned status {$response->status()}: " . $response->body());
+                throw new \Exception("API returned status {$response->status()}");
             }
 
             $result = $response->json();
 
-            // Handle the response format from old system's ExportingService
-            // Response format: {"success":true,"record_count":X,"data":[...]}
+            // Handle the response format: {"success":true,"record_count":X,"data":[...]}
             if (isset($result['success']) && $result['success'] === true) {
-                Log::info("Fetched {$result['record_count']} records from {$model}");
                 return $result['data'] ?? [];
             }
 
-            // Fallback for direct data array
             return is_array($result) ? $result : [];
 
         } catch (\Exception $e) {
@@ -353,134 +293,51 @@ class ImportFromOldSystemCommand extends Command
         }
     }
 
-    protected function importToNewSystem(string $tableBaseName, array $data): int
+    protected function saveToCsv(string $filepath, array $data): void
     {
         if (empty($data)) {
-            return 0;
+            return;
         }
 
-        try {
-            // Determine the appropriate table name and connection
-            $cutoffDate = \App\Services\Database\DatabaseRouter::getCutoffDate();
-
-            $hotInserted = 0;
-            $archiveInserted = 0;
-
-            // Batch insert data in chunks of 1000
-            $chunks = array_chunk($data, 1000);
-
-            foreach ($chunks as $chunk) {
-                // Separate data by date - hot vs archive
-                $hotData = [];
-                $archiveData = [];
-
-                foreach ($chunk as $row) {
-                    // Remove generated columns (MySQL will calculate them)
-                    $row = $this->removeGeneratedColumns($tableBaseName, $row);
-
-                    // Ensure timestamps are set
-                    if (!isset($row['created_at'])) {
-                        $row['created_at'] = now();
-                    }
-                    if (!isset($row['updated_at'])) {
-                        $row['updated_at'] = now();
-                    }
-
-                    if (isset($row['business_date'])) {
-                        $businessDate = Carbon::parse($row['business_date']);
-
-                        if ($businessDate >= $cutoffDate) {
-                            $hotData[] = $row;
-                        } else {
-                            $archiveData[] = $row;
-                        }
-                    } else {
-                        // If no business_date, default to hot
-                        $hotData[] = $row;
-                    }
-                }
-
-                // Insert to operational (hot) database
-                if (!empty($hotData)) {
-                    \Illuminate\Support\Facades\DB::connection('operational')
-                        ->table("{$tableBaseName}_hot")
-                        ->insert($hotData); // Use insert instead of insertOrIgnore for better error messages
-                    $hotInserted += count($hotData);
-                }
-
-                // Insert to analytics (archive) database
-                if (!empty($archiveData)) {
-                    \Illuminate\Support\Facades\DB::connection('analytics')
-                        ->table("{$tableBaseName}_archive")
-                        ->insert($archiveData);
-                    $archiveInserted += count($archiveData);
-                }
-            }
-
-            $total = $hotInserted + $archiveInserted;
-
-            Log::info("Imported to {$tableBaseName}", [
-                'hot' => $hotInserted,
-                'archive' => $archiveInserted,
-                'total' => $total
-            ]);
-
-            return $total;
-
-        } catch (\Exception $e) {
-            Log::error("Failed to import to new system", [
-                'table' => $tableBaseName,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            throw $e;
+        // Ensure directory exists
+        $dir = dirname($filepath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
         }
+
+        $handle = fopen($filepath, 'w');
+        if ($handle === false) {
+            throw new \Exception("Cannot create CSV file: {$filepath}");
+        }
+
+        // Write header
+        $headers = array_keys($data[0]);
+        fputcsv($handle, $headers);
+
+        // Write data rows
+        foreach ($data as $row) {
+            fputcsv($handle, $row);
+        }
+
+        fclose($handle);
     }
 
-    /**
-     * Remove generated columns from row data before insert
-     * Generated columns are calculated by MySQL and cannot be inserted
-     */
-    protected function removeGeneratedColumns(string $tableBaseName, array $row): array
+    protected function deleteDirectory(string $path): void
     {
-        // Check if this table has generated columns
-        if (!isset($this->generatedColumns[$tableBaseName])) {
-            return $row;
+        if (!is_dir($path)) {
+            return;
         }
 
-        // Remove each generated column from the row
-        foreach ($this->generatedColumns[$tableBaseName] as $generatedColumn) {
-            unset($row[$generatedColumn]);
+        $files = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($path, \RecursiveDirectoryIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+
+        foreach ($files as $fileinfo) {
+            $todo = ($fileinfo->isDir() ? 'rmdir' : 'unlink');
+            @$todo($fileinfo->getRealPath());
         }
 
-        return $row;
-    }
-
-    protected function hasData(string $tableBaseName, Carbon $startDate, Carbon $endDate): bool
-    {
-        try {
-            // Check hot table
-            $hotCount = \Illuminate\Support\Facades\DB::connection('operational')
-                ->table("{$tableBaseName}_hot")
-                ->whereBetween('business_date', [
-                    $startDate->toDateString(),
-                    $endDate->toDateString()
-                ])
-                ->count();
-
-            // Check archive table
-            $archiveCount = \Illuminate\Support\Facades\DB::connection('analytics')
-                ->table("{$tableBaseName}_archive")
-                ->whereBetween('business_date', [
-                    $startDate->toDateString(),
-                    $endDate->toDateString()
-                ])
-                ->count();
-
-            return ($hotCount + $archiveCount) > 0;
-
-        } catch (\Exception $e) {
-            return false;
-        }
+        @rmdir($path);
     }
 }

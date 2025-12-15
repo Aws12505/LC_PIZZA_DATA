@@ -140,7 +140,7 @@ class LCReportDataService
         }
     }
 
-    protected function processExtractedCsv(string $extractPath, string $selectedDate): array
+    public function processExtractedCsv(string $extractPath, string $selectedDate): array
     {
         $csvFiles = glob("{$extractPath}/*.csv");
 
