@@ -62,8 +62,8 @@ class ImportFromOldSystemCommand extends Command
         $this->importService = $importService;
 
         // Load old system configuration
-        $this->oldSystemBaseUrl = config('services.old_api.base_url');
-        $this->oldSystemApiKey = config('services.old_api.api_key');
+        $this->oldSystemBaseUrl = config('services.old_api.base_url', 'http://localhost');
+        $this->oldSystemApiKey = config('services.old_api.api_key', 'null_thing');
     }
 
     public function handle(): int
