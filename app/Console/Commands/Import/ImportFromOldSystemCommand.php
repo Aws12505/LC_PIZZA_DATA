@@ -42,18 +42,18 @@ class ImportFromOldSystemCommand extends Command
      * Only includes models that exist in BOTH systems
      */
     protected array $modelMap = [
-        'detail_orders'                        => 'detailOrders',
-        'order_line'                           => 'orderLine',
-        'summary_sales'                        => 'summarySales',
-        'summary_items'                        => 'summaryItems',
-        'summary_transactions'                 => 'summaryTransactions',
+        'detailOrders'                        => 'detailOrders',
+        'orderLine'                           => 'orderLine',
+        'summarySales'                        => 'summarySales',
+        'summaryItems'                        => 'summaryItems',
+        'summaryTransactions'                 => 'summaryTransactions',
         'waste'                                => 'waste',
-        'cash_management'                      => 'cashManagement',
-        'financial_views'                      => 'financialViews',
-        'alta_inventory_cogs'                  => 'altaInventoryCogs',
-        'alta_inventory_ingredient_orders'     => 'altaInventoryIngredientOrders',
-        'alta_inventory_ingredient_usage'      => 'altaInventoryIngredientUsage',
-        'alta_inventory_waste'                 => 'altaInventoryWaste',
+        'cashManagement'                      => 'cashManagement',
+        'financialViews'                      => 'financialViews',
+        'altaInventoryCogs'                  => 'altaInventoryCogs',
+        'altaInventoryIngredientOrders'     => 'altaInventoryIngredientOrders',
+        'altaInventoryIngredientUsage'      => 'altaInventoryIngredientUsage',
+        'altaInventoryWaste'                 => 'altaInventoryWaste',
     ];
 
     public function __construct(LCReportDataService $importService)
