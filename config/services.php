@@ -54,6 +54,11 @@ return [
         'retry_ms'  => (int) env('AUTH_RETRY_BACKOFF_MS', 100),
         'cache_ttl' => (int) env('AUTH_DECISION_CACHE_TTL', 30),
     ],
+
+    'old_api' => [
+        'base_url' => env('OLD_API_BASE_URL', 'http://localhost'),
+        'api_key' => env('OLD_API_KEY'),
+    ],
     
     'X_SECRET_KEY' => env('X_SECRET_KEY'),
 ];

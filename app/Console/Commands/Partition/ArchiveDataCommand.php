@@ -35,9 +35,6 @@ class ArchiveDataCommand extends Command
         'waste',
         'cash_management',
         'financial_views',
-        'finance_data',
-        'final_summaries',
-        'hourly_sales',
     ];
 
     public function handle(): int
