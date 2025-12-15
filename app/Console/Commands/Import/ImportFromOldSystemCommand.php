@@ -304,8 +304,9 @@ class ImportFromOldSystemCommand extends Command
 
         try {
             $response = Http::withHeaders([
-                'X-API-Key' => $this->oldSystemApiKey,
-                'Accept' => 'application/json'
+                'Authorization' => "Bearer {$this->oldSystemApiKey}",
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
             ])
             ->timeout(120)
             ->retry(3, 100) // Retry 3 times with 100ms delay
