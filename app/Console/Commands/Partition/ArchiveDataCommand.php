@@ -35,6 +35,10 @@ class ArchiveDataCommand extends Command
         'waste',
         'cash_management',
         'financial_views',
+        'alta_inventory_cogs',
+        'alta_inventory_ingredient_orders',
+        'alta_inventory_ingredient_usage',
+        'alta_inventory_waste'
     ];
 
     public function handle(): int
