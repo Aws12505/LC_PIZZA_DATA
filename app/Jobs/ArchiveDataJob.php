@@ -21,7 +21,7 @@ class ArchiveDataJob implements ShouldQueue
 
     public $timeout = 3600; // 1 hour per batch
     public $tries = 3;
-    public $backoff = 300; // 5 min retry delay
+    public $backoff = 100; // 5 min retry delay
 
     protected string $archiveId;
     protected string $table;
@@ -59,7 +59,7 @@ class ArchiveDataJob implements ShouldQueue
             $hotTable = "{$this->table}_hot";
             $archiveTable = "{$this->table}_archive";
 
-            // Count rows to archive (from operational DB)
+            // Count rows to archive
             $count = DB::connection('operational')
                 ->table($hotTable)
                 ->whereBetween('business_date', [
@@ -73,14 +73,17 @@ class ArchiveDataJob implements ShouldQueue
                 return;
             }
 
-            // Get the actual database names from config
+            // Get the actual database names
             $operationalDb = config('database.connections.operational.database');
 
-            DB::transaction(function() use ($hotTable, $archiveTable, $operationalDb) {
-                // Archive using INSERT...SELECT with proper database name
+            // Get column list (excluding generated columns)
+            $columns = $this->getInsertableColumns($hotTable);
+
+            DB::transaction(function() use ($hotTable, $archiveTable, $operationalDb, $columns) {
+                // Archive using INSERT...SELECT with explicit column list
                 DB::connection('analytics')->statement("
-                    INSERT IGNORE INTO {$archiveTable}
-                    SELECT * FROM {$operationalDb}.{$hotTable}
+                    INSERT IGNORE INTO {$archiveTable} ({$columns})
+                    SELECT {$columns} FROM {$operationalDb}.{$hotTable}
                     WHERE business_date BETWEEN ? AND ?
                 ", [
                     $this->startDate->toDateString(),
@@ -131,6 +134,25 @@ class ArchiveDataJob implements ShouldQueue
 
             throw $e;
         }
+    }
+
+    /**
+     * Get list of insertable columns (excluding generated columns)
+     */
+    protected function getInsertableColumns(string $table): string
+    {
+        $columns = DB::connection('operational')
+            ->select("
+                SELECT COLUMN_NAME
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = ?
+                AND EXTRA NOT LIKE '%GENERATED%'
+                AND EXTRA NOT LIKE '%VIRTUAL%'
+                ORDER BY ORDINAL_POSITION
+            ", [$table]);
+
+        return implode(', ', array_map(fn($col) => $col->COLUMN_NAME, $columns));
     }
 
     protected function updateProgress(string $status, int $rowsArchived, ?string $error = null): void
