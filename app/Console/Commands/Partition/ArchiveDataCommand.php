@@ -2,36 +2,31 @@
 
 namespace App\Console\Commands\Partition;
 
+use App\Jobs\ArchiveDataJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 /**
- * Archive old data from operational to analytics database
- * 
- * OPTIMIZED for millions of rows:
- * - Direct INSERT...SELECT queries
- * - Partition-based archiving
- * - Batch deletes by date range
- * - Progress tracking
+ * Archive old data using background jobs
  * 
  * Usage:
  *   php artisan partition:archive-data
- *   php artisan partition:archive-data --dry-run
  *   php artisan partition:archive-data --cutoff-days=90
- *   php artisan partition:archive-data --table=detail_orders --batch-days=30
+ *   php artisan partition:archive-data --batch-days=30 --verify
  */
 class ArchiveDataCommand extends Command
 {
     protected $signature = 'partition:archive-data 
-                            {--dry-run : Show what would be archived without doing it}
                             {--cutoff-days=90 : Number of days to keep in operational DB}
                             {--table= : Archive specific table only}
                             {--batch-days=30 : Number of days to archive per batch}
-                            {--verify : Verify data after archiving}';
+                            {--verify : Verify data after archiving}
+                            {--sync : Run synchronously (blocking, for testing)}';
 
-    protected $description = 'Archive old data from operational to analytics database';
+    protected $description = 'Archive old data from operational to analytics database (async)';
 
     protected array $tables = [
         'detail_orders',
@@ -51,22 +46,23 @@ class ArchiveDataCommand extends Command
     public function handle(): int
     {
         $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        $this->info('  Archive Old Data - Optimized for Millions of Rows');
+        $this->info('  Archive Old Data (Background Jobs)');
         $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
         $cutoffDays = (int) $this->option('cutoff-days');
         $cutoffDate = Carbon::now()->subDays($cutoffDays);
-        $dryRun = $this->option('dry-run');
         $specificTable = $this->option('table');
         $batchDays = (int) $this->option('batch-days');
         $verify = $this->option('verify');
+        $sync = $this->option('sync');
 
         $this->info("📅 Cutoff Date: {$cutoffDate->format('Y-m-d')}");
         $this->info("🗄️  Archiving data older than {$cutoffDays} days");
-        $this->info("📦 Batch Size: {$batchDays} days per iteration");
+        $this->info("📦 Batch Size: {$batchDays} days per job");
+        $this->info("⚡ Mode: " . ($sync ? 'Synchronous (blocking)' : 'Asynchronous (background jobs)'));
 
-        if ($dryRun) {
-            $this->warn('🔍 DRY RUN MODE - No data will be moved');
+        if ($verify) {
+            $this->warn("🔍 Verification enabled (slower but safer)");
         }
 
         $this->newLine();
@@ -75,197 +71,136 @@ class ArchiveDataCommand extends Command
             ? [$specificTable] 
             : $this->tables;
 
-        $totalArchived = 0;
-        $totalDeleted = 0;
-        $startTime = microtime(true);
+        // Scan all tables first
+        $archivePlan = [];
+        $totalJobs = 0;
 
         foreach ($tablesToProcess as $table) {
-            try {
-                $result = $this->archiveTable($table, $cutoffDate, $batchDays, $dryRun, $verify);
-                $totalArchived += $result['archived'];
-                $totalDeleted += $result['deleted'];
-            } catch (\Exception $e) {
-                $this->error("❌ Failed to archive {$table}: " . $e->getMessage());
-                Log::error("Archive failed for {$table}", [
-                    'exception' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
+            $stats = $this->getArchiveStats($table, $cutoffDate);
+            
+            if ($stats['count'] === 0) {
+                $this->line("  ⊘ {$table}: No data to archive");
+                continue;
+            }
+
+            $archivePlan[$table] = $stats;
+            $totalJobs += $stats['batches'];
+
+            $this->info("  📊 {$table}: {$stats['count']} rows → {$stats['batches']} jobs");
+        }
+
+        if (empty($archivePlan)) {
+            $this->warn('No data to archive');
+            return self::SUCCESS;
+        }
+
+        $this->newLine();
+        $this->table(['Tables', 'Total Rows', 'Total Jobs'], [[
+            count($archivePlan),
+            array_sum(array_column($archivePlan, 'count')),
+            $totalJobs
+        ]]);
+        $this->newLine();
+
+        if (!$this->confirm('Dispatch archive jobs?', true)) {
+            return self::SUCCESS;
+        }
+
+        // Dispatch jobs
+        $archiveId = uniqid('archive_', true);
+        
+        Cache::put("archive_progress_{$archiveId}", [
+            'status' => 'dispatching',
+            'total_tables' => count($archivePlan),
+            'completed_tables' => 0,
+            'total_rows' => 0,
+            'results' => [],
+            'started_at' => now()->toISOString()
+        ], 7200);
+
+        $dispatched = 0;
+
+        foreach ($archivePlan as $table => $stats) {
+            $currentDate = $stats['min_date'];
+            
+            while ($currentDate <= $stats['max_date']) {
+                $batchEnd = $currentDate->copy()->addDays($batchDays - 1);
+                if ($batchEnd > $stats['max_date']) {
+                    $batchEnd = $stats['max_date']->copy();
+                }
+
+                if ($sync) {
+                    // Synchronous dispatch (for testing)
+                    ArchiveDataJob::dispatchSync(
+                        $archiveId,
+                        $table,
+                        $currentDate,
+                        $batchEnd,
+                        count($archivePlan),
+                        $verify
+                    );
+                } else {
+                    // Async dispatch to queue
+                    ArchiveDataJob::dispatch(
+                        $archiveId,
+                        $table,
+                        $currentDate,
+                        $batchEnd,
+                        count($archivePlan),
+                        $verify
+                    )->onQueue('archiving');
+                }
+
+                $dispatched++;
+                $currentDate->addDays($batchDays);
             }
         }
 
-        $duration = round(microtime(true) - $startTime, 2);
-
         $this->newLine();
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        $this->info("✅ Dispatched {$dispatched} archive jobs");
+        $this->info("🆔 Archive ID: {$archiveId}");
+        $this->newLine();
 
-        if ($dryRun) {
-            $this->info("📊 WOULD archive {$totalArchived} rows from " . count($tablesToProcess) . " tables");
-        } else {
-            $this->info("✅ Archived {$totalArchived} rows");
-            $this->info("🗑️  Deleted {$totalDeleted} rows from operational DB");
+        if (!$sync) {
+            $this->info("💡 Monitor progress:");
+            $this->info("   • Start queue worker: php artisan queue:work --queue=archiving");
+            $this->info("   • Check logs: tail -f storage/logs/laravel.log | grep {$archiveId}");
+            $this->info("   • Progress cache key: archive_progress_{$archiveId}");
         }
 
-        $this->info("⏱️  Duration: {$duration} seconds");
-        $this->info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        Log::info("Archive jobs dispatched", [
+            'archive_id' => $archiveId,
+            'total_jobs' => $dispatched,
+            'tables' => array_keys($archivePlan)
+        ]);
 
         return self::SUCCESS;
     }
 
-    protected function archiveTable(
-        string $table, 
-        Carbon $cutoffDate, 
-        int $batchDays, 
-        bool $dryRun,
-        bool $verify
-    ): array {
+    protected function getArchiveStats(string $table, Carbon $cutoffDate): array
+    {
         $hotTable = "{$table}_hot";
-        $archiveTable = "{$table}_archive";
+        $batchDays = (int) $this->option('batch-days');
 
-        // Get total count and date range
         $stats = DB::connection('operational')
             ->table($hotTable)
             ->where('business_date', '<', $cutoffDate->toDateString())
-            ->selectRaw('COUNT(*) as total, MIN(business_date) as min_date, MAX(business_date) as max_date')
+            ->selectRaw('COUNT(*) as count, MIN(business_date) as min_date, MAX(business_date) as max_date')
             ->first();
 
-        if (!$stats || $stats->total === 0) {
-            $this->line("  ⊘ {$table}: No data to archive");
-            return ['archived' => 0, 'deleted' => 0];
+        if (!$stats || $stats->count === 0) {
+            return ['count' => 0, 'batches' => 0];
         }
 
-        $totalRows = $stats->total;
         $minDate = Carbon::parse($stats->min_date);
         $maxDate = Carbon::parse($stats->max_date);
+        $batches = (int) ceil($maxDate->diffInDays($minDate) / $batchDays);
 
-        $this->info("  🔄 {$table}: {$totalRows} rows ({$minDate->toDateString()} → {$maxDate->toDateString()})");
-
-        if ($dryRun) {
-            $this->info("     Would archive in batches of {$batchDays} days");
-            return ['archived' => $totalRows, 'deleted' => 0];
-        }
-
-        // Process in date-based batches
-        $currentDate = $minDate->copy();
-        $totalArchived = 0;
-        $totalDeleted = 0;
-        $batchNumber = 1;
-
-        $progressBar = $this->output->createProgressBar(ceil($maxDate->diffInDays($minDate) / $batchDays));
-        $progressBar->start();
-
-        while ($currentDate <= $maxDate) {
-            $batchEnd = $currentDate->copy()->addDays($batchDays - 1);
-            if ($batchEnd > $maxDate) {
-                $batchEnd = $maxDate->copy();
-            }
-
-            try {
-                $result = $this->archiveDateRange(
-                    $hotTable, 
-                    $archiveTable, 
-                    $currentDate, 
-                    $batchEnd,
-                    $verify
-                );
-
-                $totalArchived += $result['archived'];
-                $totalDeleted += $result['deleted'];
-
-                Log::info("Archived batch", [
-                    'table' => $table,
-                    'batch' => $batchNumber,
-                    'start' => $currentDate->toDateString(),
-                    'end' => $batchEnd->toDateString(),
-                    'rows' => $result['archived']
-                ]);
-
-            } catch (\Exception $e) {
-                $this->newLine();
-                $this->error("    ✗ Batch {$batchNumber} failed: " . $e->getMessage());
-                Log::error("Batch archive failed", [
-                    'table' => $table,
-                    'batch' => $batchNumber,
-                    'start' => $currentDate->toDateString(),
-                    'end' => $batchEnd->toDateString(),
-                    'error' => $e->getMessage()
-                ]);
-            }
-
-            $progressBar->advance();
-            $currentDate->addDays($batchDays);
-            $batchNumber++;
-        }
-
-        $progressBar->finish();
-        $this->newLine();
-        $this->info("    ✓ Archived {$totalArchived} rows and deleted {$totalDeleted} rows");
-
-        return ['archived' => $totalArchived, 'deleted' => $totalDeleted];
-    }
-
-    /**
-     * Archive a specific date range using direct INSERT...SELECT
-     * This is MUCH faster than chunking for large datasets
-     */
-    protected function archiveDateRange(
-        string $hotTable,
-        string $archiveTable,
-        Carbon $startDate,
-        Carbon $endDate,
-        bool $verify
-    ): array {
-        $startStr = $startDate->toDateString();
-        $endStr = $endDate->toDateString();
-
-        // Count rows in this range
-        $count = DB::connection('operational')
-            ->table($hotTable)
-            ->whereBetween('business_date', [$startStr, $endStr])
-            ->count();
-
-        if ($count === 0) {
-            return ['archived' => 0, 'deleted' => 0];
-        }
-
-        // Use transaction for consistency
-        DB::transaction(function() use ($hotTable, $archiveTable, $startStr, $endStr) {
-            // Direct INSERT...SELECT (fastest method for bulk data)
-            DB::connection('analytics')->statement("
-                INSERT IGNORE INTO {$archiveTable}
-                SELECT * FROM operational.{$hotTable}
-                WHERE business_date BETWEEN ? AND ?
-            ", [$startStr, $endStr]);
-
-            // Delete from operational
-            DB::connection('operational')
-                ->table($hotTable)
-                ->whereBetween('business_date', [$startStr, $endStr])
-                ->delete();
-        });
-
-        // Optional verification
-        if ($verify) {
-            $archivedCount = DB::connection('analytics')
-                ->table($archiveTable)
-                ->whereBetween('business_date', [$startStr, $endStr])
-                ->count();
-
-            $remainingCount = DB::connection('operational')
-                ->table($hotTable)
-                ->whereBetween('business_date', [$startStr, $endStr])
-                ->count();
-
-            if ($remainingCount > 0) {
-                throw new \Exception("Verification failed: {$remainingCount} rows still in operational DB");
-            }
-
-            Log::info("Verification passed", [
-                'table' => $hotTable,
-                'archived' => $archivedCount,
-                'remaining' => $remainingCount
-            ]);
-        }
-
-        return ['archived' => $count, 'deleted' => $count];
+        return [
+            'count' => $stats->count,
+            'min_date' => $minDate,
+            'max_date' => $maxDate,
+            'batches' => $batches
+        ];
     }
 }
