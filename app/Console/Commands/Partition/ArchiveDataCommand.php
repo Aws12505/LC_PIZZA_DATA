@@ -178,29 +178,36 @@ class ArchiveDataCommand extends Command
     }
 
     protected function getArchiveStats(string $table, Carbon $cutoffDate): array
-    {
-        $hotTable = "{$table}_hot";
-        $batchDays = (int) $this->option('batch-days');
+{
+    $hotTable = "{$table}_hot";
+    $batchDays = (int) $this->option('batch-days');
 
-        $stats = DB::connection('operational')
-            ->table($hotTable)
-            ->where('business_date', '<', $cutoffDate->toDateString())
-            ->selectRaw('COUNT(*) as count, MIN(business_date) as min_date, MAX(business_date) as max_date')
-            ->first();
+    $stats = DB::connection('operational')
+        ->table($hotTable)
+        ->where('business_date', '<', $cutoffDate->toDateString())
+        ->selectRaw('COUNT(*) as count, MIN(business_date) as min_date, MAX(business_date) as max_date')
+        ->first();
 
-        if (!$stats || $stats->count === 0) {
-            return ['count' => 0, 'batches' => 0];
-        }
-
-        $minDate = Carbon::parse($stats->min_date);
-        $maxDate = Carbon::parse($stats->max_date);
-        $batches = (int) ceil($maxDate->diffInDays($minDate) / $batchDays);
-
-        return [
-            'count' => $stats->count,
-            'min_date' => $minDate,
-            'max_date' => $maxDate,
-            'batches' => $batches
-        ];
+    if (!$stats || $stats->count === 0) {
+        return ['count' => 0, 'batches' => 0, 'min_date' => null, 'max_date' => null];
     }
+
+    $minDate = Carbon::parse($stats->min_date);
+    $maxDate = Carbon::parse($stats->max_date);
+    
+    // Calculate total days (inclusive of start and end dates)
+    $totalDays = $minDate->diffInDays($maxDate) + 1;
+    
+    // Calculate number of batches needed (minimum 1)
+    $batches = max(1, (int) ceil($totalDays / $batchDays));
+
+    return [
+        'count' => (int) $stats->count,
+        'min_date' => $minDate,
+        'max_date' => $maxDate,
+        'total_days' => $totalDays,
+        'batches' => $batches
+    ];
+}
+
 }
