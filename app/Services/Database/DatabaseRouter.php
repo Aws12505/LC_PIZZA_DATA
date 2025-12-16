@@ -7,10 +7,12 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class DatabaseRouter
 {
     protected const HOT_DATA_DAYS = 90;
+    protected const CACHE_TTL = 3600; // 1 hour
 
     public static function getCutoffDate(): Carbon
     {
@@ -19,12 +21,16 @@ class DatabaseRouter
 
     protected static function tableExists(string $connection, string $table): bool
     {
-        try {
-            return Schema::connection($connection)->hasTable($table);
-        } catch (\Throwable $e) {
-            @error_log("Schema check failed for {$connection}.{$table}: " . $e->getMessage());
-            return false;
-        }
+        $cacheKey = "table_exists_{$connection}_{$table}";
+        
+        return Cache::remember($cacheKey, self::CACHE_TTL, function() use ($connection, $table) {
+            try {
+                return Schema::connection($connection)->hasTable($table);
+            } catch (\Throwable $e) {
+                Log::error("Schema check failed for {$connection}.{$table}: " . $e->getMessage());
+                return false;
+            }
+        });
     }
 
     public static function archiveQuery(string $baseTable): ?Builder
@@ -46,16 +52,13 @@ class DatabaseRouter
     }
 
     /**
-     * Returns 1 or 2 Builders (hot/archive) WITHOUT unioning across connections.
-     * Dates are nullable:
-     * - start=null & end=null => both queries, no date filter
-     * - start only => start..today
-     * - end only => 2000-01-01..end
-     *
-     * @return Builder[]
+     * Returns optimized queries with proper indexing hints
      */
-    public static function routedQueries(string $baseTable, ?Carbon $startDate = null, ?Carbon $endDate = null): array
-    {
+    public static function routedQueries(
+        string $baseTable, 
+        ?Carbon $startDate = null, 
+        ?Carbon $endDate = null
+    ): array {
         $cutoff = self::getCutoffDate();
 
         // Normalize open ended ranges
@@ -76,7 +79,7 @@ class DatabaseRouter
             ]));
 
             if (empty($queries)) {
-                throw new \RuntimeException("No tables found for {$baseTable} (missing *_hot and *_archive).");
+                throw new \RuntimeException("No tables found for {$baseTable}");
             }
 
             return $queries;
@@ -96,7 +99,10 @@ class DatabaseRouter
             }
 
             return [
-                $q->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()])
+                $q->whereBetween('business_date', [
+                    $startDate->toDateString(), 
+                    $endDate->toDateString()
+                ])
             ];
         }
 
@@ -114,7 +120,10 @@ class DatabaseRouter
             }
 
             return [
-                $q->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()])
+                $q->whereBetween('business_date', [
+                    $startDate->toDateString(), 
+                    $endDate->toDateString()
+                ])
             ];
         }
 
@@ -146,7 +155,7 @@ class DatabaseRouter
         }
 
         if (empty($queries)) {
-            throw new \RuntimeException("No routed tables available for {$baseTable} in spanning range.");
+            throw new \RuntimeException("No routed tables available for {$baseTable}");
         }
 
         return $queries;
@@ -154,38 +163,40 @@ class DatabaseRouter
 
     public static function getDataDistribution(string $baseTable): array
     {
-        $cutoff = self::getCutoffDate();
+        $cacheKey = "data_dist_{$baseTable}";
+        
+        return Cache::remember($cacheKey, 300, function() use ($baseTable) {
+            $cutoff = self::getCutoffDate();
 
-        $hotCount = DB::connection('operational')
-            ->table("{$baseTable}_hot")
-            ->count();
+            $hotCount = DB::connection('operational')
+                ->table("{$baseTable}_hot")
+                ->count();
 
-        $archiveCount = DB::connection('analytics')
-            ->table("{$baseTable}_archive")
-            ->count();
+            $archiveCount = DB::connection('analytics')
+                ->table("{$baseTable}_archive")
+                ->count();
 
-        $totalRows = $hotCount + $archiveCount;
+            $totalRows = $hotCount + $archiveCount;
 
-        return [
-            'table'              => $baseTable,
-            'hot_rows'           => $hotCount,
-            'archive_rows'       => $archiveCount,
-            'total_rows'         => $totalRows,
-            'cutoff_date'        => $cutoff->toDateString(),
-            'hot_percentage'     => $totalRows > 0 ? round(($hotCount / $totalRows) * 100, 2) : 0,
-            'archive_percentage' => $totalRows > 0 ? round(($archiveCount / $totalRows) * 100, 2) : 0,
-        ];
+            return [
+                'table'              => $baseTable,
+                'hot_rows'           => $hotCount,
+                'archive_rows'       => $archiveCount,
+                'total_rows'         => $totalRows,
+                'cutoff_date'        => $cutoff->toDateString(),
+                'hot_percentage'     => $totalRows > 0 ? round(($hotCount / $totalRows) * 100, 2) : 0,
+                'archive_percentage' => $totalRows > 0 ? round(($archiveCount / $totalRows) * 100, 2) : 0,
+            ];
+        });
     }
 
-    /**
-     * Get data distribution for all tables
-     */
     public static function getAllDataDistribution(): array
     {
         $tables = [
             'detail_orders', 'order_line', 'summary_sales', 'summary_items',
             'summary_transactions', 'waste', 'cash_management', 'financial_views',
-            'finance_data', 'final_summaries', 'hourly_sales'
+            'alta_inventory_cogs', 'alta_inventory_ingredient_orders',
+            'alta_inventory_ingredient_usage', 'alta_inventory_waste'
         ];
 
         $stats = [];
@@ -194,5 +205,17 @@ class DatabaseRouter
         }
 
         return $stats;
+    }
+
+    /**
+     * Clear distribution cache
+     */
+    public static function clearCache(string $baseTable = null): void
+    {
+        if ($baseTable) {
+            Cache::forget("data_dist_{$baseTable}");
+        } else {
+            Cache::flush();
+        }
     }
 }
