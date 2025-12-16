@@ -14,8 +14,6 @@ use Illuminate\Support\Facades\Cache;
 
 /**
  * Archive a single table's date range in background
- * 
- * Matches your existing job pattern from ProcessCsvImportJob
  */
 class ArchiveDataJob implements ShouldQueue
 {
@@ -61,7 +59,7 @@ class ArchiveDataJob implements ShouldQueue
             $hotTable = "{$this->table}_hot";
             $archiveTable = "{$this->table}_archive";
 
-            // Count rows to archive
+            // Count rows to archive (from operational DB)
             $count = DB::connection('operational')
                 ->table($hotTable)
                 ->whereBetween('business_date', [
@@ -75,11 +73,14 @@ class ArchiveDataJob implements ShouldQueue
                 return;
             }
 
-            // Archive using direct INSERT...SELECT
-            DB::transaction(function() use ($hotTable, $archiveTable) {
+            // Get the actual database names from config
+            $operationalDb = config('database.connections.operational.database');
+
+            DB::transaction(function() use ($hotTable, $archiveTable, $operationalDb) {
+                // Archive using INSERT...SELECT with proper database name
                 DB::connection('analytics')->statement("
                     INSERT IGNORE INTO {$archiveTable}
-                    SELECT * FROM operational.{$hotTable}
+                    SELECT * FROM {$operationalDb}.{$hotTable}
                     WHERE business_date BETWEEN ? AND ?
                 ", [
                     $this->startDate->toDateString(),
