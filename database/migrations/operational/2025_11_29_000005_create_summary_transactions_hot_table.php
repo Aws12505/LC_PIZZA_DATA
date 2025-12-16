@@ -17,8 +17,8 @@ return new class extends Migration
             $table->string('payment_method', 50)->nullable();
             $table->string('sub_payment_method', 50)->nullable();
             $table->decimal('total_amount', 15, 2)->nullable();
-            $table->integer('saf_qty')->nullable();
-            $table->decimal('saf_total', 15, 2)->nullable();
+            $table->integer('saf_qty')->nullable()->default(NULL);
+            $table->decimal('saf_total', 15, 2)->nullable()->default(NULL);
             $table->timestamps();
 
             $table->index(['franchise_store', 'business_date']);

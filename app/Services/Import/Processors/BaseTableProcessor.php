@@ -294,6 +294,21 @@ abstract class BaseTableProcessor
         }
         return is_numeric($value) ? $value : null;
     }
+        /**
+     * Convert to integer, handling empty strings
+     */
+    protected function toInteger($value): ?int
+    {
+        if ($value === '' || $value === null) {
+            return null;
+        }
+        
+        if (is_numeric($value)) {
+            return (int) $value;
+        }
+        
+        return null;
+    }
 
     protected function toBoolean($value): ?bool
     {

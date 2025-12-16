@@ -16,7 +16,7 @@ return new class extends Migration
             $table->date('business_date')->index();
             $table->dateTime('create_datetime')->nullable();
             $table->dateTime('verified_datetime')->nullable();
-            $table->string('till', 20)->nullable();
+            $table->string('till', 100)->nullable();
             $table->string('check_type')->nullable();
             $table->decimal('system_totals', 15, 2)->nullable();
             $table->decimal('verified', 15, 2)->nullable();

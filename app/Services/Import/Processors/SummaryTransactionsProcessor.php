@@ -37,4 +37,18 @@ class SummaryTransactionsProcessor extends BaseTableProcessor
             'saftotal' => 'saf_total',
         ]);
     }
+
+    /**
+     * Transform data - handle empty strings for numeric columns
+     */
+    protected function transformData(array $row): array
+    {
+        // Convert empty strings to null for integer/numeric columns
+        $row['saf_qty'] = $this->toInteger($row['saf_qty'] ?? null);
+        $row['saf_total'] = $this->toNumeric($row['saf_total'] ?? null);
+        $row['total_amount'] = $this->toNumeric($row['total_amount'] ?? null);
+        
+        return $row;
+    }
+
 }
