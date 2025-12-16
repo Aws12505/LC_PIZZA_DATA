@@ -148,7 +148,7 @@ class ArchiveDataCommand extends Command
                         $batchEnd,
                         count($archivePlan),
                         $verify
-                    )->onQueue('archiving');
+                    );
                 }
 
                 $dispatched++;
