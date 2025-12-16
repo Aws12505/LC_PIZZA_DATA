@@ -59,7 +59,7 @@ return new class extends Migration
             $table->string('refunded', 20)->nullable();
 
             // Payment
-            $table->string('payment_methods', 50)->nullable();
+            $table->string('payment_methods', 255)->nullable();
 
             // Transaction info
             $table->string('transaction_type', 50)->nullable();
