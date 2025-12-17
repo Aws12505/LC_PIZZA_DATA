@@ -69,6 +69,26 @@ class PartitionStatsCommand extends Command
         $this->info('💾 Storage Information:');
         $this->showStorageInfo('operational', 'detail_orders_hot');
         $this->showStorageInfo('analytics', 'detail_orders_archive');
+        $this->showStorageInfo('operational', 'summary_sales_hot');
+        $this->showStorageInfo('analytics', 'summary_sales_archive');
+        $this->showStorageInfo('operational', 'financial_views_hot');
+        $this->showStorageInfo('analytics', 'financial_views_archive');
+        $this->showStorageInfo('operational', 'alta_inventory_cogs_hot');
+        $this->showStorageInfo('analytics', 'alta_inventory_cogs_archive');
+        $this->showStorageInfo('operational', 'alta_inventory_ingredient_usage_hot');
+        $this->showStorageInfo('analytics', 'alta_inventory_ingredient_usage_archive');
+        $this->showStorageInfo('operational', 'alta_inventory_waste_hot');
+        $this->showStorageInfo('analytics', 'alta_inventory_waste_archive');
+        $this->showStorageInfo('operational', 'cash_management_hot');
+        $this->showStorageInfo('analytics', 'cash_management_archive');
+        $this->showStorageInfo('operational', 'waste_hot');
+        $this->showStorageInfo('analytics', 'waste_archive');
+        $this->showStorageInfo('operational', 'order_line_hot');
+        $this->showStorageInfo('analytics', 'order_line_archive');
+        $this->showStorageInfo('operational', 'summary_items_hot');
+        $this->showStorageInfo('analytics', 'summary_items_archive');
+        $this->showStorageInfo('operational', 'summary_transactions_hot');
+        $this->showStorageInfo('analytics', 'summary_transactions_archive');
 
         return self::SUCCESS;
     }
