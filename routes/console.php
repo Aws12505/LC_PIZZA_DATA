@@ -54,7 +54,7 @@ Schedule::command('aggregation:update --type=daily')
 // Update weekly aggregations every Monday at 3:00 AM ET
 Schedule::command('aggregation:update --type=weekly')
     ->weekly()
-    ->mondays()
+    ->tuesdays()
     ->at('03:00')
     ->timezone('America/New_York')
     ->withoutOverlapping()
@@ -127,7 +127,7 @@ Schedule::call(function () {
     }
 })
     ->weekly()
-    ->sundays()
+    ->tuesdays()
     ->at('01:00')
     ->timezone('America/New_York')
     ->name('clear-old-logs');

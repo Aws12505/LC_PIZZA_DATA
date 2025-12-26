@@ -56,8 +56,8 @@ class AggregationService
      */
     public function updateWeeklySummaries(Carbon $date): void
     {
-        $weekStart = $date->copy()->startOfWeek();
-        $weekEnd = $date->copy()->endOfWeek();
+        $weekStart = $date->copy()->startOfWeek(Carbon::TUESDAY);
+        $weekEnd   = $date->copy()->endOfWeek(Carbon::MONDAY);
         Log::info("Weekly {$weekStart->format('Y-m-d')}→{$weekEnd->format('Y-m-d')}");
         $this->updateWeeklySummariesRange($weekStart, $weekEnd);
     }
