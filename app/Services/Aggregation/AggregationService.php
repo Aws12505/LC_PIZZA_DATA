@@ -1,48 +1,32 @@
 <?php
 
-namespace App\Services\Aggregation;
+namespace App\Services;
 
-use App\Models\Aggregation\{
-    HourlyStoreSummary, HourlyItemSummary,
-    DailyStoreSummary, DailyItemSummary,
-    WeeklyStoreSummary, WeeklyItemSummary,
-    MonthlyStoreSummary, MonthlyItemSummary,
-    QuarterlyStoreSummary, QuarterlyItemSummary,
-    YearlyStoreSummary, YearlyItemSummary
-};
-use App\Models\Operational\{
-    DetailOrderHot, 
-    OrderLineHot, 
-    SummaryTransactionsHot, 
-    WasteHot, 
-    SummarySalesHot
-};
+use App\Models\Operational\DetailOrderHot;
+use App\Models\Operational\OrderLineHot;
+use App\Models\Operational\SummarySalesHot;
+use App\Models\Operational\SummaryTransactionsHot;
+use App\Models\Operational\WasteHot;
+use App\Models\Aggregation\HourlyStoreSummary;
+use App\Models\Aggregation\HourlyItemSummary;
+use App\Models\Aggregation\DailyStoreSummary;
+use App\Models\Aggregation\DailyItemSummary;
+use App\Models\Aggregation\WeeklyStoreSummary;
+use App\Models\Aggregation\WeeklyItemSummary;
+use App\Models\Aggregation\MonthlyStoreSummary;
+use App\Models\Aggregation\MonthlyItemSummary;
+use App\Models\Aggregation\QuarterlyStoreSummary;
+use App\Models\Aggregation\QuarterlyItemSummary;
+use App\Models\Aggregation\YearlyStoreSummary;
+use App\Models\Aggregation\YearlyItemSummary;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
-/**
- * ✅ CORRECTED AGGREGATION SERVICE - COMPLETE WITH HOURLY
- * 
- * AGGREGATION CHAIN:
- * RAW DATA → HOURLY → DAILY → WEEKLY → MONTHLY → QUARTERLY → YEARLY
- * 
- * CRITICAL FIXES APPLIED:
- * 1. total_sales = SUM(royalty_obligation) ✅
- * 2. gross_sales = SUM(gross_sales) ✅
- * 3. ALL channel sales = SUM(royalty_obligation) ✅
- * 4. modified_orders = override_approval_employee ✅
- * 5. call_center = 'SoundHoundAgent' ✅
- * 6. drive_thru = 'Drive Thru' ✅
- */
 class AggregationService
 {
-    // ═══════════════════════════════════════════════════════════════════════════
-    // PUBLIC ENTRY POINTS
-    // ═══════════════════════════════════════════════════════════════════════════
-
     /**
-     * Update hourly summaries from RAW data
+     * Update hourly summaries from RAW transactional data
      */
     public function updateHourlySummaries(Carbon $date): void
     {
@@ -100,7 +84,6 @@ class AggregationService
     {
         $weekStart = $date->copy()->startOfWeek(Carbon::TUESDAY);
         $weekEnd = $date->copy()->endOfWeek(Carbon::MONDAY);
-
         Log::info("Weekly aggregation: {$weekStart->toDateString()} to {$weekEnd->toDateString()}");
 
         $this->updateWeeklySummariesRange($weekStart, $weekEnd);
@@ -113,7 +96,6 @@ class AggregationService
     {
         $year = $date->year;
         $month = $date->month;
-
         Log::info("Monthly aggregation: {$year}-{$month}");
 
         $this->updateMonthlySummariesYearMonth($year, $month);
@@ -126,7 +108,6 @@ class AggregationService
     {
         $year = $date->year;
         $quarter = (int) ceil($date->month / 3);
-
         Log::info("Quarterly aggregation: {$year} Q{$quarter}");
 
         $this->updateQuarterlySummariesYearQuarter($year, $quarter);
@@ -138,7 +119,6 @@ class AggregationService
     public function updateYearlySummaries(Carbon $date): void
     {
         $year = $date->year;
-
         Log::info("Yearly aggregation: {$year}");
 
         $this->updateYearlySummariesYear($year);
@@ -152,10 +132,10 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        // Get all hours that have data
+        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
         $hours = DetailOrderHot::where('franchise_store', $store)
             ->where('business_date', $dateStr)
-            ->selectRaw('DISTINCT HOUR(order_datetime) as hour')
+            ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
             ->pluck('hour');
 
         foreach ($hours as $hour) {
@@ -165,20 +145,18 @@ class AggregationService
 
     private function aggregateHourlyStoreData(string $store, string $date, int $hour): void
     {
+        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
         $baseOrders = DetailOrderHot::where('franchise_store', $store)
             ->where('business_date', $date)
-            ->whereRaw('HOUR(order_datetime) = ?', [$hour]);
+            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
 
         if (!(clone $baseOrders)->exists()) {
             return;
         }
 
-        // ✅ CORRECTED: total_sales = royalty_obligation
+        // SALES
         $totalSales = (clone $baseOrders)->sum('royalty_obligation');
-
-        // ✅ CORRECTED: gross_sales = gross_sales
         $grossSales = (clone $baseOrders)->sum('gross_sales');
-
         $netSales = (clone $baseOrders)
             ->get(['gross_sales', 'non_royalty_amount'])
             ->sum(fn($r) => (float)$r->gross_sales - (float)($r->non_royalty_amount ?? 0));
@@ -189,21 +167,27 @@ class AggregationService
 
         // ORDERS
         $totalOrders = (clone $baseOrders)->distinct()->count('order_id');
+
         $refundedOrders = (clone $baseOrders)
             ->where('refunded', 'Yes')
             ->distinct()
             ->count('order_id');
 
-        // ✅ CORRECTED: modified orders use override_approval_employee
         $modifiedOrders = (clone $baseOrders)
             ->whereNotNull('override_approval_employee')
             ->where('override_approval_employee', '!=', '')
             ->distinct()
             ->count('order_id');
 
+        // ✅ FIXED: Added cancelled orders detection
+        $cancelledOrders = (clone $baseOrders)
+            ->where('transaction_type', 'Cancelled')
+            ->distinct()
+            ->count('order_id');
+
         $customerCount = (clone $baseOrders)->sum('customer_count');
 
-        // ✅ CORRECTED: ALL CHANNELS USE royalty_obligation
+        // CHANNELS
         $phoneOrders = (clone $baseOrders)->where('order_placed_method', 'Phone')->distinct()->count('order_id');
         $phoneSales = (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
 
@@ -213,11 +197,9 @@ class AggregationService
         $mobileOrders = (clone $baseOrders)->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
         $mobileSales = (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
 
-        // ✅ CORRECTED: SoundHoundAgent (not CallCenterAgent)
         $callCenterOrders = (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->distinct()->count('order_id');
         $callCenterSales = (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->sum('royalty_obligation');
 
-        // ✅ CORRECTED: 'Drive Thru' with space (not Drive-Thru)
         $driveThruOrders = (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->distinct()->count('order_id');
         $driveThruSales = (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
 
@@ -255,9 +237,10 @@ class AggregationService
         $portalOnTime = (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
 
         // PRODUCTS
+        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
         $baseLines = OrderLineHot::where('franchise_store', $store)
             ->where('business_date', $date)
-            ->whereRaw('HOUR(order_datetime) = ?', [$hour]);
+            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
 
         $pizzaQty = (clone $baseLines)->where('is_pizza', 1)->sum('quantity');
         $pizzaSales = (clone $baseLines)->where('is_pizza', 1)->sum('net_amount');
@@ -277,27 +260,32 @@ class AggregationService
         $crazyPuffsQty = (clone $baseLines)->where('is_crazy_puffs', 1)->sum('quantity');
         $crazyPuffsSales = (clone $baseLines)->where('is_crazy_puffs', 1)->sum('net_amount');
 
-        // PAYMENTS
-        $basePayments = SummaryTransactionsHot::where('franchise_store', $store)
-            ->where('business_date', $date)
-            ->whereRaw('HOUR(transaction_datetime) = ?', [$hour]);
+        // ✅ FIXED: Payments extracted from order data (payment_methods field)
+        // Since summary_transactions_hot is daily aggregate, we extract from orders
+        $ordersWithPayments = (clone $baseOrders)->get(['payment_methods', 'royalty_obligation']);
 
-        $cashSales = (clone $basePayments)->where('payment_method', 'Cash')->sum('total_amount');
+        $cashSales = 0;
+        $creditCardSales = 0;
+        $prepaidSales = 0;
 
-        $creditCardSales = (clone $basePayments)
-            ->get(['payment_method', 'total_amount'])
-            ->filter(fn($r) => str_contains((string)$r->payment_method, 'Credit') || 
-                               str_contains((string)$r->payment_method, 'Card'))
-            ->sum('total_amount');
+        foreach ($ordersWithPayments as $order) {
+            $paymentMethod = (string)$order->payment_methods;
+            $amount = (float)$order->royalty_obligation;
 
-        $prepaidSales = (clone $basePayments)
-            ->where('sub_payment_method', 'like', '%Prepaid%')
-            ->sum('total_amount');
+            if (stripos($paymentMethod, 'Cash') !== false) {
+                $cashSales += $amount;
+            } elseif (stripos($paymentMethod, 'Credit') !== false || stripos($paymentMethod, 'Card') !== false) {
+                $creditCardSales += $amount;
+            } elseif (stripos($paymentMethod, 'Prepaid') !== false) {
+                $prepaidSales += $amount;
+            }
+        }
 
         // WASTE (hourly waste tracking)
+        // ✅ FIXED: Changed waste_datetime to waste_date_time
         $baseWaste = WasteHot::where('franchise_store', $store)
             ->where('business_date', $date)
-            ->whereRaw('HOUR(waste_datetime) = ?', [$hour]);
+            ->whereRaw('HOUR(waste_date_time) = ?', [$hour]);
 
         $wasteItems = (clone $baseWaste)->count();
         $wasteCost = (clone $baseWaste)
@@ -320,13 +308,15 @@ class AggregationService
             'net_sales' => round($netSales, 2),
             'refund_amount' => round($refundAmount, 2),
             'total_orders' => $totalOrders,
-            'completed_orders' => $totalOrders - $refundedOrders,
-            'cancelled_orders' => 0,
+            'completed_orders' => $totalOrders - $refundedOrders - $cancelledOrders,
+            'cancelled_orders' => $cancelledOrders,
             'modified_orders' => $modifiedOrders,
             'refunded_orders' => $refundedOrders,
             'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
             'customer_count' => $customerCount,
             'avg_customers_per_order' => $totalOrders > 0 ? round($customerCount / $totalOrders, 2) : 0,
+
+            // Channels
             'phone_orders' => $phoneOrders,
             'phone_sales' => round($phoneSales, 2),
             'website_orders' => $websiteOrders,
@@ -337,16 +327,22 @@ class AggregationService
             'call_center_sales' => round($callCenterSales, 2),
             'drive_thru_orders' => $driveThruOrders,
             'drive_thru_sales' => round($driveThruSales, 2),
+
+            // Marketplace
             'doordash_orders' => $doordashOrders,
             'doordash_sales' => round($doordashSales, 2),
             'ubereats_orders' => $ubereatsOrders,
             'ubereats_sales' => round($ubereatsSales, 2),
             'grubhub_orders' => $grubhubOrders,
             'grubhub_sales' => round($grubhubSales, 2),
+
+            // Fulfillment
             'delivery_orders' => $deliveryOrders,
             'delivery_sales' => round($deliverySales, 2),
             'carryout_orders' => $carryoutOrders,
             'carryout_sales' => round($carryoutSales, 2),
+
+            // Products
             'pizza_quantity' => $pizzaQty,
             'pizza_sales' => round($pizzaSales, 2),
             'hnr_quantity' => $hnrQty,
@@ -359,22 +355,32 @@ class AggregationService
             'beverages_sales' => round($beveragesSales, 2),
             'crazy_puffs_quantity' => $crazyPuffsQty,
             'crazy_puffs_sales' => round($crazyPuffsSales, 2),
+
+            // Financial
             'sales_tax' => round($salesTax, 2),
             'delivery_fees' => round($deliveryFees, 2),
             'delivery_tips' => round($deliveryTips, 2),
             'store_tips' => round($storeTips, 2),
             'total_tips' => round($deliveryTips + $storeTips, 2),
+
+            // Payments
             'cash_sales' => round($cashSales, 2),
             'credit_card_sales' => round($creditCardSales, 2),
             'prepaid_sales' => round($prepaidSales, 2),
             'over_short' => round($overShort, 2),
+
+            // Portal
             'portal_eligible_orders' => $portalEligible,
             'portal_used_orders' => $portalUsed,
             'portal_on_time_orders' => $portalOnTime,
             'portal_usage_rate' => $portalEligible > 0 ? round(($portalUsed / $portalEligible) * 100, 2) : 0,
             'portal_on_time_rate' => $portalUsed > 0 ? round(($portalOnTime / $portalUsed) * 100, 2) : 0,
+
+            // Waste
             'total_waste_items' => $wasteItems,
             'total_waste_cost' => round($wasteCost, 2),
+
+            // Digital
             'digital_orders' => $digitalOrders,
             'digital_sales' => round($digitalSales, 2),
             'digital_penetration' => $totalOrders > 0 ? round(($digitalOrders / $totalOrders) * 100, 2) : 0,
@@ -394,9 +400,10 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
+        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
         $hours = OrderLineHot::where('franchise_store', $store)
             ->where('business_date', $dateStr)
-            ->selectRaw('DISTINCT HOUR(order_datetime) as hour')
+            ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
             ->pluck('hour');
 
         foreach ($hours as $hour) {
@@ -406,11 +413,12 @@ class AggregationService
 
     private function aggregateHourlyItemData(string $store, string $date, int $hour): void
     {
+        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
         $lines = OrderLineHot::where('franchise_store', $store)
             ->where('business_date', $date)
-            ->whereRaw('HOUR(order_datetime) = ?', [$hour])
+            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour])
             ->get([
-                'franchise_store', 'business_date', 'item_id', 'menu_item_name', 
+                'franchise_store', 'business_date', 'item_id', 'menu_item_name',
                 'menu_item_account', 'quantity', 'net_amount', 'modification_reason',
                 'order_fulfilled_method', 'refunded', 'modified_order_amount'
             ]);
@@ -461,7 +469,6 @@ class AggregationService
     private function aggregateDailyFromHourly(string $store, Carbon $date): void
     {
         $dateStr = $date->toDateString();
-
         $hourly = HourlyStoreSummary::where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->get();
@@ -470,16 +477,28 @@ class AggregationService
             return;
         }
 
-        // Get over_short from raw daily table (not aggregated from hourly)
-        $overShort = SummarySalesHot::where('franchise_store', $store)
+        // Get over_short and payment totals from raw daily table
+        $dailySummary = SummarySalesHot::where('franchise_store', $store)
             ->where('business_date', $dateStr)
-            ->value('over_short') ?? 0;
+            ->first();
+
+        $overShort = $dailySummary->over_short ?? 0;
+
+        // ✅ FIXED: Get actual payment data from daily summary table
+        $cashSales = $dailySummary->cash_amount ?? 0;
+        $creditCardSales = $dailySummary->credit_card_amount ?? 0;
+        $prepaidSales = $dailySummary->prepaid_amount ?? 0;
 
         $summary = $this->sumStorePeriod($hourly, [
             'franchise_store' => $store,
             'business_date' => $dateStr,
             'over_short' => $overShort
         ]);
+
+        // Override payment totals with accurate daily data
+        $summary['cash_sales'] = round($cashSales, 2);
+        $summary['credit_card_sales'] = round($creditCardSales, 2);
+        $summary['prepaid_sales'] = round($prepaidSales, 2);
 
         DailyStoreSummary::updateOrCreate(
             [
@@ -493,7 +512,6 @@ class AggregationService
     private function aggregateDailyItemsFromHourly(string $store, Carbon $date): void
     {
         $dateStr = $date->toDateString();
-
         $items = HourlyItemSummary::where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->selectRaw('
@@ -572,7 +590,7 @@ class AggregationService
             'week_end_date' => $weekEnd->toDateString()
         ]);
 
-        // ✅ Calculate avg_daily_sales and avg_daily_orders for weekly
+        // Calculate averages for weekly
         $daysCount = $daily->count();
         $summary['avg_daily_sales'] = $daysCount > 0 ? round($summary['total_sales'] / $daysCount, 2) : 0;
         $summary['avg_daily_orders'] = $daysCount > 0 ? round($summary['total_orders'] / $daysCount, 2) : 0;
@@ -585,12 +603,12 @@ class AggregationService
 
         if ($priorWeek) {
             $summary['sales_vs_prior_week'] = round($summary['total_sales'] - $priorWeek->total_sales, 2);
-            $summary['sales_growth_percent'] = $priorWeek->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorWeek->total_sales) / $priorWeek->total_sales) * 100, 2) 
+            $summary['sales_growth_percent'] = $priorWeek->total_sales > 0
+                ? round((($summary['total_sales'] - $priorWeek->total_sales) / $priorWeek->total_sales) * 100, 2)
                 : 0;
             $summary['orders_vs_prior_week'] = $summary['total_orders'] - $priorWeek->total_orders;
-            $summary['orders_growth_percent'] = $priorWeek->total_orders > 0 
-                ? round((($summary['total_orders'] - $priorWeek->total_orders) / $priorWeek->total_orders) * 100, 2) 
+            $summary['orders_growth_percent'] = $priorWeek->total_orders > 0
+                ? round((($summary['total_orders'] - $priorWeek->total_orders) / $priorWeek->total_orders) * 100, 2)
                 : 0;
         }
 
@@ -713,8 +731,8 @@ class AggregationService
 
         if ($priorMonth) {
             $summary['sales_vs_prior_month'] = round($summary['total_sales'] - $priorMonth->total_sales, 2);
-            $summary['sales_growth_percent'] = $priorMonth->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorMonth->total_sales) / $priorMonth->total_sales) * 100, 2) 
+            $summary['sales_growth_percent'] = $priorMonth->total_sales > 0
+                ? round((($summary['total_sales'] - $priorMonth->total_sales) / $priorMonth->total_sales) * 100, 2)
                 : 0;
         }
 
@@ -725,8 +743,8 @@ class AggregationService
 
         if ($priorYear) {
             $summary['sales_vs_same_month_prior_year'] = round($summary['total_sales'] - $priorYear->total_sales, 2);
-            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2) 
+            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
+                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2)
                 : 0;
         }
 
@@ -844,8 +862,8 @@ class AggregationService
 
         if ($priorQuarter) {
             $summary['sales_vs_prior_quarter'] = round($summary['total_sales'] - $priorQuarter->total_sales, 2);
-            $summary['sales_growth_percent'] = $priorQuarter->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorQuarter->total_sales) / $priorQuarter->total_sales) * 100, 2) 
+            $summary['sales_growth_percent'] = $priorQuarter->total_sales > 0
+                ? round((($summary['total_sales'] - $priorQuarter->total_sales) / $priorQuarter->total_sales) * 100, 2)
                 : 0;
         }
 
@@ -856,8 +874,8 @@ class AggregationService
 
         if ($priorYear) {
             $summary['sales_vs_same_quarter_prior_year'] = round($summary['total_sales'] - $priorYear->total_sales, 2);
-            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2) 
+            $summary['yoy_growth_percent'] = $priorYear->total_sales > 0
+                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2)
                 : 0;
         }
 
@@ -875,7 +893,6 @@ class AggregationService
     {
         $m1 = ($quarter - 1) * 3 + 1;
         $m3 = $quarter * 3;
-
         $qStart = Carbon::create($year, $m1, 1);
         $qEnd = Carbon::create($year, $m3, 1)->endOfMonth();
 
@@ -962,8 +979,8 @@ class AggregationService
 
         if ($priorYear) {
             $summary['sales_vs_prior_year'] = round($summary['total_sales'] - $priorYear->total_sales, 2);
-            $summary['sales_growth_percent'] = $priorYear->total_sales > 0 
-                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2) 
+            $summary['sales_growth_percent'] = $priorYear->total_sales > 0
+                ? round((($summary['total_sales'] - $priorYear->total_sales) / $priorYear->total_sales) * 100, 2)
                 : 0;
         }
 
@@ -1103,26 +1120,87 @@ class AggregationService
         ];
 
         // Recalculate averages and rates
-        $summary['avg_order_value'] = $summary['total_orders'] > 0 
-            ? round($summary['total_sales'] / $summary['total_orders'], 2) 
+        $summary['avg_order_value'] = $summary['total_orders'] > 0
+            ? round($summary['total_sales'] / $summary['total_orders'], 2)
             : 0;
 
-        $summary['avg_customers_per_order'] = $summary['total_orders'] > 0 
-            ? round($summary['customer_count'] / $summary['total_orders'], 2) 
+        $summary['avg_customers_per_order'] = $summary['total_orders'] > 0
+            ? round($summary['customer_count'] / $summary['total_orders'], 2)
             : 0;
 
-        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0 
-            ? round(($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100, 2) 
+        $summary['portal_usage_rate'] = $summary['portal_eligible_orders'] > 0
+            ? round(($summary['portal_used_orders'] / $summary['portal_eligible_orders']) * 100, 2)
             : 0;
 
-        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0 
-            ? round(($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100, 2) 
+        $summary['portal_on_time_rate'] = $summary['portal_used_orders'] > 0
+            ? round(($summary['portal_on_time_orders'] / $summary['portal_used_orders']) * 100, 2)
             : 0;
 
-        $summary['digital_penetration'] = $summary['total_orders'] > 0 
-            ? round(($summary['digital_orders'] / $summary['total_orders']) * 100, 2) 
+        $summary['digital_penetration'] = $summary['total_orders'] > 0
+            ? round(($summary['digital_orders'] / $summary['total_orders']) * 100, 2)
             : 0;
 
         return $summary;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VALIDATION & DEBUGGING METHODS
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * ✅ NEW: Validate hourly aggregation accuracy
+     */
+    public function validateHourlyAggregation(string $store, Carbon $date): array
+    {
+        $dateStr = $date->toDateString();
+
+        $hourlyTotal = HourlyStoreSummary::where('franchise_store', $store)
+            ->where('business_date', $dateStr)
+            ->sum('gross_sales');
+
+        $rawTotal = DetailOrderHot::where('franchise_store', $store)
+            ->where('business_date', $dateStr)
+            ->sum('gross_sales');
+
+        $diff = abs($hourlyTotal - $rawTotal);
+        $isValid = $diff < 0.01; // Allow 1 cent tolerance
+
+        if (!$isValid) {
+            Log::error("Hourly aggregation mismatch", [
+                'store' => $store,
+                'date' => $dateStr,
+                'hourly_total' => $hourlyTotal,
+                'raw_total' => $rawTotal,
+                'difference' => $diff
+            ]);
+        }
+
+        return [
+            'valid' => $isValid,
+            'hourly_total' => $hourlyTotal,
+            'raw_total' => $rawTotal,
+            'difference' => $diff
+        ];
+    }
+
+    /**
+     * ✅ NEW: Get aggregation health status
+     */
+    public function getAggregationHealth(Carbon $date): array
+    {
+        $dateStr = $date->toDateString();
+
+        $rawOrders = DetailOrderHot::where('business_date', $dateStr)->count();
+        $hourlyRecords = HourlyStoreSummary::where('business_date', $dateStr)->count();
+        $dailyRecords = DailyStoreSummary::where('business_date', $dateStr)->count();
+
+        return [
+            'date' => $dateStr,
+            'raw_orders' => $rawOrders,
+            'hourly_records' => $hourlyRecords,
+            'daily_records' => $dailyRecords,
+            'avg_hours_per_store' => $dailyRecords > 0 ? round($hourlyRecords / $dailyRecords, 1) : 0,
+            'status' => $rawOrders > 0 && $hourlyRecords > 0 && $dailyRecords > 0 ? 'healthy' : 'incomplete'
+        ];
     }
 }
