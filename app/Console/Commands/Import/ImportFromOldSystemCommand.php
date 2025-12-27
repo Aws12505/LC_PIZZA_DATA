@@ -29,7 +29,7 @@ class ImportFromOldSystemCommand extends Command
                             {--batch-days=7 : Number of days per batch request}
                             {--delay=5 : Seconds to wait between batch imports}
                             {--no-aggregation : Skip aggregation rebuild after import}
-                            {--aggregation-type=all : Aggregation type (daily, weekly, monthly, quarterly, yearly, all)}';
+                            {--aggregation-type=all : Aggregation type (hourly, daily, weekly, monthly, quarterly, yearly, all)}';
 
     protected $description = 'Import data from old system API in date range batches with auto-aggregation';
 

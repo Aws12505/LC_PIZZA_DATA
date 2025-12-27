@@ -63,6 +63,7 @@ class ProcessAggregationJob implements ShouldQueue
 
                 // Use YOUR existing AggregationService methods
                 match ($this->type) {
+                    'hourly' => $service->updateHourlySummaries($current),
                     'daily' => $service->updateDailySummaries($current),
                     'weekly' => $service->updateWeeklySummaries($current),
                     'monthly' => $service->updateMonthlySummaries($current),
@@ -102,6 +103,7 @@ class ProcessAggregationJob implements ShouldQueue
 
     protected function aggregateAll(AggregationService $service, Carbon $date): void
     {
+        $service->updateHourlySummaries($date);
         $service->updateDailySummaries($date);
         $service->updateWeeklySummaries($date);
         $service->updateMonthlySummaries($date);
