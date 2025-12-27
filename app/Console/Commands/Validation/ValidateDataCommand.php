@@ -105,7 +105,7 @@ class ValidateDataCommand extends Command
                 ->where('business_date', $date->toDateString())
                 ->count();
 
-            $archiveCount = DB::connection('analytics')
+            $archiveCount = DB::connection('archive')
                 ->table("{$table}_archive")
                 ->where('business_date', $date->toDateString())
                 ->count();
