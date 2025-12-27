@@ -2,9 +2,9 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
 
-class MonthlyStoreSummary extends AnalyticsModel
+
+class MonthlyStoreSummary extends AggregationModel
 {
     protected $table = 'monthly_store_summary';
 

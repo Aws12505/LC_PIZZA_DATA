@@ -302,7 +302,7 @@ class LCReportDataService
             }
 
             protected function getDatabaseConnection(): string {
-                return 'analytics';
+                return 'archive';
             }
         };
 

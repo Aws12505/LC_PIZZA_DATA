@@ -2,9 +2,8 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
 
-class DailyItemSummary extends AnalyticsModel
+class DailyItemSummary extends AggregationModel
 {
     protected $table = 'daily_item_summary';
 

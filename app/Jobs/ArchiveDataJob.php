@@ -81,7 +81,7 @@ class ArchiveDataJob implements ShouldQueue
 
             DB::transaction(function() use ($hotTable, $archiveTable, $operationalDb, $columns) {
                 // Archive using INSERT...SELECT with explicit column list
-                DB::connection('analytics')->statement("
+                DB::connection('archive')->statement("
                     INSERT IGNORE INTO {$archiveTable} ({$columns})
                     SELECT {$columns} FROM {$operationalDb}.{$hotTable}
                     WHERE business_date BETWEEN ? AND ?

@@ -26,13 +26,32 @@ return [
         ],
 
         // ANALYTICS DATABASE - Historical archive + aggregations
-        'analytics' => [
+        'archive' => [
             'driver' => 'mysql',
-            'host' => env('DB_ANALYTICS_HOST', '127.0.0.1'),
-            'port' => env('DB_ANALYTICS_PORT', '3306'),
-            'database' => env('DB_ANALYTICS_DATABASE', 'pizza_data_analytics'),
-            'username' => env('DB_ANALYTICS_USERNAME', 'root'),
-            'password' => env('DB_ANALYTICS_PASSWORD', ''),
+            'host' => env('DB_ARCHIVE_HOST', '127.0.0.1'),
+            'port' => env('DB_ARCHIVE_PORT', '3306'),
+            'database' => env('DB_ARCHIVE_DATABASE', 'pizza_data_archive'),
+            'username' => env('DB_ARCHIVE_USERNAME', 'root'),
+            'password' => env('DB_ARCHIVE_PASSWORD', ''),
+            'unix_socket' => env('DB_SOCKET', ''),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => 'InnoDB',
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
+        'aggregation' => [
+            'driver' => 'mysql',
+            'host' => env('DB_AGGREGATION_HOST', '127.0.0.1'),
+            'port' => env('DB_AGGREGATION_PORT', '3306'),
+            'database' => env('DB_AGGREGATION_DATABASE', 'pizza_data_aggregation'),
+            'username' => env('DB_AGGREGATION_USERNAME', 'root'),
+            'password' => env('DB_AGGREGATION_PASSWORD', ''),
             'unix_socket' => env('DB_SOCKET', ''),
             'charset' => 'utf8mb4',
             'collation' => 'utf8mb4_unicode_ci',

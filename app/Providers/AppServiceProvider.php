@@ -23,7 +23,7 @@ class AppServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom([
         database_path('migrations'),
         database_path('migrations/operational'),
-        database_path('migrations/analytics'),
+        database_path('migrations/archive'),
         database_path('migrations/aggregation'),
     ]);
     if (app()->environment('production')) {

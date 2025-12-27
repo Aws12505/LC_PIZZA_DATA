@@ -2,8 +2,8 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
-class MonthlyItemSummary extends AnalyticsModel
+
+class MonthlyItemSummary extends AggregationModel
 {
     protected $table = 'monthly_item_summary';
 

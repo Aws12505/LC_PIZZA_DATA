@@ -7,21 +7,26 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Rebuild aggregations for a date range
+ * Usage:
+ *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=all
+ *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=hourly
+ *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=daily
+ */
 class RebuildAggregationsCommand extends Command
 {
-    protected $signature = 'aggregation:rebuild 
-        {--start= : Start date Y-m-d}
-        {--end= : End date Y-m-d}
-        {--type=daily : daily, weekly, monthly, quarterly, yearly, all}';
+    protected $signature = 'aggregation:rebuild
+                            {--start= : Start date (Y-m-d)}
+                            {--end= : End date (Y-m-d)}
+                            {--type=all : Type: hourly, daily, weekly, monthly, quarterly, yearly, all}';
 
-    protected $description = 'Rebuild ALL aggregations for date range';
+    protected $description = 'Rebuild aggregations for a date range';
 
-    protected $aggregationService;
-
-    public function __construct(AggregationService $aggregationService)
-    {
+    public function __construct(
+        protected AggregationService $aggregationService
+    ) {
         parent::__construct();
-        $this->aggregationService = $aggregationService;
     }
 
     public function handle(): int
@@ -50,7 +55,9 @@ class RebuildAggregationsCommand extends Command
             [$start->toDateString(), $end->toDateString(), $days, $type]
         ]);
 
-        if (!$this->confirm('🚀 Proceed with rebuild?', true)) return self::SUCCESS;
+        if (!$this->confirm('🚀 Proceed with rebuild?', true)) {
+            return self::SUCCESS;
+        }
 
         $bar = $this->output->createProgressBar($days);
         $bar->start();
@@ -59,34 +66,49 @@ class RebuildAggregationsCommand extends Command
         $success = $failed = 0;
 
         while ($current <= $end) {
-    try {
-        if ($type === 'daily' || $type === 'all') {
-            $this->aggregationService->updateDailySummaries($current);
+            try {
+                // HOURLY must come first (builds from raw data)
+                if ($type === 'hourly' || $type === 'all') {
+                    $this->aggregationService->updateHourlySummaries($current);
+                }
+
+                // DAILY (builds from hourly)
+                if ($type === 'daily' || $type === 'all') {
+                    $this->aggregationService->updateDailySummaries($current);
+                }
+
+                // WEEKLY (builds from daily)
+                if ($type === 'weekly' || $type === 'all') {
+                    $this->aggregationService->updateWeeklySummaries($current);
+                }
+
+                // MONTHLY (builds from weekly)
+                if ($type === 'monthly' || $type === 'all') {
+                    $this->aggregationService->updateMonthlySummaries($current);
+                }
+
+                // QUARTERLY (builds from monthly)
+                if ($type === 'quarterly' || $type === 'all') {
+                    $this->aggregationService->updateQuarterlySummaries($current);
+                }
+
+                // YEARLY (builds from quarterly)
+                if ($type === 'yearly' || $type === 'all') {
+                    $this->aggregationService->updateYearlySummaries($current);
+                }
+
+                $success++;
+            } catch (\Exception $e) {
+                $failed++;
+                Log::error("Rebuild {$current->toDateString()}: " . $e->getMessage());
+            }
+
+            $bar->advance();
+            $current->addDay();
         }
-        if ($type === 'weekly' || $type === 'all') {
-            $this->aggregationService->updateWeeklySummaries($current);
-        }
-        if ($type === 'monthly' || $type === 'all') {
-            $this->aggregationService->updateMonthlySummaries($current);
-        }
-        if ($type === 'quarterly' || $type === 'all') {
-            $this->aggregationService->updateQuarterlySummaries($current);
-        }
-        if ($type === 'yearly' || $type === 'all') {
-            $this->aggregationService->updateYearlySummaries($current);
-        }
-        $success++;
-    } catch (\Exception $e) {
-        $failed++;
-        Log::error("Rebuild {$current->toDateString()}: " . $e->getMessage());
-    }
-    $bar->advance();
-    $current->addDay();
-}
 
         $bar->finish();
         $this->newLine(2);
-
         $this->info("✅ Success: {$success} | ❌ Failed: {$failed}");
 
         return $failed === 0 ? self::SUCCESS : self::FAILURE;

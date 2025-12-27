@@ -8,7 +8,7 @@ use Carbon\Carbon;
 
 return new class extends Migration
 {
-    protected $connection = 'analytics';
+    protected $connection = 'aggregation';
 
     public function up(): void
     {

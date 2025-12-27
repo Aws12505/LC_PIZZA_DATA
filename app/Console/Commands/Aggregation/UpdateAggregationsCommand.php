@@ -7,20 +7,26 @@ use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Update aggregations for a specific date
+ * Usage:
+ *   php artisan aggregation:update
+ *   php artisan aggregation:update --date=2025-01-15
+ *   php artisan aggregation:update --date=2025-01-15 --type=hourly
+ *   php artisan aggregation:update --date=2025-01-15 --type=all
+ */
 class UpdateAggregationsCommand extends Command
 {
-    protected $signature = 'aggregation:update 
-        {--date= : Date (Y-m-d, default yesterday)}
-        {--type=daily : daily, weekly, monthly, quarterly, yearly, all}';
+    protected $signature = 'aggregation:update
+                            {--date= : Date to update (Y-m-d), defaults to yesterday}
+                            {--type=all : Type: hourly, daily, weekly, monthly, quarterly, yearly, all}';
 
-    protected $description = 'Update ALL aggregation levels';
+    protected $description = 'Update aggregations for a specific date';
 
-    protected $aggregationService;
-
-    public function __construct(AggregationService $aggregationService)
-    {
+    public function __construct(
+        protected AggregationService $aggregationService
+    ) {
         parent::__construct();
-        $this->aggregationService = $aggregationService;
     }
 
     public function handle(): int
@@ -38,19 +44,19 @@ class UpdateAggregationsCommand extends Command
 
         try {
             match ($type) {
+                'hourly' => $this->updateHourly($date),
                 'daily' => $this->updateDaily($date),
                 'weekly' => $this->updateWeekly($date),
                 'monthly' => $this->updateMonthly($date),
                 'quarterly' => $this->updateQuarterly($date),
                 'yearly' => $this->updateYearly($date),
                 'all' => $this->updateAll($date),
-                default => throw new \Exception("Invalid type '{$type}'. Use: daily, weekly, monthly, quarterly, yearly, all")
+                default => throw new \Exception("Invalid type '{$type}'. Use: hourly, daily, weekly, monthly, quarterly, yearly, all")
             };
 
             $time = round(microtime(true) - $start, 2);
             $this->info("✅ COMPLETE - {$time}s");
             return self::SUCCESS;
-
         } catch (\Exception $e) {
             $time = round(microtime(true) - $start, 2);
             $this->error("❌ FAILED - {$time}s");
@@ -62,51 +68,59 @@ class UpdateAggregationsCommand extends Command
 
     protected function getDate(): Carbon
     {
-        return $this->option('date') 
+        return $this->option('date')
             ? Carbon::parse($this->option('date'))
             : Carbon::yesterday();
     }
 
+    protected function updateHourly(Carbon $date): void
+    {
+        $this->info('🔄 Hourly summaries (from raw data)...');
+        $this->aggregationService->updateHourlySummaries($date);
+        $this->info(' ✅ Hourly');
+    }
+
     protected function updateDaily(Carbon $date): void
     {
-        $this->info('🔄 Daily summaries...');
+        $this->info('🔄 Daily summaries (from hourly)...');
         $this->aggregationService->updateDailySummaries($date);
-        $this->info('  ✅ Daily');
+        $this->info(' ✅ Daily');
     }
 
     protected function updateWeekly(Carbon $date): void
     {
         $w1 = $date->copy()->startOfWeek()->format('M j');
         $w2 = $date->copy()->endOfWeek()->format('M j');
-        $this->info("🔄 Weekly {$w1}-{$w2}...");
+        $this->info("🔄 Weekly {$w1}-{$w2} (from daily)...");
         $this->aggregationService->updateWeeklySummaries($date);
-        $this->info('  ✅ Weekly');
+        $this->info(' ✅ Weekly');
     }
 
     protected function updateMonthly(Carbon $date): void
     {
-        $this->info("🔄 Monthly {$date->format('F Y')}...");
+        $this->info("🔄 Monthly {$date->format('F Y')} (from weekly)...");
         $this->aggregationService->updateMonthlySummaries($date);
-        $this->info('  ✅ Monthly');
+        $this->info(' ✅ Monthly');
     }
 
     protected function updateQuarterly(Carbon $date): void
     {
         $q = ceil($date->month / 3);
-        $this->info("🔄 Quarterly {$date->format('Y')} Q{$q}...");
+        $this->info("🔄 Quarterly {$date->format('Y')} Q{$q} (from monthly)...");
         $this->aggregationService->updateQuarterlySummaries($date);
-        $this->info('  ✅ Quarterly');
+        $this->info(' ✅ Quarterly');
     }
 
     protected function updateYearly(Carbon $date): void
     {
-        $this->info("🔄 Yearly {$date->format('Y')}...");
+        $this->info("🔄 Yearly {$date->format('Y')} (from quarterly)...");
         $this->aggregationService->updateYearlySummaries($date);
-        $this->info('  ✅ Yearly');
+        $this->info(' ✅ Yearly');
     }
 
     protected function updateAll(Carbon $date): void
     {
+        $this->updateHourly($date); $this->newLine();
         $this->updateDaily($date); $this->newLine();
         $this->updateWeekly($date); $this->newLine();
         $this->updateMonthly($date); $this->newLine();

@@ -36,10 +36,10 @@ class DatabaseRouter
     public static function archiveQuery(string $baseTable): ?Builder
     {
         $table = "{$baseTable}_archive";
-        if (!self::tableExists('analytics', $table)) {
+        if (!self::tableExists('archive', $table)) {
             return null;
         }
-        return DB::connection('analytics')->table($table);
+        return DB::connection('archive')->table($table);
     }
 
     public static function hotQuery(string $baseTable): ?Builder

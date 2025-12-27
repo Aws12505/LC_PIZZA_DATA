@@ -13,12 +13,7 @@ use Illuminate\Support\Facades\Log;
 class ExportingController extends Controller
 {
     protected const CHUNK_SIZE = 5000;
-    protected ReportService $reportService;
 
-    public function __construct(ReportService $reportService)
-    {
-        $this->reportService = $reportService;
-    }
 
     /**
      * CSV export
@@ -411,12 +406,13 @@ class ExportingController extends Controller
             'quarterly_store_summary', 'quarterly_item_summary',
             'monthly_store_summary', 'monthly_item_summary',
             'daily_store_summary', 'daily_item_summary',
+            'hourly_store_summary', 'hourly_item_summary',
         ], true);
     }
 
     protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate)
     {
-        $query = DB::connection('analytics')->table($model);
+        $query = DB::connection('aggregation')->table($model);
 
         if (!$startDate || !$endDate) {
             return $query;

@@ -125,7 +125,7 @@ class ValidateDataCommand extends Command
             ->where('business_date', $date->toDateString())
             ->sum('gross_sales');
 
-        $aggregatedSales = DB::connection('analytics')
+        $aggregatedSales = DB::connection('aggregation')
             ->table('daily_store_summary')
             ->where('business_date', $date->toDateString())
             ->sum('total_sales');
@@ -164,10 +164,10 @@ class ValidateDataCommand extends Command
         }
 
         try {
-            DB::connection('analytics')->getPdo();
-            $this->line('  ✓ Analytics database OK');
+            DB::connection('aggregation')->getPdo();
+            $this->line('  ✓ Aggregation database OK');
         } catch (\Exception $e) {
-            $this->issues[] = 'Cannot connect to analytics database';
+            $this->issues[] = 'Cannot connect to aggregation database';
         }
     }
 
@@ -176,8 +176,8 @@ class ValidateDataCommand extends Command
         $tables = ['detail_orders_hot', 'detail_orders_archive', 'daily_store_summary'];
 
         foreach ($tables as $table) {
-            $connection = str_contains($table, 'summary') ? 'analytics' : 
-                         (str_contains($table, '_hot') ? 'operational' : 'analytics');
+            $connection = str_contains($table, 'summary') ? 'aggregation' : 
+                         (str_contains($table, '_hot') ? 'operational' : 'aggregation');
 
             if (!$this->tableExists($connection, $table)) {
                 $this->issues[] = "Missing table: {$table}";

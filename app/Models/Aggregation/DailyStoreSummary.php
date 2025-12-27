@@ -2,9 +2,9 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
 
-class DailyStoreSummary extends AnalyticsModel
+
+class DailyStoreSummary extends AggregationModel
 {
     protected $table = 'daily_store_summary';
 

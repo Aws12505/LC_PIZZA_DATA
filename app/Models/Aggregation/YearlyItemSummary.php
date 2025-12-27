@@ -2,9 +2,9 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
 
-class YearlyItemSummary extends AnalyticsModel
+
+class YearlyItemSummary extends AggregationModel
 {
     protected $table = 'yearly_item_summary';
 

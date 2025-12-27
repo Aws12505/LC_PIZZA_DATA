@@ -2,8 +2,8 @@
 
 namespace App\Models\Aggregation;
 
-use App\Models\Analytics\AnalyticsModel;
-class WeeklyItemSummary extends AnalyticsModel
+
+class WeeklyItemSummary extends AggregationModel
 {
     protected $table = 'weekly_item_summary';
 

@@ -2,9 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\{
-    ReportController,
     ExportingController,
-    DashboardController
 };
 
 /**
@@ -14,35 +12,6 @@ use App\Http\Controllers\API\{
  * Authenticated via API middleware
  */
 
-// ════════════════════════════════════════════════════════════════════════════════════════════
-// DASHBOARD ROUTES
-// ════════════════════════════════════════════════════════════════════════════════════════════
-
-Route::prefix('dashboard')->group(function () {
-    Route::get('overview', [DashboardController::class, 'overview'])->name('dashboard.overview');
-    Route::get('stats', [DashboardController::class, 'stats'])->name('dashboard.stats');
-});
-
-// ════════════════════════════════════════════════════════════════════════════════════════════
-// REPORT ROUTES
-// ════════════════════════════════════════════════════════════════════════════════════════════
-
-Route::prefix('reports')->group(function () {
-    // Sales reports
-    Route::get('sales-summary', [ReportController::class, 'salesSummary'])->name('reports.sales-summary');
-    Route::get('daily-breakdown', [ReportController::class, 'dailyBreakdown'])->name('reports.daily-breakdown');
-    Route::get('hourly-sales', [ReportController::class, 'hourlySales'])->name('reports.hourly-sales');
-
-    // Performance reports
-    Route::get('channel-performance', [ReportController::class, 'channelPerformance'])->name('reports.channel-performance');
-    Route::get('product-categories', [ReportController::class, 'productCategories'])->name('reports.product-categories');
-    Route::get('top-items', [ReportController::class, 'topItems'])->name('reports.top-items');
-
-    // Analysis reports
-    Route::get('waste-analysis', [ReportController::class, 'wasteAnalysis'])->name('reports.waste-analysis');
-    Route::get('weekly-comparison', [ReportController::class, 'weeklyComparison'])->name('reports.weekly-comparison');
-    Route::get('monthly-comparison', [ReportController::class, 'monthlyComparison'])->name('reports.monthly-comparison');
-});
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // EXPORT ROUTES

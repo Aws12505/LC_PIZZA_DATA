@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    protected $connection = 'analytics';
+    protected $connection = 'aggregation';
 
     public function up(): void
     {
@@ -33,6 +33,16 @@ return new class extends Migration
             $table->decimal('avg_order_value', 10, 2)->default(0);
             $table->integer('customer_count')->default(0);
             $table->decimal('avg_customers_per_order', 5, 2)->default(0);
+
+            // ✅ ADDED: AVERAGE DAILY METRICS (were missing)
+            $table->decimal('avg_daily_sales', 15, 2)->default(0);
+            $table->decimal('avg_daily_orders', 10, 2)->default(0);
+
+            // Growth metrics
+            $table->decimal('sales_vs_prior_week', 15, 2)->nullable();
+            $table->decimal('sales_growth_percent', 15, 2)->nullable();
+            $table->integer('orders_vs_prior_week')->nullable();
+            $table->decimal('orders_growth_percent', 15, 2)->nullable();
 
             // CHANNEL METRICS - Orders
             $table->integer('phone_orders')->default(0);
@@ -105,14 +115,7 @@ return new class extends Migration
             $table->decimal('digital_sales', 12, 2)->default(0);
             $table->decimal('digital_penetration', 5, 2)->default(0);
 
-            // Growth metrics
-            $table->decimal('sales_vs_prior_week', 15, 2)->nullable();
-            $table->decimal('sales_growth_percent', 15, 2)->nullable();
-            $table->integer('orders_vs_prior_week')->nullable();
-            $table->decimal('orders_growth_percent', 15, 2)->nullable();
-
             $table->timestamps();
-
             $table->unique(['franchise_store', 'year_num', 'week_num'], 'unique_weekly_store_summary');
             $table->index(['year_num', 'week_num']);
         });
