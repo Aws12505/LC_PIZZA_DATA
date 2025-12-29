@@ -12,6 +12,10 @@ class OrderLineProcessor extends BaseTableProcessor
         return 'order_line';
     }
 
+    /**
+     * Match source-of-truth behavior:
+     * replace per (franchise_store, business_date) partition, then insert all rows.
+     */
     protected function getImportStrategy(): string
     {
         return self::STRATEGY_REPLACE;
@@ -83,17 +87,83 @@ class OrderLineProcessor extends BaseTableProcessor
         return $row;
     }
 
-    protected function deleteExistingData(string $business_date, string $tableName, string $connection): void
-    {
-        $deleted = DB::connection($connection)
-            ->table($tableName)
-            ->where('business_date', $business_date)
-            ->delete();
+    /**
+     * Override import execution so REPLACE happens per partition:
+     * (franchise_store, business_date) exactly like replaceOrderLinePartitionKeepAll()
+     */
+    protected function executeImport(
+        array $data,
+        string $business_date, // not relied on here; rows carry their own business_date
+        string $tableName,
+        string $connection,
+        string $strategy
+    ): int {
+        // Group by store + business_date
+        $byPartition = [];
+        foreach ($data as $r) {
+            $store = (string)($r['franchise_store'] ?? '');
+            $date  = (string)($r['business_date'] ?? '');
 
-        Log::info("Deleted existing order line data for partition", [
-            'table' => $tableName,
-            'date' => $business_date,
-            'rows_deleted' => $deleted
-        ]);
+            if ($store === '' || $date === '') {
+                // If these are missing, inserting would be dangerous; skip + log
+                Log::warning("OrderLine row missing partition keys; skipping", [
+                    'table' => $tableName,
+                    'franchise_store' => $r['franchise_store'] ?? null,
+                    'business_date' => $r['business_date'] ?? null,
+                ]);
+                continue;
+            }
+
+            $key = $store . '|' . $date;
+            $byPartition[$key][] = $r;
+        }
+
+        if (empty($byPartition)) {
+            return 0;
+        }
+
+        $chunkSize = $this->getChunkSize();
+        $totalImported = 0;
+
+        foreach ($byPartition as $key => $partitionRows) {
+            if (empty($partitionRows)) {
+                continue;
+            }
+
+            $store = $partitionRows[0]['franchise_store'];
+            $date  = $partitionRows[0]['business_date'];
+
+            $importedThisPartition = DB::connection($connection)->transaction(function () use (
+                $connection, $tableName, $store, $date, $partitionRows, $chunkSize
+            ) {
+                // Delete only the matching partition (store + date)
+                $deleted = DB::connection($connection)
+                    ->table($tableName)
+                    ->where('franchise_store', $store)
+                    ->where('business_date', $date)
+                    ->delete();
+
+                Log::info("Deleted existing order_line partition", [
+                    'table' => $tableName,
+                    'franchise_store' => $store,
+                    'business_date' => $date,
+                    'rows_deleted' => $deleted
+                ]);
+
+                $inserted = 0;
+
+                // Insert all rows (keep all rows from CSV)
+                foreach (array_chunk($partitionRows, $chunkSize) as $batch) {
+                    DB::connection($connection)->table($tableName)->insert($batch);
+                    $inserted += count($batch);
+                }
+
+                return $inserted;
+            });
+
+            $totalImported += $importedThisPartition;
+        }
+
+        return $totalImported;
     }
 }
