@@ -7,6 +7,7 @@ use App\Models\Operational\OrderLineHot;
 use App\Models\Operational\SummarySalesHot;
 use App\Models\Operational\SummaryTransactionsHot;
 use App\Models\Operational\WasteHot;
+
 use App\Models\Aggregation\HourlyStoreSummary;
 use App\Models\Aggregation\HourlyItemSummary;
 use App\Models\Aggregation\DailyStoreSummary;
@@ -19,32 +20,57 @@ use App\Models\Aggregation\QuarterlyStoreSummary;
 use App\Models\Aggregation\QuarterlyItemSummary;
 use App\Models\Aggregation\YearlyStoreSummary;
 use App\Models\Aggregation\YearlyItemSummary;
+
+use App\Services\Database\DatabaseRouter;
+
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Query\Builder;
 
 class AggregationService
 {
     /**
-     * Update hourly summaries from RAW transactional data
+     * Build a single query (as a subquery) that unions hot + archive for a base table,
+     * filtered to the given date range (via DatabaseRouter).
+     *
+     * NOTE: This intentionally uses Query Builder (not Eloquent), so we are not tied to *_Hot models.
+     */
+    private function routedSource(string $baseTable, ?Carbon $startDate = null, ?Carbon $endDate = null): Builder
+    {
+        $queries = DatabaseRouter::routedQueries($baseTable, $startDate, $endDate);
+
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
+            $union->unionAll($q);
+        }
+
+        return DB::query()->fromSub($union, 'src');
+    }
+
+    /**
+     * Update hourly summaries from RAW transactional data (hot + archive)
      */
     public function updateHourlySummaries(Carbon $date): void
     {
         Log::info("Hourly aggregation for: {$date->toDateString()}");
 
-        $stores = DetailOrderHot::where('business_date', $date->toDateString())
+        $dateStr = $date->toDateString();
+
+        $stores = $this->routedSource('detail_orders', $date, $date)
+            ->where('business_date', $dateStr)
             ->distinct()
             ->pluck('franchise_store');
 
         if ($stores->isEmpty()) {
-            Log::warning("No stores found for date: {$date->toDateString()}");
+            Log::warning("No stores found for date: {$dateStr}");
             return;
         }
 
         foreach ($stores as $store) {
             try {
-                $this->updateHourlyStoreSummary($store, $date);
-                $this->updateHourlyItemSummary($store, $date);
+                $this->updateHourlyStoreSummary((string)$store, $date);
+                $this->updateHourlyItemSummary((string)$store, $date);
             } catch (\Exception $e) {
                 Log::error("Hourly aggregation failed for {$store}: " . $e->getMessage());
             }
@@ -69,8 +95,8 @@ class AggregationService
 
         foreach ($stores as $store) {
             try {
-                $this->aggregateDailyFromHourly($store, $date);
-                $this->aggregateDailyItemsFromHourly($store, $date);
+                $this->aggregateDailyFromHourly((string)$store, $date);
+                $this->aggregateDailyItemsFromHourly((string)$store, $date);
             } catch (\Exception $e) {
                 Log::error("Daily aggregation failed for {$store}: " . $e->getMessage());
             }
@@ -125,28 +151,34 @@ class AggregationService
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // HOURLY AGGREGATION FROM RAW DATA
+    // HOURLY AGGREGATION FROM RAW DATA (HOT + ARCHIVE)
     // ═══════════════════════════════════════════════════════════════════════════
 
     private function updateHourlyStoreSummary(string $store, Carbon $date): void
     {
         $dateStr = $date->toDateString();
 
-        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
-        $hours = DetailOrderHot::where('franchise_store', $store)
+        $ordersSrc = $this->routedSource('detail_orders', $date, $date);
+
+        // ✅ FIXED: date_time_fulfilled
+        $hours = $ordersSrc
+            ->where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
             ->pluck('hour');
 
         foreach ($hours as $hour) {
-            $this->aggregateHourlyStoreData($store, $dateStr, $hour);
+            $this->aggregateHourlyStoreData($store, $dateStr, (int)$hour);
         }
     }
 
     private function aggregateHourlyStoreData(string $store, string $date, int $hour): void
     {
-        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
-        $baseOrders = DetailOrderHot::where('franchise_store', $store)
+        $day = Carbon::parse($date);
+
+        // ✅ RAW ORDERS (hot + archive)
+        $baseOrders = $this->routedSource('detail_orders', $day, $day)
+            ->where('franchise_store', $store)
             ->where('business_date', $date)
             ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
 
@@ -179,7 +211,6 @@ class AggregationService
             ->distinct()
             ->count('order_id');
 
-        // ✅ FIXED: Added cancelled orders detection
         $cancelledOrders = (clone $baseOrders)
             ->where('transaction_type', 'Cancelled')
             ->distinct()
@@ -189,33 +220,33 @@ class AggregationService
 
         // CHANNELS
         $phoneOrders = (clone $baseOrders)->where('order_placed_method', 'Phone')->distinct()->count('order_id');
-        $phoneSales = (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
+        $phoneSales  = (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
 
         $websiteOrders = (clone $baseOrders)->where('order_placed_method', 'Website')->distinct()->count('order_id');
-        $websiteSales = (clone $baseOrders)->where('order_placed_method', 'Website')->sum('royalty_obligation');
+        $websiteSales  = (clone $baseOrders)->where('order_placed_method', 'Website')->sum('royalty_obligation');
 
         $mobileOrders = (clone $baseOrders)->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
-        $mobileSales = (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
+        $mobileSales  = (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
 
         $callCenterOrders = (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->distinct()->count('order_id');
-        $callCenterSales = (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->sum('royalty_obligation');
+        $callCenterSales  = (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->sum('royalty_obligation');
 
         $driveThruOrders = (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->distinct()->count('order_id');
-        $driveThruSales = (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
+        $driveThruSales  = (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
 
         // MARKETPLACE
         $doordashOrders = (clone $baseOrders)->where('order_placed_method', 'DoorDash')->distinct()->count('order_id');
-        $doordashSales = (clone $baseOrders)->where('order_placed_method', 'DoorDash')->sum('royalty_obligation');
+        $doordashSales  = (clone $baseOrders)->where('order_placed_method', 'DoorDash')->sum('royalty_obligation');
 
         $ubereatsOrders = (clone $baseOrders)->where('order_placed_method', 'UberEats')->distinct()->count('order_id');
-        $ubereatsSales = (clone $baseOrders)->where('order_placed_method', 'UberEats')->sum('royalty_obligation');
+        $ubereatsSales  = (clone $baseOrders)->where('order_placed_method', 'UberEats')->sum('royalty_obligation');
 
         $grubhubOrders = (clone $baseOrders)->where('order_placed_method', 'Grubhub')->distinct()->count('order_id');
-        $grubhubSales = (clone $baseOrders)->where('order_placed_method', 'Grubhub')->sum('royalty_obligation');
+        $grubhubSales  = (clone $baseOrders)->where('order_placed_method', 'Grubhub')->sum('royalty_obligation');
 
         // FULFILLMENT
         $deliveryOrders = (clone $baseOrders)->where('order_fulfilled_method', 'Delivery')->distinct()->count('order_id');
-        $deliverySales = (clone $baseOrders)->where('order_fulfilled_method', 'Delivery')->sum('royalty_obligation');
+        $deliverySales  = (clone $baseOrders)->where('order_fulfilled_method', 'Delivery')->sum('royalty_obligation');
 
         $carryoutOrders = (clone $baseOrders)
             ->whereIn('order_fulfilled_method', ['Register', 'Drive-Thru'])
@@ -226,51 +257,50 @@ class AggregationService
             ->sum('royalty_obligation');
 
         // FINANCIAL
-        $salesTax = (clone $baseOrders)->sum('sales_tax');
+        $salesTax     = (clone $baseOrders)->sum('sales_tax');
         $deliveryFees = (clone $baseOrders)->sum('delivery_fee');
         $deliveryTips = (clone $baseOrders)->sum('delivery_tip');
-        $storeTips = (clone $baseOrders)->sum('store_tip_amount');
+        $storeTips    = (clone $baseOrders)->sum('store_tip_amount');
 
         // PORTAL
         $portalEligible = (clone $baseOrders)->where('portal_eligible', 'Yes')->distinct()->count('order_id');
-        $portalUsed = (clone $baseOrders)->where('portal_used', 'Yes')->distinct()->count('order_id');
-        $portalOnTime = (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
+        $portalUsed     = (clone $baseOrders)->where('portal_used', 'Yes')->distinct()->count('order_id');
+        $portalOnTime   = (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
 
-        // PRODUCTS
-        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
-        $baseLines = OrderLineHot::where('franchise_store', $store)
+        // PRODUCTS (hot + archive)
+        $baseLines = $this->routedSource('order_line', $day, $day)
+            ->where('franchise_store', $store)
             ->where('business_date', $date)
             ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
 
-        $pizzaQty = (clone $baseLines)->where('is_pizza', 1)->sum('quantity');
+        $pizzaQty   = (clone $baseLines)->where('is_pizza', 1)->sum('quantity');
         $pizzaSales = (clone $baseLines)->where('is_pizza', 1)->sum('net_amount');
 
-        $hnrQty = (clone $baseLines)->where('menu_item_account', 'HNR')->sum('quantity');
+        $hnrQty   = (clone $baseLines)->where('menu_item_account', 'HNR')->sum('quantity');
         $hnrSales = (clone $baseLines)->where('menu_item_account', 'HNR')->sum('net_amount');
 
-        $breadQty = (clone $baseLines)->where('is_bread', 1)->sum('quantity');
+        $breadQty   = (clone $baseLines)->where('is_bread', 1)->sum('quantity');
         $breadSales = (clone $baseLines)->where('is_bread', 1)->sum('net_amount');
 
-        $wingsQty = (clone $baseLines)->where('is_wings', 1)->sum('quantity');
+        $wingsQty   = (clone $baseLines)->where('is_wings', 1)->sum('quantity');
         $wingsSales = (clone $baseLines)->where('is_wings', 1)->sum('net_amount');
 
-        $beveragesQty = (clone $baseLines)->where('is_beverages', 1)->sum('quantity');
+        $beveragesQty   = (clone $baseLines)->where('is_beverages', 1)->sum('quantity');
         $beveragesSales = (clone $baseLines)->where('is_beverages', 1)->sum('net_amount');
 
-        $crazyPuffsQty = (clone $baseLines)->where('is_crazy_puffs', 1)->sum('quantity');
+        $crazyPuffsQty   = (clone $baseLines)->where('is_crazy_puffs', 1)->sum('quantity');
         $crazyPuffsSales = (clone $baseLines)->where('is_crazy_puffs', 1)->sum('net_amount');
 
-        // ✅ FIXED: Payments extracted from order data (payment_methods field)
-        // Since summary_transactions_hot is daily aggregate, we extract from orders
+        // PAYMENTS (hourly) extracted from orders
         $ordersWithPayments = (clone $baseOrders)->get(['payment_methods', 'royalty_obligation']);
 
-        $cashSales = 0;
-        $creditCardSales = 0;
-        $prepaidSales = 0;
+        $cashSales = 0.0;
+        $creditCardSales = 0.0;
+        $prepaidSales = 0.0;
 
         foreach ($ordersWithPayments as $order) {
-            $paymentMethod = (string)$order->payment_methods;
-            $amount = (float)$order->royalty_obligation;
+            $paymentMethod = (string)($order->payment_methods ?? '');
+            $amount = (float)($order->royalty_obligation ?? 0);
 
             if (stripos($paymentMethod, 'Cash') !== false) {
                 $cashSales += $amount;
@@ -281,9 +311,9 @@ class AggregationService
             }
         }
 
-        // WASTE (hourly waste tracking)
-        // ✅ FIXED: Changed waste_datetime to waste_date_time
-        $baseWaste = WasteHot::where('franchise_store', $store)
+        // WASTE (hot + archive)
+        $baseWaste = $this->routedSource('waste', $day, $day)
+            ->where('franchise_store', $store)
             ->where('business_date', $date)
             ->whereRaw('HOUR(waste_date_time) = ?', [$hour]);
 
@@ -292,26 +322,29 @@ class AggregationService
             ->get(['item_cost', 'quantity'])
             ->sum(fn($r) => (float)($r->item_cost ?? 0) * (float)($r->quantity ?? 0));
 
-        // OVER/SHORT (aggregate at daily level, set to 0 for hourly)
+        // OVER/SHORT (hourly = 0; daily is accurate)
         $overShort = 0;
 
         // DIGITAL
         $digitalOrders = $websiteOrders + $mobileOrders;
-        $digitalSales = $websiteSales + $mobileSales;
+        $digitalSales  = $websiteSales + $mobileSales;
 
         $data = [
             'franchise_store' => $store,
             'business_date' => $date,
             'hour' => $hour,
+
             'total_sales' => round($totalSales, 2),
             'gross_sales' => round($grossSales, 2),
             'net_sales' => round($netSales, 2),
             'refund_amount' => round($refundAmount, 2),
+
             'total_orders' => $totalOrders,
             'completed_orders' => $totalOrders - $refundedOrders - $cancelledOrders,
             'cancelled_orders' => $cancelledOrders,
             'modified_orders' => $modifiedOrders,
             'refunded_orders' => $refundedOrders,
+
             'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
             'customer_count' => $customerCount,
             'avg_customers_per_order' => $totalOrders > 0 ? round($customerCount / $totalOrders, 2) : 0,
@@ -343,17 +376,17 @@ class AggregationService
             'carryout_sales' => round($carryoutSales, 2),
 
             // Products
-            'pizza_quantity' => $pizzaQty,
+            'pizza_quantity' => (int)$pizzaQty,
             'pizza_sales' => round($pizzaSales, 2),
-            'hnr_quantity' => $hnrQty,
+            'hnr_quantity' => (int)$hnrQty,
             'hnr_sales' => round($hnrSales, 2),
-            'bread_quantity' => $breadQty,
+            'bread_quantity' => (int)$breadQty,
             'bread_sales' => round($breadSales, 2),
-            'wings_quantity' => $wingsQty,
+            'wings_quantity' => (int)$wingsQty,
             'wings_sales' => round($wingsSales, 2),
-            'beverages_quantity' => $beveragesQty,
+            'beverages_quantity' => (int)$beveragesQty,
             'beverages_sales' => round($beveragesSales, 2),
-            'crazy_puffs_quantity' => $crazyPuffsQty,
+            'crazy_puffs_quantity' => (int)$crazyPuffsQty,
             'crazy_puffs_sales' => round($crazyPuffsSales, 2),
 
             // Financial
@@ -377,7 +410,7 @@ class AggregationService
             'portal_on_time_rate' => $portalUsed > 0 ? round(($portalOnTime / $portalUsed) * 100, 2) : 0,
 
             // Waste
-            'total_waste_items' => $wasteItems,
+            'total_waste_items' => (int)$wasteItems,
             'total_waste_cost' => round($wasteCost, 2),
 
             // Digital
@@ -390,7 +423,7 @@ class AggregationService
             [
                 'franchise_store' => $store,
                 'business_date' => $date,
-                'hour' => $hour
+                'hour' => $hour,
             ],
             $data
         );
@@ -400,35 +433,47 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
-        $hours = OrderLineHot::where('franchise_store', $store)
+        $linesSrc = $this->routedSource('order_line', $date, $date);
+
+        // ✅ FIXED: date_time_fulfilled
+        $hours = $linesSrc
+            ->where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
             ->pluck('hour');
 
         foreach ($hours as $hour) {
-            $this->aggregateHourlyItemData($store, $dateStr, $hour);
+            $this->aggregateHourlyItemData($store, $dateStr, (int)$hour);
         }
     }
 
     private function aggregateHourlyItemData(string $store, string $date, int $hour): void
     {
-        // ✅ FIXED: Changed order_datetime to date_time_fulfilled
-        $lines = OrderLineHot::where('franchise_store', $store)
+        $day = Carbon::parse($date);
+
+        $lines = $this->routedSource('order_line', $day, $day)
+            ->where('franchise_store', $store)
             ->where('business_date', $date)
             ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour])
             ->get([
                 'franchise_store', 'business_date', 'item_id', 'menu_item_name',
                 'menu_item_account', 'quantity', 'net_amount', 'modification_reason',
-                'order_fulfilled_method', 'refunded', 'modified_order_amount'
+                'order_fulfilled_method', 'refunded', 'modified_order_amount',
             ]);
 
-        $items = $lines->groupBy(fn($r) => 
+        if ($lines->isEmpty()) {
+            return;
+        }
+
+        $items = $lines->groupBy(fn($r) =>
             "{$r->franchise_store}|{$r->business_date}|{$r->item_id}|{$r->menu_item_name}|{$r->menu_item_account}"
         );
 
         foreach ($items as $group) {
             $first = $group->first();
+
+            $qty = (float)$group->sum('quantity');
+            $gross = (float)$group->sum('net_amount');
 
             $data = [
                 'franchise_store' => $first->franchise_store,
@@ -437,17 +482,24 @@ class AggregationService
                 'item_id' => $first->item_id,
                 'menu_item_name' => $first->menu_item_name,
                 'menu_item_account' => $first->menu_item_account,
-                'quantity_sold' => $group->sum('quantity'),
-                'gross_sales' => round($group->sum('net_amount'), 2),
-                'net_sales' => round($group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount'), 2),
-                'avg_item_price' => $group->sum('quantity') > 0 ? 
-                    round($group->sum('net_amount') / $group->sum('quantity'), 2) : 0,
-                'delivery_quantity' => $group->where('order_fulfilled_method', 'Delivery')->sum('quantity'),
-                'carryout_quantity' => $group->filter(fn($r) => 
-                    in_array($r->order_fulfilled_method, ['Register', 'Drive-Thru'])
+
+                'quantity_sold' => $qty,
+                'gross_sales' => round($gross, 2),
+
+                'net_sales' => round(
+                    (float)$group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount'),
+                    2
+                ),
+
+                'avg_item_price' => $qty > 0 ? round($gross / $qty, 2) : 0,
+
+                'delivery_quantity' => (float)$group->where('order_fulfilled_method', 'Delivery')->sum('quantity'),
+                'carryout_quantity' => (float)$group->filter(fn($r) =>
+                    in_array($r->order_fulfilled_method, ['Register', 'Drive-Thru'], true)
                 )->sum('quantity'),
-                'modified_quantity' => $group->filter(fn($r) => !empty($r->modified_order_amount))->sum('quantity'),
-                'refunded_quantity' => $group->where('refunded', 'Yes')->sum('quantity')
+
+                'modified_quantity' => (float)$group->filter(fn($r) => !empty($r->modified_order_amount))->sum('quantity'),
+                'refunded_quantity' => (float)$group->where('refunded', 'Yes')->sum('quantity'),
             ];
 
             HourlyItemSummary::updateOrCreate(
@@ -455,7 +507,7 @@ class AggregationService
                     'franchise_store' => $first->franchise_store,
                     'business_date' => $first->business_date,
                     'hour' => $hour,
-                    'item_id' => $first->item_id
+                    'item_id' => $first->item_id,
                 ],
                 $data
             );
@@ -469,6 +521,7 @@ class AggregationService
     private function aggregateDailyFromHourly(string $store, Carbon $date): void
     {
         $dateStr = $date->toDateString();
+
         $hourly = HourlyStoreSummary::where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->get();
@@ -477,25 +530,26 @@ class AggregationService
             return;
         }
 
-        // Get over_short and payment totals from raw daily table
-        $dailySummary = SummarySalesHot::where('franchise_store', $store)
+        // Get over_short and accurate payment totals from raw daily summary table (hot + archive)
+        $dailySummary = $this->routedSource('summary_sales', $date, $date)
+            ->where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->first();
 
-        $overShort = $dailySummary->over_short ?? 0;
+        $overShort = (float)($dailySummary->over_short ?? 0);
 
-        // ✅ FIXED: Get actual payment data from daily summary table
-        $cashSales = $dailySummary->cash_amount ?? 0;
-        $creditCardSales = $dailySummary->credit_card_amount ?? 0;
-        $prepaidSales = $dailySummary->prepaid_amount ?? 0;
+        // If your summary_sales table uses these columns
+        $cashSales = (float)($dailySummary->cash_amount ?? 0);
+        $creditCardSales = (float)($dailySummary->credit_card_amount ?? 0);
+        $prepaidSales = (float)($dailySummary->prepaid_amount ?? 0);
 
         $summary = $this->sumStorePeriod($hourly, [
             'franchise_store' => $store,
             'business_date' => $dateStr,
-            'over_short' => $overShort
+            'over_short' => $overShort,
         ]);
 
-        // Override payment totals with accurate daily data
+        // Override payments with accurate daily totals (if present)
         $summary['cash_sales'] = round($cashSales, 2);
         $summary['credit_card_sales'] = round($creditCardSales, 2);
         $summary['prepaid_sales'] = round($prepaidSales, 2);
@@ -503,7 +557,7 @@ class AggregationService
         DailyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'business_date' => $dateStr
+                'business_date' => $dateStr,
             ],
             $summary
         );
@@ -512,6 +566,7 @@ class AggregationService
     private function aggregateDailyItemsFromHourly(string $store, Carbon $date): void
     {
         $dateStr = $date->toDateString();
+
         $items = HourlyItemSummary::where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->selectRaw('
@@ -535,7 +590,7 @@ class AggregationService
                 [
                     'franchise_store' => $store,
                     'business_date' => $dateStr,
-                    'item_id' => $item->item_id
+                    'item_id' => $item->item_id,
                 ],
                 [
                     'menu_item_name' => $item->menu_item_name,
@@ -547,7 +602,7 @@ class AggregationService
                     'delivery_quantity' => $item->delivery_quantity,
                     'carryout_quantity' => $item->carryout_quantity,
                     'modified_quantity' => $item->modified_quantity,
-                    'refunded_quantity' => $item->refunded_quantity
+                    'refunded_quantity' => $item->refunded_quantity,
                 ]
             );
         }
@@ -564,8 +619,8 @@ class AggregationService
             ->get();
 
         foreach ($weeks as $week) {
-            $this->aggregateWeeklyStore($week->franchise_store, $week->y, $week->w);
-            $this->aggregateWeeklyItems($week->franchise_store, $week->y, $week->w);
+            $this->aggregateWeeklyStore($week->franchise_store, (int)$week->y, (int)$week->w);
+            $this->aggregateWeeklyItems($week->franchise_store, (int)$week->y, (int)$week->w);
         }
     }
 
@@ -587,15 +642,13 @@ class AggregationService
             'year_num' => $year,
             'week_num' => $week,
             'week_start_date' => $weekStart->toDateString(),
-            'week_end_date' => $weekEnd->toDateString()
+            'week_end_date' => $weekEnd->toDateString(),
         ]);
 
-        // Calculate averages for weekly
         $daysCount = $daily->count();
         $summary['avg_daily_sales'] = $daysCount > 0 ? round($summary['total_sales'] / $daysCount, 2) : 0;
         $summary['avg_daily_orders'] = $daysCount > 0 ? round($summary['total_orders'] / $daysCount, 2) : 0;
 
-        // Growth calculations
         $priorWeek = WeeklyStoreSummary::where('franchise_store', $store)
             ->where('year_num', $week == 1 ? $year - 1 : $year)
             ->where('week_num', $week == 1 ? 52 : $week - 1)
@@ -606,6 +659,7 @@ class AggregationService
             $summary['sales_growth_percent'] = $priorWeek->total_sales > 0
                 ? round((($summary['total_sales'] - $priorWeek->total_sales) / $priorWeek->total_sales) * 100, 2)
                 : 0;
+
             $summary['orders_vs_prior_week'] = $summary['total_orders'] - $priorWeek->total_orders;
             $summary['orders_growth_percent'] = $priorWeek->total_orders > 0
                 ? round((($summary['total_orders'] - $priorWeek->total_orders) / $priorWeek->total_orders) * 100, 2)
@@ -616,7 +670,7 @@ class AggregationService
             [
                 'franchise_store' => $store,
                 'year_num' => $year,
-                'week_num' => $week
+                'week_num' => $week,
             ],
             $summary
         );
@@ -650,7 +704,7 @@ class AggregationService
                     'franchise_store' => $store,
                     'year_num' => $year,
                     'week_num' => $week,
-                    'item_id' => $item->item_id
+                    'item_id' => $item->item_id,
                 ],
                 [
                     'menu_item_name' => $item->menu_item_name,
@@ -663,7 +717,7 @@ class AggregationService
                     'delivery_quantity' => $item->delivery_quantity,
                     'carryout_quantity' => $item->carryout_quantity,
                     'week_start_date' => $weekStart->toDateString(),
-                    'week_end_date' => $weekEnd->toDateString()
+                    'week_end_date' => $weekEnd->toDateString(),
                 ]
             );
         }
@@ -687,8 +741,8 @@ class AggregationService
             ->pluck('franchise_store');
 
         foreach ($stores as $store) {
-            $this->aggregateMonthlyStore($store, $year, $month);
-            $this->aggregateMonthlyItems($store, $year, $month);
+            $this->aggregateMonthlyStore((string)$store, $year, $month);
+            $this->aggregateMonthlyItems((string)$store, $year, $month);
         }
     }
 
@@ -709,7 +763,6 @@ class AggregationService
             return;
         }
 
-        // Get operational days from daily table
         $operationalDays = DailyStoreSummary::where('franchise_store', $store)
             ->whereYear('business_date', $year)
             ->whereMonth('business_date', $month)
@@ -720,10 +773,9 @@ class AggregationService
             'year_num' => $year,
             'month_num' => $month,
             'month_name' => $monthStart->format('F'),
-            'operational_days' => $operationalDays
+            'operational_days' => $operationalDays,
         ]);
 
-        // Growth calculations
         $priorMonth = MonthlyStoreSummary::where('franchise_store', $store)
             ->where('year_num', $month == 1 ? $year - 1 : $year)
             ->where('month_num', $month == 1 ? 12 : $month - 1)
@@ -752,7 +804,7 @@ class AggregationService
             [
                 'franchise_store' => $store,
                 'year_num' => $year,
-                'month_num' => $month
+                'month_num' => $month,
             ],
             $summary
         );
@@ -790,7 +842,7 @@ class AggregationService
                     'franchise_store' => $store,
                     'year_num' => $year,
                     'month_num' => $month,
-                    'item_id' => $item->item_id
+                    'item_id' => $item->item_id,
                 ],
                 [
                     'menu_item_name' => $item->menu_item_name,
@@ -801,7 +853,7 @@ class AggregationService
                     'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
                     'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity
+                    'carryout_quantity' => $item->carryout_quantity,
                 ]
             );
         }
@@ -822,8 +874,8 @@ class AggregationService
             ->pluck('franchise_store');
 
         foreach ($stores as $store) {
-            $this->aggregateQuarterlyStore($store, $year, $quarter);
-            $this->aggregateQuarterlyItems($store, $year, $quarter);
+            $this->aggregateQuarterlyStore((string)$store, $year, $quarter);
+            $this->aggregateQuarterlyItems((string)$store, $year, $quarter);
         }
     }
 
@@ -851,10 +903,9 @@ class AggregationService
             'quarter_start_date' => $qStart->toDateString(),
             'quarter_end_date' => $qEnd->toDateString(),
             'operational_days' => $monthly->sum('operational_days'),
-            'operational_months' => $monthly->count()
+            'operational_months' => $monthly->count(),
         ]);
 
-        // Growth calculations
         $priorQuarter = QuarterlyStoreSummary::where('franchise_store', $store)
             ->where('year_num', $quarter == 1 ? $year - 1 : $year)
             ->where('quarter_num', $quarter == 1 ? 4 : $quarter - 1)
@@ -883,7 +934,7 @@ class AggregationService
             [
                 'franchise_store' => $store,
                 'year_num' => $year,
-                'quarter_num' => $quarter
+                'quarter_num' => $quarter,
             ],
             $summary
         );
@@ -893,6 +944,7 @@ class AggregationService
     {
         $m1 = ($quarter - 1) * 3 + 1;
         $m3 = $quarter * 3;
+
         $qStart = Carbon::create($year, $m1, 1);
         $qEnd = Carbon::create($year, $m3, 1)->endOfMonth();
 
@@ -920,7 +972,7 @@ class AggregationService
                     'franchise_store' => $store,
                     'year_num' => $year,
                     'quarter_num' => $quarter,
-                    'item_id' => $item->item_id
+                    'item_id' => $item->item_id,
                 ],
                 [
                     'menu_item_name' => $item->menu_item_name,
@@ -933,7 +985,7 @@ class AggregationService
                     'delivery_quantity' => $item->delivery_quantity,
                     'carryout_quantity' => $item->carryout_quantity,
                     'quarter_start_date' => $qStart->toDateString(),
-                    'quarter_end_date' => $qEnd->toDateString()
+                    'quarter_end_date' => $qEnd->toDateString(),
                 ]
             );
         }
@@ -950,8 +1002,8 @@ class AggregationService
             ->pluck('franchise_store');
 
         foreach ($stores as $store) {
-            $this->aggregateYearlyStore($store, $year);
-            $this->aggregateYearlyItems($store, $year);
+            $this->aggregateYearlyStore((string)$store, $year);
+            $this->aggregateYearlyItems((string)$store, $year);
         }
     }
 
@@ -969,10 +1021,9 @@ class AggregationService
             'franchise_store' => $store,
             'year_num' => $year,
             'operational_days' => $quarterly->sum('operational_days'),
-            'operational_months' => $quarterly->sum('operational_months')
+            'operational_months' => $quarterly->sum('operational_months'),
         ]);
 
-        // Growth calculation
         $priorYear = YearlyStoreSummary::where('franchise_store', $store)
             ->where('year_num', $year - 1)
             ->first();
@@ -987,7 +1038,7 @@ class AggregationService
         YearlyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'year_num' => $year
+                'year_num' => $year,
             ],
             $summary
         );
@@ -1017,7 +1068,7 @@ class AggregationService
                 [
                     'franchise_store' => $store,
                     'year_num' => $year,
-                    'item_id' => $item->item_id
+                    'item_id' => $item->item_id,
                 ],
                 [
                     'menu_item_name' => $item->menu_item_name,
@@ -1028,7 +1079,7 @@ class AggregationService
                     'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
                     'delivery_quantity' => $item->delivery_quantity,
-                    'carryout_quantity' => $item->carryout_quantity
+                    'carryout_quantity' => $item->carryout_quantity,
                 ]
             );
         }
@@ -1119,7 +1170,6 @@ class AggregationService
             'digital_sales' => round($records->sum('digital_sales'), 2),
         ];
 
-        // Recalculate averages and rates
         $summary['avg_order_value'] = $summary['total_orders'] > 0
             ? round($summary['total_sales'] / $summary['total_orders'], 2)
             : 0;
@@ -1148,7 +1198,7 @@ class AggregationService
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * ✅ NEW: Validate hourly aggregation accuracy
+     * ✅ Validate hourly aggregation accuracy (raw from hot + archive)
      */
     public function validateHourlyAggregation(string $store, Carbon $date): array
     {
@@ -1158,12 +1208,13 @@ class AggregationService
             ->where('business_date', $dateStr)
             ->sum('gross_sales');
 
-        $rawTotal = DetailOrderHot::where('franchise_store', $store)
+        $rawTotal = $this->routedSource('detail_orders', $date, $date)
+            ->where('franchise_store', $store)
             ->where('business_date', $dateStr)
             ->sum('gross_sales');
 
-        $diff = abs($hourlyTotal - $rawTotal);
-        $isValid = $diff < 0.01; // Allow 1 cent tolerance
+        $diff = abs((float)$hourlyTotal - (float)$rawTotal);
+        $isValid = $diff < 0.01;
 
         if (!$isValid) {
             Log::error("Hourly aggregation mismatch", [
@@ -1171,26 +1222,29 @@ class AggregationService
                 'date' => $dateStr,
                 'hourly_total' => $hourlyTotal,
                 'raw_total' => $rawTotal,
-                'difference' => $diff
+                'difference' => $diff,
             ]);
         }
 
         return [
             'valid' => $isValid,
-            'hourly_total' => $hourlyTotal,
-            'raw_total' => $rawTotal,
-            'difference' => $diff
+            'hourly_total' => (float)$hourlyTotal,
+            'raw_total' => (float)$rawTotal,
+            'difference' => $diff,
         ];
     }
 
     /**
-     * ✅ NEW: Get aggregation health status
+     * ✅ Get aggregation health status (raw from hot + archive)
      */
     public function getAggregationHealth(Carbon $date): array
     {
         $dateStr = $date->toDateString();
 
-        $rawOrders = DetailOrderHot::where('business_date', $dateStr)->count();
+        $rawOrders = $this->routedSource('detail_orders', $date, $date)
+            ->where('business_date', $dateStr)
+            ->count();
+
         $hourlyRecords = HourlyStoreSummary::where('business_date', $dateStr)->count();
         $dailyRecords = DailyStoreSummary::where('business_date', $dateStr)->count();
 
@@ -1200,7 +1254,7 @@ class AggregationService
             'hourly_records' => $hourlyRecords,
             'daily_records' => $dailyRecords,
             'avg_hours_per_store' => $dailyRecords > 0 ? round($hourlyRecords / $dailyRecords, 1) : 0,
-            'status' => $rawOrders > 0 && $hourlyRecords > 0 && $dailyRecords > 0 ? 'healthy' : 'incomplete'
+            'status' => $rawOrders > 0 && $hourlyRecords > 0 && $dailyRecords > 0 ? 'healthy' : 'incomplete',
         ];
     }
 }
