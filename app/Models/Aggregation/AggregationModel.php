@@ -6,10 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class AggregationModel extends Model
 {
-    /**
-     * The connection name for the model.
-     * All analytics models use the analytics database.
-     */
+
     protected $connection = 'aggregation';
 
     /**

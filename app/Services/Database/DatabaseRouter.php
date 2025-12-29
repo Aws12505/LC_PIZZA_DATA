@@ -95,7 +95,7 @@ class DatabaseRouter
 
             $q = self::archiveQuery($baseTable);
             if (!$q) {
-                throw new \RuntimeException("Missing analytics table: {$baseTable}_archive");
+                throw new \RuntimeException("Missing archive table: {$baseTable}_archive");
             }
 
             return [
@@ -172,7 +172,7 @@ class DatabaseRouter
                 ->table("{$baseTable}_hot")
                 ->count();
 
-            $archiveCount = DB::connection('analytics')
+            $archiveCount = DB::connection('archive')
                 ->table("{$baseTable}_archive")
                 ->count();
 

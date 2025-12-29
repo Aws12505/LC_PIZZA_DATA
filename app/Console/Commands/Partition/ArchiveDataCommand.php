@@ -26,7 +26,7 @@ class ArchiveDataCommand extends Command
                             {--verify : Verify data after archiving}
                             {--sync : Run synchronously (blocking, for testing)}';
 
-    protected $description = 'Archive old data from operational to analytics database (async)';
+    protected $description = 'Archive old data from operational to archive database (async)';
 
     protected array $tables = [
         'detail_orders',

@@ -6,10 +6,6 @@ use Illuminate\Database\Eloquent\Model;
 
 abstract class ArchiveModel extends Model
 {
-    /**
-     * The connection name for the model.
-     * All analytics models use the analytics database.
-     */
     protected $connection = 'archive';
 
     /**

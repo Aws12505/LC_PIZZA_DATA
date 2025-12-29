@@ -25,7 +25,6 @@ return [
             ]) : [],
         ],
 
-        // ANALYTICS DATABASE - Historical archive + aggregations
         'archive' => [
             'driver' => 'mysql',
             'host' => env('DB_ARCHIVE_HOST', '127.0.0.1'),

@@ -74,7 +74,7 @@ class OptimizePartitionsCommand extends Command
 
         foreach ($tables as $table) {
             try {
-                $connection = str_contains($table, '_hot') ? 'operational' : 'analytics';
+                $connection = str_contains($table, '_hot') ? 'operational' : 'archive';
 
                 // Get table stats before optimization
                 $sizeBefore = $this->getTableSize($connection, $table);

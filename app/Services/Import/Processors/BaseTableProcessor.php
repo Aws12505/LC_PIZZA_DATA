@@ -47,9 +47,7 @@ abstract class BaseTableProcessor
         return self::STRATEGY_UPSERT;
     }
 
-    /**
-     * Get database connection to use (operational or analytics)
-     */
+
     protected function getDatabaseConnection(): string
     {
         return 'operational';
