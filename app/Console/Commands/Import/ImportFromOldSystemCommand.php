@@ -2,34 +2,35 @@
 
 namespace App\Console\Commands\Import;
 
-use App\Services\Main\LCReportDataService;
-use App\Jobs\ProcessCsvImportJob;
 use App\Jobs\ProcessAggregationJob;
+use App\Jobs\ProcessCsvImportJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Import data from old system API in batches
- * 
- * Fetches data from old system, saves as CSVs, dispatches queue jobs
- * for processing, and triggers aggregation rebuild afterward.
- * 
+ *
+ * FIX A (per-day CSVs):
+ * Instead of creating one CSV per model per batch-range, this command now creates
+ * one CSV per model per day (YYYY-MM-DD). This prevents “REPLACE” processors from
+ * deleting partitions that are split across multiple files/jobs.
+ *
  * Usage:
  *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30
  *   php artisan import:from-old-system --start=2025-11-01 --end=2025-11-30 --no-aggregation
  */
 class ImportFromOldSystemCommand extends Command
 {
-    protected $signature = 'import:from-old-system 
+    protected $signature = 'import:from-old-system
                             {--start= : Start date (Y-m-d format)}
                             {--end= : End date (Y-m-d format)}
                             {--batch-days=7 : Number of days per batch request}
                             {--delay=5 : Seconds to wait between batch imports}
                             {--no-aggregation : Skip aggregation rebuild after import}
-                            {--aggregation-type=all : Aggregation type (hourly, daily, weekly, monthly, quarterly, yearly, all)}';
+                            {--aggregation-type=all : Aggregation type (daily, weekly, monthly, quarterly, yearly, all)}';
 
     protected $description = 'Import data from old system API in date range batches with auto-aggregation';
 
@@ -39,6 +40,8 @@ class ImportFromOldSystemCommand extends Command
 
     /**
      * Model mapping: old_system_export_name => [csv_filename, processor_class]
+     * NOTE: filename is a relative path under the uploadId folder.
+     * With FIX A, we will suffix each filename with _YYYY-MM-DD before .csv
      */
     protected array $modelMap = [
         'detailOrder' => [
@@ -97,7 +100,7 @@ class ImportFromOldSystemCommand extends Command
 
         // Load old system configuration
         $this->oldSystemBaseUrl = config('services.old_api.base_url', 'http://localhost');
-        $this->oldSystemApiKey = config('services.old_api.api_key', 'null_thing');
+        $this->oldSystemApiKey  = config('services.old_api.api_key', 'null_thing');
     }
 
     public function handle(): int
@@ -113,7 +116,7 @@ class ImportFromOldSystemCommand extends Command
 
         try {
             $startDate = Carbon::parse($this->option('start'));
-            $endDate = Carbon::parse($this->option('end'));
+            $endDate   = Carbon::parse($this->option('end'));
         } catch (\Exception $e) {
             $this->error('Invalid date format. Use Y-m-d (e.g., 2025-01-01)');
             return self::FAILURE;
@@ -124,13 +127,13 @@ class ImportFromOldSystemCommand extends Command
             return self::FAILURE;
         }
 
-        $batchDays = (int) $this->option('batch-days');
-        $delay = (int) $this->option('delay');
+        $batchDays       = (int) $this->option('batch-days');
+        $delay           = (int) $this->option('delay');
         $skipAggregation = $this->option('no-aggregation');
         $aggregationType = $this->option('aggregation-type');
 
-        $totalDays = $startDate->diffInDays($endDate) + 1;
-        $totalBatches = (int) ceil($totalDays / $batchDays);
+        $totalDays    = $startDate->diffInDays($endDate) + 1;
+        $totalBatches = (int) ceil($totalDays / max($batchDays, 1));
 
         $this->info("📅 Date Range: {$startDate->toDateString()} to {$endDate->toDateString()}");
         $this->info("📊 Total Days: {$totalDays}");
@@ -138,6 +141,7 @@ class ImportFromOldSystemCommand extends Command
         $this->info("🔢 Total Batches: {$totalBatches}");
         $this->info("⏱️  Delay Between Batches: {$delay} seconds");
         $this->info("⚡ Processing: Jobs will be queued (async)");
+        $this->info("🧾 CSV Mode: per-day files (one CSV per model per date)");
 
         if (!$skipAggregation) {
             $this->info("🔄 Aggregation: {$aggregationType} (will be queued after import)");
@@ -155,8 +159,8 @@ class ImportFromOldSystemCommand extends Command
         $this->newLine();
 
         $successful = 0;
-        $failed = 0;
-        $totalJobs = 0;
+        $failed     = 0;
+        $totalJobs  = 0;
 
         $progressBar = $this->output->createProgressBar($totalBatches);
         $progressBar->start();
@@ -184,20 +188,18 @@ class ImportFromOldSystemCommand extends Command
                     $failed++;
                     $this->error("  ✗ No jobs dispatched");
                 }
-
             } catch (\Exception $e) {
                 $failed++;
                 $this->error("  ✗ Batch failed: " . $e->getMessage());
                 Log::error("Import batch failed", [
-                    'start' => $currentDate->toDateString(),
-                    'end' => $batchEnd->toDateString(),
+                    'start'     => $currentDate->toDateString(),
+                    'end'       => $batchEnd->toDateString(),
                     'exception' => $e->getMessage()
                 ]);
             }
 
             $progressBar->advance();
 
-            // Delay between batches
             if ($currentDate < $endDate && $delay > 0) {
                 sleep($delay);
             }
@@ -223,12 +225,11 @@ class ImportFromOldSystemCommand extends Command
                 );
 
                 $this->info("  ✓ Aggregation job queued (ID: {$aggregationId})");
-
             } catch (\Exception $e) {
                 $this->warn('  ⚠️  Failed to queue aggregation: ' . $e->getMessage());
                 Log::error('Failed to dispatch aggregation job', [
                     'start' => $startDate->toDateString(),
-                    'end' => $endDate->toDateString(),
+                    'end'   => $endDate->toDateString(),
                     'error' => $e->getMessage()
                 ]);
             }
@@ -279,8 +280,15 @@ class ImportFromOldSystemCommand extends Command
         // Validate aggregation type
         $validTypes = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'all'];
         $aggType = $this->option('aggregation-type');
-        if (!in_array($aggType, $validTypes)) {
+        if (!in_array($aggType, $validTypes, true)) {
             $this->error("Invalid aggregation type. Must be one of: " . implode(', ', $validTypes));
+            return false;
+        }
+
+        // Validate batch-days
+        $batchDays = (int) $this->option('batch-days');
+        if ($batchDays <= 0) {
+            $this->error('--batch-days must be a positive integer');
             return false;
         }
 
@@ -289,7 +297,8 @@ class ImportFromOldSystemCommand extends Command
 
     /**
      * Import a batch and dispatch queue jobs
-     * Returns number of jobs dispatched
+     * FIX A: Creates CSVs per day per model, not per batch-range.
+     * Returns number of jobs dispatched.
      */
     protected function importBatch(Carbon $startDate, Carbon $endDate): int
     {
@@ -304,36 +313,45 @@ class ImportFromOldSystemCommand extends Command
 
             $csvFiles = [];
 
-            // Fetch and save CSV files from old system
-            foreach ($this->modelMap as $modelName => $config) {
-                try {
-                    $data = $this->fetchFromOldSystem($modelName, $startDate, $endDate);
+            // FIX A: Fetch per day, per model; save per-day CSV files
+            $day = $startDate->copy();
+            while ($day <= $endDate) {
+                $dateStr = $day->toDateString();
 
-                    if (empty($data)) {
-                        $this->line("  ⚠ {$modelName}: No data");
-                        continue;
+                foreach ($this->modelMap as $modelName => $config) {
+                    try {
+                        $data = $this->fetchFromOldSystem($modelName, $day, $day);
+
+                        if (empty($data)) {
+                            $this->line("  ⚠ {$modelName} ({$dateStr}): No data");
+                            continue;
+                        }
+
+                        // Save as per-day CSV file (prevents overwriting and partition-splitting)
+                        $datedFilename = $this->withDateSuffix($config['filename'], $dateStr);
+                        $csvPath = $storagePath . '/' . $datedFilename;
+
+                        $this->saveToCsv($csvPath, $data);
+
+                        $csvFiles[$datedFilename] = [
+                            'path' => $csvPath,
+                            'processor' => $config['processor'],
+                            'records' => count($data),
+                            'business_date' => $dateStr,
+                        ];
+
+                        $this->line("  ✓ {$modelName} ({$dateStr}): " . number_format(count($data)) . " records");
+
+                    } catch (\Exception $e) {
+                        $this->error("  ✗ {$modelName} ({$dateStr}): " . $e->getMessage());
+                        Log::error("Failed to fetch {$modelName}", [
+                            'exception' => $e->getMessage(),
+                            'date' => $dateStr
+                        ]);
                     }
-
-                    // Save as CSV file
-                    $csvPath = $storagePath . '/' . $config['filename'];
-                    $this->saveToCsv($csvPath, $data);
-
-                    $csvFiles[$config['filename']] = [
-                        'path' => $csvPath,
-                        'processor' => $config['processor'],
-                        'records' => count($data)
-                    ];
-
-                    $this->line("  ✓ {$modelName}: " . number_format(count($data)) . " records");
-
-                } catch (\Exception $e) {
-                    $this->error("  ✗ {$modelName}: " . $e->getMessage());
-                    Log::error("Failed to fetch {$modelName}", [
-                        'exception' => $e->getMessage(),
-                        'start' => $startDate->toDateString(),
-                        'end' => $endDate->toDateString()
-                    ]);
                 }
+
+                $day->addDay();
             }
 
             if (empty($csvFiles)) {
@@ -366,12 +384,13 @@ class ImportFromOldSystemCommand extends Command
                     $filename,
                     $info['processor'],
                     count($csvFiles)
+                    // If you later update the job to accept business_date explicitly, you can add:
+                    // , $info['business_date']
                 );
-
                 $jobsDispatched++;
             }
 
-            Log::info("Old system import jobs dispatched", [
+            Log::info("Old system import jobs dispatched (per-day CSVs)", [
                 'upload_id' => $uploadId,
                 'total_files' => count($csvFiles),
                 'jobs_dispatched' => $jobsDispatched,
@@ -446,9 +465,9 @@ class ImportFromOldSystemCommand extends Command
                 'Authorization' => "Bearer {$this->oldSystemApiKey}",
                 'Accept' => 'application/json',
             ])
-            ->timeout(120)
-            ->retry(3, 100)
-            ->get($url);
+                ->timeout(120)
+                ->retry(3, 100)
+                ->get($url);
 
             if (!$response->successful()) {
                 throw new \Exception("API returned status {$response->status()}");
@@ -500,6 +519,23 @@ class ImportFromOldSystemCommand extends Command
         }
 
         fclose($handle);
+    }
+
+    /**
+     * Adds _YYYY-MM-DD before the file extension, preserving subfolders.
+     * Examples:
+     *  - detail-orders.csv -> detail-orders_2025-11-01.csv
+     *  - inventory/cogs.csv -> inventory/cogs_2025-11-01.csv
+     */
+    protected function withDateSuffix(string $relativePath, string $dateStr): string
+    {
+        $dir  = dirname($relativePath);
+        $base = pathinfo($relativePath, PATHINFO_FILENAME);
+        $ext  = pathinfo($relativePath, PATHINFO_EXTENSION);
+
+        $dated = "{$base}_{$dateStr}.{$ext}";
+
+        return ($dir === '.' ? $dated : $dir . '/' . $dated);
     }
 
     protected function deleteDirectory(string $path): void
