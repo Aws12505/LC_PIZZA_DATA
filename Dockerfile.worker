@@ -1,4 +1,3 @@
-# Dockerfile.worker
 FROM php:8.2-cli
 
 # Install dependencies
@@ -28,7 +27,7 @@ RUN pecl install redis imagick \
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# PHP limits for large files
+# PHP limits
 RUN { \
       echo "memory_limit=2G"; \
       echo "upload_max_filesize=1G"; \
@@ -39,10 +38,10 @@ RUN { \
 
 WORKDIR /var/www/html
 
-# Use the standard "main" supervisor config path so `supervisorctl` works with no args
+# Supervisor config
 COPY supervisord-worker.conf /etc/supervisor/supervisord.conf
 
-# Create log directory
+# Log dir for supervisor
 RUN mkdir -p /var/log/supervisor
 
 # Entrypoint
