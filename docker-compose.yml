@@ -7,15 +7,7 @@ services:
     ports:
       - "49153:80"
     volumes:
-      # Live code updates from host (git pull updates immediately)
       - ./:/var/www/html:delegated
-
-      # Persist runtime write paths as Docker volumes (prevents permission issues)
-      - laravel_storage:/var/www/html/storage
-      - laravel_bootstrap_cache:/var/www/html/bootstrap/cache
-
-      # Keep vendor inside a volume so it isn't affected by host perms
-      - laravel_vendor:/var/www/html/vendor
     restart: unless-stopped
 
   worker:
@@ -25,12 +17,4 @@ services:
     container_name: Data_Worker
     volumes:
       - ./:/var/www/html:delegated
-      - laravel_storage:/var/www/html/storage
-      - laravel_bootstrap_cache:/var/www/html/bootstrap/cache
-      - laravel_vendor:/var/www/html/vendor
     restart: unless-stopped
-
-volumes:
-  laravel_storage:
-  laravel_bootstrap_cache:
-  laravel_vendor:
