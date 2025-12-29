@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services;
+namespace App\Services\Aggregation;
 
 use App\Models\Operational\DetailOrderHot;
 use App\Models\Operational\OrderLineHot;
