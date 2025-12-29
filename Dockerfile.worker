@@ -1,3 +1,4 @@
+# Dockerfile.worker
 FROM php:8.2-cli
 
 # Install dependencies
@@ -38,16 +39,14 @@ RUN { \
 
 WORKDIR /var/www/html
 
-# Copy supervisor config
-COPY supervisord-worker.conf /etc/supervisor/conf.d/supervisord.conf
+# Use the standard "main" supervisor config path so `supervisorctl` works with no args
+COPY supervisord-worker.conf /etc/supervisor/supervisord.conf
 
 # Create log directory
 RUN mkdir -p /var/log/supervisor
 
-# ====== ENTRYPOINT SETUP ======
-# Copy entrypoint script
+# Entrypoint
 COPY docker-entrypoint-worker.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Use entrypoint
 ENTRYPOINT ["docker-entrypoint.sh"]
