@@ -7,7 +7,9 @@ services:
     ports:
       - "49153:80"
     volumes:
-      - ./:/var/www/html
+      - ./:/var/www/html:delegated
+      - laravel_storage:/var/www/html/storage
+      - laravel_bootstrap_cache:/var/www/html/bootstrap/cache
     restart: unless-stopped
 
   worker:
@@ -16,5 +18,11 @@ services:
       dockerfile: Dockerfile.worker
     container_name: Data_Worker
     volumes:
-      - ./:/var/www/html
+      - ./:/var/www/html:delegated
+      - laravel_storage:/var/www/html/storage
+      - laravel_bootstrap_cache:/var/www/html/bootstrap/cache
     restart: unless-stopped
+
+volumes:
+  laravel_storage:
+  laravel_bootstrap_cache:
