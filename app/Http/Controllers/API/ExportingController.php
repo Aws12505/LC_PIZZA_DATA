@@ -13,7 +13,6 @@ class ExportingController extends Controller
 {
     protected const CHUNK_SIZE = 5000;
 
-
     /**
      * CSV export
      * GET /api/export/csv?start=2025-01-01&end=2025-12-31&store=03795&model=detail_orders
@@ -24,6 +23,11 @@ class ExportingController extends Controller
         DB::connection()->disableQueryLog();
         set_time_limit(0);
         ini_set('memory_limit', '512M');
+
+        // Define these up-front so the catch block never references undefined vars
+        $startDate = null;
+        $endDate   = null;
+        $store     = null;
 
         try {
             $validated = $request->validate([
@@ -55,9 +59,9 @@ class ExportingController extends Controller
             $this->logExportException($e, [
                 'type'  => 'csv',
                 'model' => $request->get('model'),
-                'start' => $startDate?->toDateString() ?? null,
-                'end'   => $endDate?->toDateString() ?? null,
-                'store' => $store ?? null,
+                'start' => $startDate?->toDateString(),
+                'end'   => $endDate?->toDateString(),
+                'store' => $store,
             ]);
 
             return response()->json([
@@ -264,7 +268,7 @@ class ExportingController extends Controller
 
     /**
      * Write CSV rows for a model
-     * **KEY FIX: Adds orderBy before chunk()**
+     * NOTE: Adds orderBy before chunk()
      */
     protected function writeCsvRowsForModel(
         $fh,
@@ -312,7 +316,6 @@ class ExportingController extends Controller
 
             $tableName = $q->from;
 
-            // **FIX: Add orderBy before chunk**
             $orderColumns = $this->getOrderColumnsForModel($model);
             foreach ($orderColumns as $col) {
                 $q->orderBy($col);
@@ -362,6 +365,7 @@ class ExportingController extends Controller
             'alta_inventory_ingredient_usage' => ['franchise_store', 'business_date'],
             'alta_inventory_ingredient_orders' => ['franchise_store', 'business_date'],
             'alta_inventory_cogs' => ['franchise_store', 'business_date'],
+
             'yearly_store_summary' => ['franchise_store', 'year_num'],
             'yearly_item_summary' => ['franchise_store', 'year_num'],
             'weekly_store_summary' => ['franchise_store', 'year_num', 'week_num'],
@@ -372,6 +376,10 @@ class ExportingController extends Controller
             'monthly_item_summary' => ['franchise_store', 'year_num', 'month_num'],
             'daily_store_summary' => ['franchise_store', 'business_date'],
             'daily_item_summary' => ['franchise_store', 'business_date'],
+
+            // ✅ HOURLY WIRED
+            'hourly_store_summary' => ['franchise_store', 'business_date', 'hour'],
+            'hourly_item_summary'  => ['franchise_store', 'business_date', 'hour', 'item_id'],
         ];
 
         return $orderMap[$model] ?? ['franchise_store', 'business_date'];
@@ -405,7 +413,7 @@ class ExportingController extends Controller
             'quarterly_store_summary', 'quarterly_item_summary',
             'monthly_store_summary', 'monthly_item_summary',
             'daily_store_summary', 'daily_item_summary',
-            'hourly_store_summary', 'hourly_item_summary',
+            'hourly_store_summary', 'hourly_item_summary', // ✅ already present
         ], true);
     }
 
@@ -453,6 +461,12 @@ class ExportingController extends Controller
             case 'daily_item_summary':
                 $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 break;
+
+            // ✅ HOURLY WIRED: filter by business_date range (hour remains unbounded unless you add params later)
+            case 'hourly_store_summary':
+            case 'hourly_item_summary':
+                $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
+                break;
         }
 
         return $query;
@@ -470,6 +484,7 @@ class ExportingController extends Controller
             'quarterly_store_summary', 'quarterly_item_summary',
             'monthly_store_summary', 'monthly_item_summary',
             'daily_store_summary', 'daily_item_summary',
+            'hourly_store_summary', 'hourly_item_summary',
         ];
     }
 
@@ -682,6 +697,68 @@ class ExportingController extends Controller
                 'menu_item_account', 'quantity_sold', 'gross_sales', 'net_sales',
                 'avg_item_price', 'delivery_quantity', 'carryout_quantity',
                 'modified_quantity', 'refunded_quantity'
+            ],
+
+            // ✅ HOURLY WIRED (from your HourlyStoreSummary + HourlyItemSummary models)
+            'hourly_store_summary' => [
+                'franchise_store', 'business_date', 'hour',
+
+                'total_sales', 'gross_sales', 'net_sales', 'refund_amount',
+
+                'total_orders', 'completed_orders', 'cancelled_orders',
+                'modified_orders', 'refunded_orders', 'avg_order_value',
+                'customer_count', 'avg_customers_per_order',
+
+                'phone_orders', 'website_orders', 'mobile_orders',
+                'call_center_orders', 'drive_thru_orders',
+
+                'phone_sales', 'website_sales', 'mobile_sales',
+                'call_center_sales', 'drive_thru_sales',
+
+                'doordash_orders', 'doordash_sales',
+                'ubereats_orders', 'ubereats_sales',
+                'grubhub_orders', 'grubhub_sales',
+
+                'delivery_orders', 'delivery_sales',
+                'carryout_orders', 'carryout_sales',
+
+                'pizza_quantity', 'pizza_sales',
+                'hnr_quantity', 'hnr_sales',
+                'bread_quantity', 'bread_sales',
+                'wings_quantity', 'wings_sales',
+                'beverages_quantity', 'beverages_sales',
+                'crazy_puffs_quantity', 'crazy_puffs_sales',
+
+                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
+
+                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
+
+                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
+                'portal_on_time_orders', 'portal_on_time_rate',
+
+                'total_waste_items', 'total_waste_cost',
+
+                'digital_orders', 'digital_sales', 'digital_penetration',
+            ],
+
+            'hourly_item_summary' => [
+                'franchise_store',
+                'business_date',
+                'hour',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+
+                'delivery_quantity',
+                'carryout_quantity',
+
+                'modified_quantity',
+                'refunded_quantity',
             ],
         ];
 
