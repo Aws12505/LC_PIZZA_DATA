@@ -845,6 +845,7 @@
                 <div class="form-group">
                     <label>Aggregation Type</label>
                     <select id="aggregationType">
+                        <option value="hourly">Hourly</option>
                         <option value="daily">Daily</option>
                         <option value="weekly">Weekly</option>
                         <option value="monthly">Monthly</option>

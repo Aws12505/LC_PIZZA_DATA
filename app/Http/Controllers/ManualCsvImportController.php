@@ -350,7 +350,7 @@ class ManualCsvImportController extends Controller
         $validator = Validator::make($request->all(), [
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
-            'type' => 'required|in:daily,weekly,monthly,quarterly,yearly,all'
+            'type' => 'required|in:hourly,daily,weekly,monthly,quarterly,yearly,all'
         ]);
 
         if ($validator->fails()) {
