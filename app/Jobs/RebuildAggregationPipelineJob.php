@@ -4,6 +4,7 @@ namespace App\Jobs\RebuildAggregationPipeline;
 
 use Carbon\Carbon;
 use Illuminate\Bus\Batch;
+use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -27,7 +28,7 @@ use Throwable;
  */
 class RebuildAggregationPipelineJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
 
     public $timeout = 3600;
     public $tries = 3;
