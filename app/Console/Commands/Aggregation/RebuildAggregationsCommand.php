@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands\Aggregation;
 
-use App\Jobs\RebuildAggregationPipelineJob;
+use App\Jobs\RebuildAggregationPipeline\RebuildAggregationPipelineJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
