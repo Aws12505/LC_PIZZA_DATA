@@ -29,7 +29,7 @@ class ReportControllerTest extends TestCase
             ->assertJsonStructure([
                 'success',
                 'data' => [
-                    'total_sales',
+                    'royalty_obligation',
                     'total_orders',
                     'customer_count',
                 ]
@@ -94,7 +94,7 @@ class ReportControllerTest extends TestCase
                 'success',
                 'data' => [
                     'channels',
-                    'total_sales',
+                    'royalty_obligation'
                 ]
             ]);
     }

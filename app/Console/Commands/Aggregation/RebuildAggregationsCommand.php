@@ -2,37 +2,25 @@
 
 namespace App\Console\Commands\Aggregation;
 
-use App\Services\Aggregation\AggregationService;
+use App\Jobs\RebuildAggregationPipelineJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
-/**
- * Rebuild aggregations for a date range
- * Usage:
- *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=all
- *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=hourly
- *   php artisan aggregation:rebuild --start=2025-01-01 --end=2025-01-31 --type=daily
- */
 class RebuildAggregationsCommand extends Command
 {
     protected $signature = 'aggregation:rebuild
                             {--start= : Start date (Y-m-d)}
                             {--end= : End date (Y-m-d)}
-                            {--type=all : Type: hourly, daily, weekly, monthly, quarterly, yearly, all}';
+                            {--type=all : hourly, daily, weekly, monthly, quarterly, yearly, all}';
 
-    protected $description = 'Rebuild aggregations for a date range';
-
-    public function __construct(
-        protected AggregationService $aggregationService
-    ) {
-        parent::__construct();
-    }
+    protected $description = 'Rebuild aggregations for a date range (JOB PIPELINE: hourly->daily->weekly->monthly->quarterly->yearly)';
 
     public function handle(): int
     {
         $this->newLine();
-        $this->info('🔄 REBUILD AGGREGATIONS');
+        $this->info('🔄 REBUILD AGGREGATIONS (JOB PIPELINE)');
         $this->line(str_repeat('═', 80));
 
         if (!$this->option('start') || !$this->option('end')) {
@@ -40,77 +28,69 @@ class RebuildAggregationsCommand extends Command
             return self::FAILURE;
         }
 
+        $type = (string) $this->option('type');
+        $valid = ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly', 'all'];
+        if (!in_array($type, $valid, true)) {
+            $this->error('❌ Invalid --type. Must be: ' . implode(', ', $valid));
+            return self::FAILURE;
+        }
+
         try {
-            $start = Carbon::parse($this->option('start'));
-            $end = Carbon::parse($this->option('end'));
+            $start = Carbon::parse($this->option('start'))->startOfDay();
+            $end   = Carbon::parse($this->option('end'))->startOfDay();
         } catch (\Exception $e) {
             $this->error('❌ Invalid date format (use Y-m-d)');
             return self::FAILURE;
         }
 
+        if ($start->gt($end)) {
+            $this->error('❌ Start date must be <= end date');
+            return self::FAILURE;
+        }
+
         $days = $start->diffInDays($end) + 1;
-        $type = $this->option('type');
 
         $this->table(['Start', 'End', 'Days', 'Type'], [
             [$start->toDateString(), $end->toDateString(), $days, $type]
         ]);
 
-        if (!$this->confirm('🚀 Proceed with rebuild?', true)) {
+        if (!$this->confirm('🚀 Queue rebuild pipeline?', true)) {
             return self::SUCCESS;
         }
 
-        $bar = $this->output->createProgressBar($days);
-        $bar->start();
+        $rebuildId = uniqid('agg_rebuild_', true);
 
-        $current = $start->copy();
-        $success = $failed = 0;
+        Cache::put("agg_rebuild_progress_{$rebuildId}", [
+            'status' => 'queued',
+            'rebuild_id' => $rebuildId,
+            'type' => $type,
+            'started_at' => now()->toISOString(),
+            'updated_at' => now()->toISOString(),
+            'date_range' => [
+                'start' => $start->toDateString(),
+                'end' => $end->toDateString(),
+            ],
+        ], 7200);
 
-        while ($current <= $end) {
-            try {
-                // HOURLY must come first (builds from raw data)
-                if ($type === 'hourly' || $type === 'all') {
-                    $this->aggregationService->updateHourlySummaries($current);
-                }
+        RebuildAggregationPipelineJob::dispatch(
+            $rebuildId,
+            $start->toDateString(),
+            $end->toDateString(),
+            $type
+        );
 
-                // DAILY (builds from hourly)
-                if ($type === 'daily' || $type === 'all') {
-                    $this->aggregationService->updateDailySummaries($current);
-                }
+        Log::info('Aggregation rebuild pipeline queued', [
+            'rebuild_id' => $rebuildId,
+            'start' => $start->toDateString(),
+            'end' => $end->toDateString(),
+            'type' => $type,
+        ]);
 
-                // WEEKLY (builds from daily)
-                if ($type === 'weekly' || $type === 'all') {
-                    $this->aggregationService->updateWeeklySummaries($current);
-                }
+        $this->newLine();
+        $this->info("✅ Rebuild queued. ID: {$rebuildId}");
+        $this->info("💡 Run worker: php artisan queue:work");
+        $this->info("💡 Progress key: agg_rebuild_progress_{$rebuildId}");
 
-                // MONTHLY (builds from weekly)
-                if ($type === 'monthly' || $type === 'all') {
-                    $this->aggregationService->updateMonthlySummaries($current);
-                }
-
-                // QUARTERLY (builds from monthly)
-                if ($type === 'quarterly' || $type === 'all') {
-                    $this->aggregationService->updateQuarterlySummaries($current);
-                }
-
-                // YEARLY (builds from quarterly)
-                if ($type === 'yearly' || $type === 'all') {
-                    $this->aggregationService->updateYearlySummaries($current);
-                }
-
-                $success++;
-            } catch (\Exception $e) {
-                $failed++;
-                Log::error("Rebuild {$current->toDateString()}: " . $e->getMessage());
-            }
-
-            $bar->advance();
-            $current->addDay();
-        }
-
-        $bar->finish();
-        $this->newLine(2);
-        $this->info("✅ Success: {$success} | ❌ Failed: {$failed}");
-
-        return $failed === 0 ? self::SUCCESS : self::FAILURE;
+        return self::SUCCESS;
     }
 }

@@ -24,7 +24,6 @@ class ExportingController extends Controller
         set_time_limit(0);
         ini_set('memory_limit', '512M');
 
-        // Define these up-front so the catch block never references undefined vars
         $startDate = null;
         $endDate   = null;
         $store     = null;
@@ -311,7 +310,7 @@ class ExportingController extends Controller
         $queries = DatabaseRouter::routedQueries($model, $startDate, $endDate);
 
         $totalRows = 0;
-        foreach ($queries as $idx => $q) {
+        foreach ($queries as $q) {
             if ($store) $q->where('franchise_store', $store);
 
             $tableName = $q->from;
@@ -377,7 +376,6 @@ class ExportingController extends Controller
             'daily_store_summary' => ['franchise_store', 'business_date'],
             'daily_item_summary' => ['franchise_store', 'business_date'],
 
-            // ✅ HOURLY WIRED
             'hourly_store_summary' => ['franchise_store', 'business_date', 'hour'],
             'hourly_item_summary'  => ['franchise_store', 'business_date', 'hour', 'item_id'],
         ];
@@ -400,7 +398,8 @@ class ExportingController extends Controller
 
         try {
             Log::error('EXPORT FAILED', $payload);
-        } catch (\Throwable $x) {}
+        } catch (\Throwable $x) {
+        }
 
         @file_put_contents(storage_path('logs/export_errors.log'), json_encode($payload) . PHP_EOL, FILE_APPEND);
     }
@@ -413,7 +412,7 @@ class ExportingController extends Controller
             'quarterly_store_summary', 'quarterly_item_summary',
             'monthly_store_summary', 'monthly_item_summary',
             'daily_store_summary', 'daily_item_summary',
-            'hourly_store_summary', 'hourly_item_summary', // ✅ already present
+            'hourly_store_summary', 'hourly_item_summary',
         ], true);
     }
 
@@ -435,7 +434,7 @@ class ExportingController extends Controller
             case 'weekly_item_summary':
                 $query->where(function ($q) use ($startDate, $endDate) {
                     $q->whereBetween('week_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                      ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
+                        ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
@@ -443,14 +442,14 @@ class ExportingController extends Controller
             case 'quarterly_item_summary':
                 $query->where(function ($q) use ($startDate, $endDate) {
                     $q->whereBetween('quarter_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                      ->orWhereBetween('quarter_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
+                        ->orWhereBetween('quarter_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 });
                 break;
 
             case 'monthly_store_summary':
             case 'monthly_item_summary':
                 $query->where('year_num', '>=', $startDate->year)
-                      ->where('year_num', '<=', $endDate->year);
+                    ->where('year_num', '<=', $endDate->year);
 
                 if ($startDate->year === $endDate->year) {
                     $query->whereBetween('month_num', [$startDate->month, $endDate->month]);
@@ -462,7 +461,6 @@ class ExportingController extends Controller
                 $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
                 break;
 
-            // ✅ HOURLY WIRED: filter by business_date range (hour remains unbounded unless you add params later)
             case 'hourly_store_summary':
             case 'hourly_item_summary':
                 $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
@@ -479,6 +477,7 @@ class ExportingController extends Controller
             'summary_transactions', 'waste', 'cash_management', 'financial_views',
             'alta_inventory_waste', 'alta_inventory_ingredient_usage',
             'alta_inventory_ingredient_orders', 'alta_inventory_cogs',
+
             'yearly_store_summary', 'yearly_item_summary',
             'weekly_store_summary', 'weekly_item_summary',
             'quarterly_store_summary', 'quarterly_item_summary',
@@ -488,9 +487,65 @@ class ExportingController extends Controller
         ];
     }
 
+    /**
+     * ✅ UPDATED: store summary columns now include the new category split fields:
+     * - pizza / hnr / bread / wings / beverages / other_foods / side_items
+     * - {cat}_delivery_quantity, {cat}_delivery_sales, {cat}_carryout_quantity, {cat}_carryout_sales
+     * - Removes crazy_puffs_* references
+     */
     protected function getColumnsForModel(string $model): array
     {
+        $storeCategoryTotals = [
+            'pizza_quantity', 'pizza_sales',
+            'hnr_quantity', 'hnr_sales',
+            'bread_quantity', 'bread_sales',
+            'wings_quantity', 'wings_sales',
+            'beverages_quantity', 'beverages_sales',
+            'other_foods_quantity', 'other_foods_sales',
+            'side_items_quantity', 'side_items_sales',
+        ];
+
+        $storeCategorySplits = [
+            'pizza_delivery_quantity', 'pizza_delivery_sales', 'pizza_carryout_quantity', 'pizza_carryout_sales',
+            'hnr_delivery_quantity', 'hnr_delivery_sales', 'hnr_carryout_quantity', 'hnr_carryout_sales',
+            'bread_delivery_quantity', 'bread_delivery_sales', 'bread_carryout_quantity', 'bread_carryout_sales',
+            'wings_delivery_quantity', 'wings_delivery_sales', 'wings_carryout_quantity', 'wings_carryout_sales',
+            'beverages_delivery_quantity', 'beverages_delivery_sales', 'beverages_carryout_quantity', 'beverages_carryout_sales',
+            'other_foods_delivery_quantity', 'other_foods_delivery_sales', 'other_foods_carryout_quantity', 'other_foods_carryout_sales',
+            'side_items_delivery_quantity', 'side_items_delivery_sales', 'side_items_carryout_quantity', 'side_items_carryout_sales',
+        ];
+
+        $commonStoreSummary = array_merge([
+            'royalty_obligation', 'gross_sales', 'net_sales', 'refund_amount',
+            'total_orders', 'completed_orders', 'cancelled_orders',
+            'modified_orders', 'refunded_orders', 'avg_order_value', 'customer_count',
+
+            'phone_orders', 'phone_sales',
+            'website_orders', 'website_sales',
+            'mobile_orders', 'mobile_sales',
+            'call_center_orders', 'call_center_sales',
+            'drive_thru_orders', 'drive_thru_sales',
+
+            'doordash_orders', 'doordash_sales',
+            'ubereats_orders', 'ubereats_sales',
+            'grubhub_orders', 'grubhub_sales',
+
+            'delivery_orders', 'delivery_sales',
+            'carryout_orders', 'carryout_sales',
+
+            // ✅ NEW totals + splits
+        ], $storeCategoryTotals, $storeCategorySplits, [
+            'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
+            'cash_sales', 'over_short',
+
+            'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
+            'portal_on_time_orders', 'portal_on_time_rate',
+
+            'digital_orders', 'digital_sales', 'digital_penetration',
+        ]);
+
         $columnMap = [
+            // RAW MODELS (unchanged)
             'detail_orders' => [
                 'franchise_store', 'business_date', 'order_id', 'date_time_placed',
                 'date_time_fulfilled', 'royalty_obligation', 'quantity', 'customer_count',
@@ -566,132 +621,65 @@ class ExportingController extends Controller
                 'starting_value', 'received_value', 'net_transfer_value', 'ending_value',
                 'used_value', 'theoretical_usage_value', 'variance_value'
             ],
-            'yearly_store_summary' => [
-                'franchise_store', 'year_num', 'total_sales', 'gross_sales', 'net_sales',
-                'refund_amount', 'total_orders', 'completed_orders', 'cancelled_orders',
-                'modified_orders', 'refunded_orders', 'avg_order_value', 'customer_count',
-                'avg_customers_per_order', 'operational_days', 'operational_months',
-                'avg_daily_sales', 'avg_monthly_sales', 'sales_vs_prior_year', 'sales_growth_percent',
-                'phone_orders', 'phone_sales', 'website_orders', 'website_sales',
-                'mobile_orders', 'mobile_sales', 'call_center_orders', 'call_center_sales',
-                'drive_thru_orders', 'drive_thru_sales', 'doordash_orders', 'doordash_sales',
-                'ubereats_orders', 'ubereats_sales', 'grubhub_orders', 'grubhub_sales',
-                'delivery_orders', 'delivery_sales', 'carryout_orders', 'carryout_sales',
-                'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales', 'crazy_puffs_quantity', 'crazy_puffs_sales',
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate', 'total_waste_items',
-                'total_waste_cost', 'digital_orders', 'digital_sales', 'digital_penetration'
-            ],
+
+            // ✅ AGGREGATION MODELS (UPDATED)
+
+            'yearly_store_summary' => array_merge(
+                ['franchise_store', 'year_num'],
+                $commonStoreSummary,
+                ['operational_days', 'operational_months', 'avg_daily_sales', 'avg_monthly_sales', 'sales_vs_prior_year', 'sales_growth_percent']
+            ),
+
             'yearly_item_summary' => [
                 'franchise_store', 'year_num', 'item_id', 'menu_item_name', 'menu_item_account',
                 'quantity_sold', 'gross_sales', 'net_sales', 'avg_item_price',
                 'avg_daily_quantity', 'delivery_quantity', 'carryout_quantity'
             ],
-            'weekly_store_summary' => [
-                'franchise_store', 'year_num', 'week_num', 'week_start_date', 'week_end_date',
-                'total_sales', 'gross_sales', 'net_sales', 'refund_amount', 'total_orders',
-                'completed_orders', 'cancelled_orders', 'modified_orders', 'refunded_orders',
-                'avg_order_value', 'customer_count', 'avg_customers_per_order',
-                'phone_orders', 'phone_sales', 'website_orders', 'website_sales',
-                'mobile_orders', 'mobile_sales', 'call_center_orders', 'call_center_sales',
-                'drive_thru_orders', 'drive_thru_sales', 'doordash_orders', 'doordash_sales',
-                'ubereats_orders', 'ubereats_sales', 'grubhub_orders', 'grubhub_sales',
-                'delivery_orders', 'delivery_sales', 'carryout_orders', 'carryout_sales',
-                'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales', 'crazy_puffs_quantity', 'crazy_puffs_sales',
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate', 'total_waste_items',
-                'total_waste_cost', 'digital_orders', 'digital_sales', 'digital_penetration',
-                'sales_vs_prior_week', 'sales_growth_percent', 'orders_vs_prior_week', 'orders_growth_percent'
-            ],
+
+            'weekly_store_summary' => array_merge(
+                ['franchise_store', 'year_num', 'week_num', 'week_start_date', 'week_end_date'],
+                $commonStoreSummary,
+                ['avg_daily_sales', 'avg_daily_orders', 'sales_vs_prior_week', 'sales_growth_percent', 'sales_vs_same_week_prior_year', 'yoy_growth_percent']
+            ),
+
             'weekly_item_summary' => [
                 'franchise_store', 'year_num', 'week_num', 'week_start_date', 'week_end_date',
                 'item_id', 'menu_item_name', 'menu_item_account', 'quantity_sold',
                 'gross_sales', 'net_sales', 'avg_item_price', 'avg_daily_quantity',
                 'delivery_quantity', 'carryout_quantity'
             ],
-            'quarterly_store_summary' => [
-                'franchise_store', 'year_num', 'quarter_num', 'quarter_start_date', 'quarter_end_date',
-                'total_sales', 'gross_sales', 'net_sales', 'refund_amount', 'total_orders',
-                'completed_orders', 'cancelled_orders', 'modified_orders', 'refunded_orders',
-                'avg_order_value', 'customer_count', 'avg_customers_per_order',
-                'operational_days', 'operational_months', 'avg_daily_sales', 'avg_monthly_sales',
-                'sales_vs_prior_quarter', 'sales_growth_percent',
-                'sales_vs_same_quarter_prior_year', 'yoy_growth_percent',
-                'phone_orders', 'phone_sales', 'website_orders', 'website_sales',
-                'mobile_orders', 'mobile_sales', 'call_center_orders', 'call_center_sales',
-                'drive_thru_orders', 'drive_thru_sales', 'doordash_orders', 'doordash_sales',
-                'ubereats_orders', 'ubereats_sales', 'grubhub_orders', 'grubhub_sales',
-                'delivery_orders', 'delivery_sales', 'carryout_orders', 'carryout_sales',
-                'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales', 'crazy_puffs_quantity', 'crazy_puffs_sales',
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate', 'total_waste_items',
-                'total_waste_cost', 'digital_orders', 'digital_sales', 'digital_penetration'
-            ],
+
+            'quarterly_store_summary' => array_merge(
+                ['franchise_store', 'year_num', 'quarter_num', 'quarter_start_date', 'quarter_end_date'],
+                $commonStoreSummary,
+                ['operational_days', 'operational_months', 'avg_daily_sales', 'avg_monthly_sales', 'sales_vs_prior_quarter', 'sales_growth_percent', 'sales_vs_same_quarter_prior_year', 'yoy_growth_percent']
+            ),
+
             'quarterly_item_summary' => [
                 'franchise_store', 'year_num', 'quarter_num', 'quarter_start_date', 'quarter_end_date',
                 'item_id', 'menu_item_name', 'menu_item_account', 'quantity_sold',
                 'gross_sales', 'net_sales', 'avg_item_price', 'avg_daily_quantity',
                 'delivery_quantity', 'carryout_quantity'
             ],
-            'monthly_store_summary' => [
-                'franchise_store', 'year_num', 'month_num', 'month_name', 'total_sales',
-                'gross_sales', 'net_sales', 'refund_amount', 'total_orders',
-                'completed_orders', 'cancelled_orders', 'modified_orders', 'refunded_orders',
-                'avg_order_value', 'customer_count', 'avg_customers_per_order',
-                'operational_days', 'avg_daily_sales', 'avg_daily_orders',
-                'sales_vs_prior_month', 'sales_growth_percent',
-                'sales_vs_same_month_prior_year', 'yoy_growth_percent',
-                'phone_orders', 'phone_sales', 'website_orders', 'website_sales',
-                'mobile_orders', 'mobile_sales', 'call_center_orders', 'call_center_sales',
-                'drive_thru_orders', 'drive_thru_sales', 'doordash_orders', 'doordash_sales',
-                'ubereats_orders', 'ubereats_sales', 'grubhub_orders', 'grubhub_sales',
-                'delivery_orders', 'delivery_sales', 'carryout_orders', 'carryout_sales',
-                'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales', 'crazy_puffs_quantity', 'crazy_puffs_sales',
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate', 'total_waste_items',
-                'total_waste_cost', 'digital_orders', 'digital_sales', 'digital_penetration'
-            ],
+
+            'monthly_store_summary' => array_merge(
+                ['franchise_store', 'year_num', 'month_num', 'month_name'],
+                $commonStoreSummary,
+                ['operational_days', 'avg_daily_sales', 'avg_daily_orders', 'sales_vs_prior_month', 'sales_growth_percent', 'sales_vs_same_month_prior_year', 'yoy_growth_percent']
+            ),
+
             'monthly_item_summary' => [
                 'franchise_store', 'year_num', 'month_num', 'item_id', 'menu_item_name',
                 'menu_item_account', 'quantity_sold', 'gross_sales', 'net_sales',
-                'avg_item_price', 'avg_daily_quantity', 'quantity_vs_prior_month',
-                'quantity_growth_percent', 'sales_vs_prior_month', 'sales_growth_percent',
+                'avg_item_price', 'avg_daily_quantity',
                 'delivery_quantity', 'carryout_quantity'
             ],
-            'daily_store_summary' => [
-                'franchise_store', 'business_date', 'total_sales', 'gross_sales', 'net_sales',
-                'refund_amount', 'total_orders', 'completed_orders', 'cancelled_orders',
-                'modified_orders', 'refunded_orders', 'avg_order_value', 'customer_count',
-                'avg_customers_per_order', 'phone_orders', 'phone_sales', 'website_orders',
-                'website_sales', 'mobile_orders', 'mobile_sales', 'call_center_orders',
-                'call_center_sales', 'drive_thru_orders', 'drive_thru_sales', 'doordash_orders',
-                'doordash_sales', 'ubereats_orders', 'ubereats_sales', 'grubhub_orders',
-                'grubhub_sales', 'delivery_orders', 'delivery_sales', 'carryout_orders',
-                'carryout_sales', 'pizza_quantity', 'pizza_sales', 'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales', 'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales', 'crazy_puffs_quantity', 'crazy_puffs_sales',
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate', 'total_waste_items',
-                'total_waste_cost', 'digital_orders', 'digital_sales', 'digital_penetration'
-            ],
+
+            'daily_store_summary' => array_merge(
+                ['franchise_store', 'business_date'],
+                $commonStoreSummary
+            ),
+
             'daily_item_summary' => [
                 'franchise_store', 'business_date', 'item_id', 'menu_item_name',
                 'menu_item_account', 'quantity_sold', 'gross_sales', 'net_sales',
@@ -699,47 +687,10 @@ class ExportingController extends Controller
                 'modified_quantity', 'refunded_quantity'
             ],
 
-            // ✅ HOURLY WIRED (from your HourlyStoreSummary + HourlyItemSummary models)
-            'hourly_store_summary' => [
-                'franchise_store', 'business_date', 'hour',
-
-                'total_sales', 'gross_sales', 'net_sales', 'refund_amount',
-
-                'total_orders', 'completed_orders', 'cancelled_orders',
-                'modified_orders', 'refunded_orders', 'avg_order_value',
-                'customer_count', 'avg_customers_per_order',
-
-                'phone_orders', 'website_orders', 'mobile_orders',
-                'call_center_orders', 'drive_thru_orders',
-
-                'phone_sales', 'website_sales', 'mobile_sales',
-                'call_center_sales', 'drive_thru_sales',
-
-                'doordash_orders', 'doordash_sales',
-                'ubereats_orders', 'ubereats_sales',
-                'grubhub_orders', 'grubhub_sales',
-
-                'delivery_orders', 'delivery_sales',
-                'carryout_orders', 'carryout_sales',
-
-                'pizza_quantity', 'pizza_sales',
-                'hnr_quantity', 'hnr_sales',
-                'bread_quantity', 'bread_sales',
-                'wings_quantity', 'wings_sales',
-                'beverages_quantity', 'beverages_sales',
-                'crazy_puffs_quantity', 'crazy_puffs_sales',
-
-                'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-
-                'cash_sales', 'credit_card_sales', 'prepaid_sales', 'over_short',
-
-                'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-                'portal_on_time_orders', 'portal_on_time_rate',
-
-                'total_waste_items', 'total_waste_cost',
-
-                'digital_orders', 'digital_sales', 'digital_penetration',
-            ],
+            'hourly_store_summary' => array_merge(
+                ['franchise_store', 'business_date', 'hour'],
+                $commonStoreSummary
+            ),
 
             'hourly_item_summary' => [
                 'franchise_store',
