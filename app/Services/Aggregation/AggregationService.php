@@ -51,8 +51,6 @@ class AggregationService
      */
     public function updateHourlySummaries(Carbon $date): void
     {
-        Log::info("Hourly aggregation for: {$date->toDateString()}");
-
         $dateStr = $date->toDateString();
 
         $stores = $this->routedSource('detail_orders', $date, $date)
@@ -80,7 +78,6 @@ class AggregationService
      */
     public function updateDailySummaries(Carbon $date): void
     {
-        Log::info("Daily aggregation for: {$date->toDateString()}");
 
         $stores = HourlyStoreSummary::where('business_date', $date->toDateString())
             ->distinct()
@@ -109,7 +106,6 @@ class AggregationService
         $weekStart = $date->copy()->startOfWeek(Carbon::TUESDAY);
         $weekEnd = $date->copy()->endOfWeek(Carbon::MONDAY);
 
-        Log::info("Weekly aggregation: {$weekStart->toDateString()} to {$weekEnd->toDateString()}");
 
         $this->updateWeeklySummariesRange($weekStart, $weekEnd);
     }
@@ -122,7 +118,6 @@ class AggregationService
         $year = $date->year;
         $month = $date->month;
 
-        Log::info("Monthly aggregation: {$year}-{$month}");
 
         $this->updateMonthlySummariesYearMonth($year, $month);
     }
@@ -135,7 +130,6 @@ class AggregationService
         $year = $date->year;
         $quarter = (int) ceil($date->month / 3);
 
-        Log::info("Quarterly aggregation: {$year} Q{$quarter}");
 
         $this->updateQuarterlySummariesYearQuarter($year, $quarter);
     }
@@ -147,7 +141,6 @@ class AggregationService
     {
         $year = $date->year;
 
-        Log::info("Yearly aggregation: {$year}");
 
         $this->updateYearlySummariesYear($year);
     }

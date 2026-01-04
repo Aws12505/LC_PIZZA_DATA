@@ -62,12 +62,6 @@ class RebuildAggregationPipelineJob implements ShouldQueue
                 'stage_total' => count($stages),
             ]);
 
-            Log::info('Aggregation rebuild pipeline completed', [
-                'rebuild_id' => $this->rebuildId,
-                'start' => $start->toDateString(),
-                'end' => $end->toDateString(),
-                'type' => $this->type,
-            ]);
 
             return;
         }
@@ -131,13 +125,6 @@ class RebuildAggregationPipelineJob implements ShouldQueue
                     ]
                 ), 7200);
 
-                Log::info('Aggregation stage completed', [
-                    'rebuild_id' => $rebuildId,
-                    'stage' => $stage,
-                    'batch_id' => $batch->id,
-                    'total_jobs' => $batch->totalJobs,
-                    'failed_jobs' => $batch->failedJobs,
-                ]);
 
                 ContinueAggregationPipelineJob::dispatch(
                     rebuildId: $rebuildId,

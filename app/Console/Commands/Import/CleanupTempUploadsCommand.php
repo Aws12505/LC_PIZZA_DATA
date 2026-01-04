@@ -4,7 +4,6 @@ namespace App\Console\Commands\Import;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 class CleanupTempUploadsCommand extends Command
 {
@@ -23,7 +22,6 @@ class CleanupTempUploadsCommand extends Command
         $cleaned += $this->cleanAbandonedUploads($cutoff);
 
         $this->info("✓ Cleaned {$cleaned} directories");
-        Log::info("Temp upload cleanup completed", ['cleaned' => $cleaned]);
         
         return 0;
     }

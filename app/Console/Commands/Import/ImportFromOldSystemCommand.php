@@ -390,15 +390,6 @@ class ImportFromOldSystemCommand extends Command
                 $jobsDispatched++;
             }
 
-            Log::info("Old system import jobs dispatched (per-day CSVs)", [
-                'upload_id' => $uploadId,
-                'total_files' => count($csvFiles),
-                'jobs_dispatched' => $jobsDispatched,
-                'date_range' => [
-                    'start' => $startDate->toDateString(),
-                    'end' => $endDate->toDateString()
-                ]
-            ]);
 
             return $jobsDispatched;
 
@@ -446,12 +437,6 @@ class ImportFromOldSystemCommand extends Command
             $type
         );
 
-        Log::info("Aggregation job dispatched", [
-            'aggregation_id' => $aggregationId,
-            'start_date' => $startDate,
-            'end_date' => $endDate,
-            'type' => $type
-        ]);
 
         return $aggregationId;
     }

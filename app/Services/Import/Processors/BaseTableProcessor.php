@@ -135,14 +135,6 @@ abstract class BaseTableProcessor
         $connection = $this->getDatabaseConnection();
         $strategy = $this->getImportStrategy();
 
-        Log::info("Processing table with strategy", [
-            'strategy' => $strategy,
-            'table' => $tableName,
-            'connection' => $connection,
-            'rows' => count($data),
-            'date' => $business_date
-        ]);
-
         // Map, transform and validate data
         $transformed = $this->mapTransformAndValidate($data, $business_date);
 
@@ -154,11 +146,6 @@ abstract class BaseTableProcessor
         // Execute import based on strategy
         $count = $this->executeImport($transformed, $business_date, $tableName, $connection, $strategy);
 
-        Log::info("Import completed", [
-            'table' => $tableName,
-            'rows_imported' => $count,
-            'strategy' => $strategy
-        ]);
 
         return $count;
     }
@@ -236,11 +223,6 @@ abstract class BaseTableProcessor
             ->where('business_date', $business_date)
             ->delete();
 
-        Log::info("Deleted existing data", [
-            'table' => $tableName,
-            'date' => $business_date,
-            'rows_deleted' => $deleted
-        ]);
     }
 
     // ========== HELPER METHODS ==========

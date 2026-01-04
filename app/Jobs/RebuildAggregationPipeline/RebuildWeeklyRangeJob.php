@@ -9,7 +9,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Bus\Batchable;
 
 class RebuildWeeklyRangeJob implements ShouldQueue
@@ -30,11 +29,6 @@ class RebuildWeeklyRangeJob implements ShouldQueue
         $start = Carbon::parse($this->startDate)->startOfDay();
         $end   = Carbon::parse($this->endDate)->startOfDay();
 
-        Log::info('Rebuild weekly range', [
-            'rebuild_id' => $this->rebuildId,
-            'start' => $start->toDateString(),
-            'end' => $end->toDateString(),
-        ]);
 
         // Your service already supports weekly range aggregation from DAILY:
         $service->updateWeeklySummariesRange($start, $end);

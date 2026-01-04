@@ -6,7 +6,6 @@ use App\Jobs\RebuildAggregationPipeline\RebuildAggregationPipelineJob;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
 
 class RebuildAggregationsCommand extends Command
 {
@@ -78,13 +77,6 @@ class RebuildAggregationsCommand extends Command
             $end->toDateString(),
             $type
         );
-
-        Log::info('Aggregation rebuild pipeline queued', [
-            'rebuild_id' => $rebuildId,
-            'start' => $start->toDateString(),
-            'end' => $end->toDateString(),
-            'type' => $type,
-        ]);
 
         $this->newLine();
         $this->info("✅ Rebuild queued. ID: {$rebuildId}");

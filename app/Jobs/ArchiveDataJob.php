@@ -48,12 +48,7 @@ class ArchiveDataJob implements ShouldQueue
 
     public function handle(): void
     {
-        Log::info("Archive job started", [
-            'archive_id' => $this->archiveId,
-            'table' => $this->table,
-            'start' => $this->startDate->toDateString(),
-            'end' => $this->endDate->toDateString()
-        ]);
+
 
         try {
             $hotTable = "{$this->table}_hot";
@@ -117,11 +112,6 @@ class ArchiveDataJob implements ShouldQueue
 
             $this->updateProgress('completed', $count);
 
-            Log::info("Archive job completed", [
-                'archive_id' => $this->archiveId,
-                'table' => $this->table,
-                'rows' => $count
-            ]);
 
         } catch (\Exception $e) {
             $this->updateProgress('failed', 0, $e->getMessage());

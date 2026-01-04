@@ -40,13 +40,6 @@ class ProcessAggregationJob implements ShouldQueue
         $end = Carbon::parse($this->endDate);
         $total = $start->diffInDays($end) + 1;
         
-        Log::info("Starting aggregation", [
-            'id' => $this->aggregationId,
-            'start' => $start->toDateString(),
-            'end' => $end->toDateString(),
-            'type' => $this->type,
-            'total_days' => $total
-        ]);
 
         $processed = 0;
         $successful = 0;
@@ -94,11 +87,6 @@ class ProcessAggregationJob implements ShouldQueue
             'failed' => $failed
         ]);
 
-        Log::info("Aggregation completed", [
-            'id' => $this->aggregationId,
-            'successful' => $successful,
-            'failed' => $failed
-        ]);
     }
 
     protected function aggregateAll(AggregationService $service, Carbon $date): void

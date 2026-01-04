@@ -82,12 +82,6 @@ class ManualCsvImportController extends Controller
         // Find all CSVs
         $csvFiles = $this->findCsvFiles($tempPath);
         
-        Log::info("ZIP extracted", [
-            'temp_id' => $tempId,
-            'temp_path' => $tempPath,
-            'csv_files' => $csvFiles
-        ]);
-        
         $csvList = array_map(function($path) use ($tempPath) {
             $relativeName = str_replace($tempPath . DIRECTORY_SEPARATOR, '', $path);
             $size = filesize($path);
@@ -180,11 +174,6 @@ class ManualCsvImportController extends Controller
                 );
             }
 
-            Log::info("Manual import jobs dispatched", [
-                'upload_id' => $uploadId,
-                'total_files' => count($csvFiles)
-            ]);
-
             return response()->json([
                 'success' => true,
                 'upload_id' => $uploadId,
@@ -202,21 +191,12 @@ class ManualCsvImportController extends Controller
     $tempId = $request->input('temp_id');
     $mappings = json_decode($request->input('mappings'), true);
 
-    Log::info("uploadFromTemp called", [
-        'temp_id' => $tempId,
-        'mappings' => $mappings
-    ]);
 
     $tempData = Cache::get("temp_zip_{$tempId}");
     if (!$tempData) {
         return response()->json(['success' => false, 'message' => 'Temporary files expired'], 404);
     }
 
-    Log::info("Temp data found", [
-        'temp_id' => $tempId,
-        'files_count' => count($tempData['files']),
-        'files' => $tempData['files']
-    ]);
 
     try {
         $uploadId = uniqid('import_', true);
@@ -245,7 +225,6 @@ class ManualCsvImportController extends Controller
             // Move file
             if (rename($tempPath, $newPath)) {
                 $csvFiles[$filename] = $newPath;
-                Log::info("File moved", ['from' => $tempPath, 'to' => $newPath]);
             } else {
                 Log::error("Failed to move file", ['from' => $tempPath, 'to' => $newPath]);
             }
@@ -254,7 +233,6 @@ class ManualCsvImportController extends Controller
         // Cleanup temp directory
         if (is_dir($tempData['path'])) {
             $this->deleteDirectory($tempData['path']);
-            Log::info("Temp directory deleted", ['path' => $tempData['path']]);
         }
         Cache::forget("temp_zip_{$tempId}");
 
@@ -290,12 +268,6 @@ class ManualCsvImportController extends Controller
                 continue;
             }
 
-            Log::info("Dispatching job", [
-                'upload_id' => $uploadId,
-                'file' => $filename,
-                'path' => $csvPath,
-                'processor' => $this->processorMap[$processorKey]
-            ]);
 
             ProcessCsvImportJob::dispatch(
                 $uploadId,
@@ -307,12 +279,6 @@ class ManualCsvImportController extends Controller
             
             $dispatchedCount++;
         }
-
-        Log::info("Manual import jobs dispatched", [
-            'upload_id' => $uploadId,
-            'total_files' => count($csvFiles),
-            'dispatched' => $dispatchedCount
-        ]);
 
         if ($dispatchedCount === 0) {
             return response()->json([

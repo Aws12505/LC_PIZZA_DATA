@@ -143,13 +143,6 @@ class OrderLineProcessor extends BaseTableProcessor
                     ->where('business_date', $date)
                     ->delete();
 
-                Log::info("Deleted existing order_line partition", [
-                    'table' => $tableName,
-                    'franchise_store' => $store,
-                    'business_date' => $date,
-                    'rows_deleted' => $deleted
-                ]);
-
                 $inserted = 0;
 
                 // Insert all rows (keep all rows from CSV)

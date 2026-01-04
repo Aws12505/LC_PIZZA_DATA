@@ -41,12 +41,6 @@ class ExportingController extends Controller
             $store     = $validated['store'] ?? null;
             $model     = $validated['model'];
 
-            Log::info('EXPORT CSV REQUEST', [
-                'model' => $model,
-                'start' => $startDate?->toDateString(),
-                'end'   => $endDate?->toDateString(),
-                'store' => $store,
-            ]);
 
             if ($model === 'all') {
                 return $this->exportAllModelsZip($startDate, $endDate, $store);
@@ -95,13 +89,6 @@ class ExportingController extends Controller
         $model     = $validated['model'];
         $limit     = $validated['limit'] ?? null;
 
-        Log::info('EXPORT JSON REQUEST', [
-            'model' => $model,
-            'start' => $startDate?->toDateString(),
-            'end'   => $endDate?->toDateString(),
-            'store' => $store,
-            'limit' => $limit,
-        ]);
 
         try {
             if ($this->isAggregationTable($model)) {
@@ -298,10 +285,6 @@ class ExportingController extends Controller
                 }
             });
 
-            Log::info("CSV ROWS WRITTEN (AGGREGATION)", [
-                'model'     => $model,
-                'row_count' => $rowCount,
-            ]);
 
             return;
         }
@@ -332,18 +315,10 @@ class ExportingController extends Controller
                 }
             });
 
-            Log::info("CSV ROWS WRITTEN (TABLE)", [
-                'table'     => $tableName,
-                'row_count' => $queryRows,
-            ]);
 
             $totalRows += $queryRows;
         }
 
-        Log::info("CSV ROWS WRITTEN (TOTAL)", [
-            'model'      => $model,
-            'total_rows' => $totalRows,
-        ]);
     }
 
     /**

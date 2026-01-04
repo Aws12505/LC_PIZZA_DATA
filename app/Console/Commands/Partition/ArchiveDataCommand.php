@@ -168,11 +168,6 @@ class ArchiveDataCommand extends Command
             $this->info("   • Progress cache key: archive_progress_{$archiveId}");
         }
 
-        Log::info("Archive jobs dispatched", [
-            'archive_id' => $archiveId,
-            'total_jobs' => $dispatched,
-            'tables' => array_keys($archivePlan)
-        ]);
 
         return self::SUCCESS;
     }

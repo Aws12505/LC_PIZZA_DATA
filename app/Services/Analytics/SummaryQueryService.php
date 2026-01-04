@@ -17,9 +17,6 @@ use App\Models\Aggregation\{
     YearlyItemSummary
 };
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 
 /**
  * SummaryQueryService

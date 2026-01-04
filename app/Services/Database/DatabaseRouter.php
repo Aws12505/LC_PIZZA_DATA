@@ -71,7 +71,6 @@ class DatabaseRouter
 
         // CASE 0: no dates -> both, no date filter
         if (!$startDate && !$endDate) {
-            Log::debug("Routing (no dates): archive + hot", ['table' => $baseTable]);
 
             $queries = array_values(array_filter([
                 self::archiveQuery($baseTable),
@@ -87,11 +86,6 @@ class DatabaseRouter
 
         // CASE 1: archive only
         if ($endDate < $cutoff) {
-            Log::debug("Routing: archive only", [
-                'table' => $baseTable,
-                'start' => $startDate->toDateString(),
-                'end'   => $endDate->toDateString(),
-            ]);
 
             $q = self::archiveQuery($baseTable);
             if (!$q) {
@@ -108,11 +102,6 @@ class DatabaseRouter
 
         // CASE 2: hot only
         if ($startDate >= $cutoff) {
-            Log::debug("Routing: hot only", [
-                'table' => $baseTable,
-                'start' => $startDate->toDateString(),
-                'end'   => $endDate->toDateString(),
-            ]);
 
             $q = self::hotQuery($baseTable);
             if (!$q) {
@@ -128,12 +117,6 @@ class DatabaseRouter
         }
 
         // CASE 3: spans both
-        Log::debug("Routing: spans archive + hot", [
-            'table'  => $baseTable,
-            'start'  => $startDate->toDateString(),
-            'end'    => $endDate->toDateString(),
-            'cutoff' => $cutoff->toDateString(),
-        ]);
 
         $archive = self::archiveQuery($baseTable);
         $hot     = self::hotQuery($baseTable);

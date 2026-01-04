@@ -97,12 +97,6 @@ class OptimizePartitionsCommand extends Command
                 $sizeAfter = $this->getTableSize($connection, $table);
                 $saved = $sizeBefore - $sizeAfter;
 
-                Log::info("Table optimized", [
-                    'table' => $table,
-                    'size_before_mb' => round($sizeBefore / 1024 / 1024, 2),
-                    'size_after_mb' => round($sizeAfter / 1024 / 1024, 2),
-                    'saved_mb' => round($saved / 1024 / 1024, 2)
-                ]);
 
                 $optimized++;
                 $progressBar->advance();

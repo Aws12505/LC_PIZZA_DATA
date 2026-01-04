@@ -2,7 +2,6 @@
 
 namespace App\Services\API;
 
-use Illuminate\Support\Facades\Log;
 use ZipArchive;
 
 /**
@@ -81,11 +80,6 @@ class PureIO
 
         $zip->close();
 
-        Log::info("ZIP extracted successfully", [
-            'zip_path' => $zipPath,
-            'extract_path' => $extractPath,
-            'files' => count(glob("{$extractPath}/*"))
-        ]);
 
         return $extractPath;
     }

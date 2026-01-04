@@ -19,8 +19,6 @@ class Networked
     {
         $url = rtrim(config('services.lcegateway.portal_server'), '/') . '/Token';
 
-        Log::info("Fetching access token from {$url}");
-
         try {
             $response = $http->post($url, [
                 'form_params' => [
@@ -49,8 +47,6 @@ class Networked
                 throw new \RuntimeException('access_token missing in token response');
             }
 
-            Log::info("Access token obtained successfully");
-
             return $token;
 
         } catch (\Exception $e) {
@@ -68,7 +64,6 @@ class Networked
         string $hmacHeader,
         string $bearer
     ): string {
-        Log::info("Fetching report blob URI", ['url' => $url]);
 
         try {
             $resp = $http->get($url, [
@@ -96,8 +91,6 @@ class Networked
                 throw new \RuntimeException('ReportBlobUri not found in response');
             }
 
-            Log::info("Blob URI obtained successfully");
-
             return $data[0]['ReportBlobUri'];
 
         } catch (\Exception $e) {
@@ -111,8 +104,6 @@ class Networked
      */
     public function downloadZip(Client $http, string $downloadUrl): string
     {
-        Log::info("Downloading ZIP file", ['url' => $downloadUrl]);
-
         $timestamp = time();
         $zipPath = storage_path('app') . DIRECTORY_SEPARATOR . "temp_report_{$timestamp}.zip";
 
@@ -129,10 +120,6 @@ class Networked
             }
 
             $fileSize = filesize($zipPath);
-            Log::info("ZIP downloaded successfully", [
-                'path' => $zipPath,
-                'size_mb' => round($fileSize / 1024 / 1024, 2)
-            ]);
 
             return $zipPath;
 

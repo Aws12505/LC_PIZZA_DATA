@@ -8,7 +8,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Bus\Batchable;
 
 class RebuildMonthlyJob implements ShouldQueue
@@ -26,11 +25,6 @@ class RebuildMonthlyJob implements ShouldQueue
 
     public function handle(AggregationService $service): void
     {
-        Log::info('Rebuild monthly', [
-            'rebuild_id' => $this->rebuildId,
-            'year' => $this->year,
-            'month' => $this->month,
-        ]);
 
         $service->updateMonthlySummariesYearMonth($this->year, $this->month);
     }

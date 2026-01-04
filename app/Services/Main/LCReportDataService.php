@@ -65,9 +65,6 @@ class LCReportDataService
 
     public function importReportData(string $selectedDate): bool
     {
-        Log::info("=" . str_repeat("=", 80));
-        Log::info("Starting report data import process for date: {$selectedDate}");
-        Log::info("=" . str_repeat("=", 80));
 
         $this->http = new Client(['timeout' => 60]);
         $zipPath = null;
@@ -76,43 +73,27 @@ class LCReportDataService
 
         try {
             // Step 1: Fetch access token
-            Log::info("[Step 1/5] Fetching access token");
             $accessToken = $this->networked->fetchAccessToken($this->http);
 
             // Step 2: Build URL and HMAC header
-            Log::info("[Step 2/5] Building request");
             $url = $this->pureIO->buildGetReportUrl($selectedDate);
             $hmacHeader = $this->pureIO->buildHmacHeader($url, 'GET');
 
             // Step 3: Get blob URI (NOTE: Pass hmacHeader as string, not array)
-            Log::info("[Step 3/5] Fetching blob URI", [
-    'url'          => $url,
-    'hmacHeader'   => $hmacHeader,
-    'accessToken'  => $accessToken,
-    'http'         => $this->http,
-]);
             $blobUri = $this->networked->getReportBlobUri($this->http, $url, $hmacHeader, $accessToken);
 
             // Step 4: Download and extract
-            Log::info("[Step 4/5] Downloading and extracting ZIP file");
             $zipPath = $this->networked->downloadZip($this->http, $blobUri);
             $extractPath = $this->pureIO->extractZip($zipPath);
 
             // Step 5: Process CSV files
-            Log::info("[Step 5/5] Processing CSV files and importing to operational database");
             $importedCounts = $this->processExtractedCsv($extractPath, $selectedDate);
 
             // Step 6: Update aggregations
-            Log::info("[Step 6/6] Updating aggregation tables");
             $this->aggregationService->updateDailySummaries(Carbon::parse($selectedDate));
 
             $duration = round(microtime(true) - $startTime, 2);
 
-            Log::info("=" . str_repeat("=", 80));
-            Log::info("Import completed successfully for {$selectedDate}");
-            Log::info("Duration: {$duration} seconds");
-            Log::info("Import summary:", $importedCounts);
-            Log::info("=" . str_repeat("=", 80));
 
             return true;
 
@@ -148,7 +129,6 @@ class LCReportDataService
             throw new \Exception("No CSV files found in extract path: {$extractPath}");
         }
 
-        Log::info("Found " . count($csvFiles) . " CSV files to process");
 
         $importCounts = [];
         $errors = [];
@@ -164,7 +144,6 @@ class LCReportDataService
                     continue;
                 }
 
-                Log::info("Processing: {$filename} -> {$processorClass}");
 
                 $data = $this->readCsvFile($csvFile);
 
@@ -179,7 +158,6 @@ class LCReportDataService
 
                 $importCounts[basename($filename, '.csv')] = $count;
 
-                Log::info("✓ Imported {$count} rows from {$filename}");
 
             } catch (\Exception $e) {
                 $errors[] = [
@@ -233,7 +211,6 @@ class LCReportDataService
             return $normalized;
         }, $headers);
 
-        Log::debug("CSV headers", ['headers' => $headers, 'file' => basename($csvFile)]);
 
         $rowNumber = 1;
         while (($row = fgetcsv($handle)) !== false) {
@@ -252,21 +229,12 @@ class LCReportDataService
 
         fclose($handle);
 
-        Log::debug("CSV read complete", [
-            'file' => basename($csvFile),
-            'rows' => count($data)
-        ]);
 
         return $data;
     }
 
     public function importToArchive(string $csvFilePath, string $tableName, string $businessDate): int
     {
-        Log::info("Importing to archive database", [
-            'file' => basename($csvFilePath),
-            'table' => $tableName,
-            'date' => $businessDate
-        ]);
 
         $processorClassName = ucfirst(\Illuminate\Support\Str::camel($tableName)) . 'Processor';
         $processorClass = "App\\Services\\Import\\Processors\\{$processorClassName}";
@@ -308,10 +276,6 @@ class LCReportDataService
 
         $count = $processor->process($data, $businessDate);
 
-        Log::info("Archive import complete", [
-            'table' => $tableName . '_archive',
-            'rows' => $count
-        ]);
 
         return $count;
     }

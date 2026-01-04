@@ -67,15 +67,6 @@ class ProcessCsvImportJob implements ShouldQueue
                 'memory_mb' => $memoryPeak
             ]);
 
-            Log::info("Import job completed", [
-                'upload_id' => $this->uploadId,
-                'file' => $this->filename,
-                'rows' => $result['rows'],
-                'dates' => $result['dates'],
-                'duration' => $duration,
-                'memory_peak' => $memoryPeak . ' MB'
-            ]);
-
         } catch (\Exception $e) {
             $this->updateProgress('failed', ['error' => $e->getMessage()]);
             
@@ -92,7 +83,6 @@ class ProcessCsvImportJob implements ShouldQueue
             // CLEANUP: Delete CSV file after processing
             if (file_exists($this->csvPath)) {
                 @unlink($this->csvPath);
-                Log::debug("Deleted CSV file", ['file' => $this->csvPath]);
             }
 
             // Check if all files processed, then delete entire directory
@@ -303,7 +293,6 @@ class ProcessCsvImportJob implements ShouldQueue
             
             if (is_dir($storagePath)) {
                 $this->deleteDirectory($storagePath);
-                Log::info("Deleted upload directory", ['path' => $storagePath]);
             }
         }
     }
