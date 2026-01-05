@@ -470,15 +470,6 @@ class ExportingController extends Controller
      */
     protected function getColumnsForModel(string $model): array
     {
-        $storeCategoryTotals = [
-            'pizza_quantity', 'pizza_sales',
-            'hnr_quantity', 'hnr_sales',
-            'bread_quantity', 'bread_sales',
-            'wings_quantity', 'wings_sales',
-            'beverages_quantity', 'beverages_sales',
-            'other_foods_quantity', 'other_foods_sales',
-            'side_items_quantity', 'side_items_sales',
-        ];
 
         $storeCategorySplits = [
             'pizza_delivery_quantity', 'pizza_delivery_sales', 'pizza_carryout_quantity', 'pizza_carryout_sales',
@@ -509,7 +500,7 @@ class ExportingController extends Controller
             'carryout_orders', 'carryout_sales',
 
             // ✅ NEW totals + splits
-        ], $storeCategoryTotals, $storeCategorySplits, [
+        ], $storeCategorySplits, [
             'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
             'cash_sales', 'over_short',
 
