@@ -199,10 +199,10 @@ class AggregationService
 
         $refundAmount = (float) (clone $baseOrders)
             ->where('refunded', 'Yes')
-            ->sum('gross_sales');
+            ->sum('royalty_obligation');
 
         // ORDERS
-        $totalOrders = (int) (clone $baseOrders)->distinct()->count('order_id');
+        $totalOrders = (int) (clone $baseOrders)->where('customer_count', '>',0)->distinct()->count('order_id');
 
         $refundedOrders = (int) (clone $baseOrders)
             ->where('refunded', 'Yes')
@@ -215,7 +215,7 @@ class AggregationService
             ->distinct()
             ->count('order_id');
 
-        $cancelledOrders = (int) (clone $baseOrders)
+        $cancelledOrders = (int) (clone $baseOrders)  //most likely wrong 
             ->where('transaction_type', 'Cancelled')
             ->distinct()
             ->count('order_id');
