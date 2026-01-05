@@ -8,6 +8,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Query\Builder;
 
 class ExportingController extends Controller
 {
@@ -391,59 +392,75 @@ class ExportingController extends Controller
         ], true);
     }
 
-    protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate)
-    {
-        $query = DB::connection('aggregation')->table($model);
+   protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate): Builder
+{
+    $query = DB::connection('aggregation')->table($model);
 
-        if (!$startDate || !$endDate) {
-            return $query;
-        }
+    // Normalize open-ended ranges
+    if ($startDate && !$endDate) {
+        $endDate = Carbon::now();
+    }
+    if (!$startDate && $endDate) {
+        // pick something safely early for your dataset
+        $startDate = Carbon::create(2000, 1, 1);
+    }
 
-        switch ($model) {
-            case 'yearly_store_summary':
-            case 'yearly_item_summary':
-                $query->whereBetween('year_num', [$startDate->year, $endDate->year]);
-                break;
-
-            case 'weekly_store_summary':
-            case 'weekly_item_summary':
-                $query->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('week_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                        ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
-                });
-                break;
-
-            case 'quarterly_store_summary':
-            case 'quarterly_item_summary':
-                $query->where(function ($q) use ($startDate, $endDate) {
-                    $q->whereBetween('quarter_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                        ->orWhereBetween('quarter_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
-                });
-                break;
-
-            case 'monthly_store_summary':
-            case 'monthly_item_summary':
-                $query->where('year_num', '>=', $startDate->year)
-                    ->where('year_num', '<=', $endDate->year);
-
-                if ($startDate->year === $endDate->year) {
-                    $query->whereBetween('month_num', [$startDate->month, $endDate->month]);
-                }
-                break;
-
-            case 'daily_store_summary':
-            case 'daily_item_summary':
-                $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
-                break;
-
-            case 'hourly_store_summary':
-            case 'hourly_item_summary':
-                $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
-                break;
-        }
-
+    // No date filtering requested
+    if (!$startDate && !$endDate) {
         return $query;
     }
+
+    // Always compare on date strings to avoid time parts
+    $start = $startDate->toDateString();
+    $end   = $endDate->toDateString();
+
+    // Helper: overlap logic for period tables
+    // period overlaps requested range iff period_start <= end AND period_end >= start
+    $applyOverlap = function (Builder $q, string $periodStartCol, string $periodEndCol) use ($start, $end) {
+        return $q->where($periodStartCol, '<=', $end)
+                 ->where($periodEndCol, '>=', $start);
+    };
+
+    // If you want: a simple mapping makes this harder to break later
+    switch ($model) {
+
+        // Yearly: if yearly tables represent a year bucket, filter by year_num range.
+        case 'yearly_store_summary':
+        case 'yearly_item_summary':
+            return $query->whereBetween('year_num', [$startDate->year, $endDate->year]);
+
+        // Weekly: use overlap, NOT whereBetween on starts/ends.
+        case 'weekly_store_summary':
+        case 'weekly_item_summary':
+            return $applyOverlap($query, 'week_start_date', 'week_end_date');
+
+        // Quarterly: use overlap, NOT whereBetween on starts/ends.
+        case 'quarterly_store_summary':
+        case 'quarterly_item_summary':
+            return $applyOverlap($query, 'quarter_start_date', 'quarter_end_date');
+
+        // Monthly: your schema uses (year_num, month_num).
+        // Filter by a computed numeric key YYYYMM so ranges work across years.
+        case 'monthly_store_summary':
+        case 'monthly_item_summary':
+            $startKey = ($startDate->year * 100) + $startDate->month;
+            $endKey   = ($endDate->year   * 100) + $endDate->month;
+
+            // This works even when spanning multiple years.
+            return $query->whereRaw('(year_num * 100 + month_num) BETWEEN ? AND ?', [$startKey, $endKey]);
+
+        // Daily / hourly: business_date is the grain, so simple between is correct.
+        case 'daily_store_summary':
+        case 'daily_item_summary':
+        case 'hourly_store_summary':
+        case 'hourly_item_summary':
+            return $query->whereBetween('business_date', [$start, $end]);
+
+        default:
+            // safest fallback: do nothing (or throw if you prefer strict)
+            return $query;
+    }
+}
 
     protected function getAvailableModels(): array
     {
@@ -605,7 +622,7 @@ class ExportingController extends Controller
             'weekly_store_summary' => array_merge(
                 ['franchise_store', 'year_num', 'week_num', 'week_start_date', 'week_end_date'],
                 $commonStoreSummary,
-                ['avg_daily_sales', 'avg_daily_orders', 'sales_vs_prior_week', 'sales_growth_percent', 'sales_vs_same_week_prior_year', 'yoy_growth_percent']
+                ['avg_daily_sales', 'avg_daily_orders', 'sales_vs_prior_week', 'sales_growth_percent']
             ),
 
             'weekly_item_summary' => [
