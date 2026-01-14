@@ -75,11 +75,11 @@ class SummaryQueryService
     public function getSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['total_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, ['royalty_obligation'])  // ✅ Changed
         );
-
-        return round((float)($row['total_sales'] ?? 0), 2);
+        return round((float)($row['royalty_obligation'] ?? 0), 2);
     }
+
 
     public function getGrossSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
@@ -419,110 +419,183 @@ class SummaryQueryService
     public function getPizzaSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['pizza_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'pizza_delivery_sales',
+                'pizza_carryout_sales'
+            ])
         );
 
-        return round((float)($row['pizza_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['pizza_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['pizza_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
     public function getPizzaQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['pizza_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'pizza_delivery_quantity',
+                'pizza_carryout_quantity'
+            ])
         );
 
-        return (int)($row['pizza_quantity'] ?? 0);
+        $deliveryQty = (int)($row['pizza_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['pizza_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
 
     public function getHnrSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['hnr_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'hnr_delivery_sales',
+                'hnr_carryout_sales'
+            ])
         );
 
-        return round((float)($row['hnr_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['hnr_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['hnr_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
     public function getHnrQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['hnr_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'hnr_delivery_quantity',
+                'hnr_carryout_quantity'
+            ])
         );
 
-        return (int)($row['hnr_quantity'] ?? 0);
+        $deliveryQty = (int)($row['hnr_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['hnr_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
 
     public function getBreadSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['bread_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'bread_delivery_sales',
+                'bread_carryout_sales'
+            ])
         );
 
-        return round((float)($row['bread_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['bread_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['bread_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
     public function getBreadQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['bread_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'bread_delivery_quantity',
+                'bread_carryout_quantity'
+            ])
         );
 
-        return (int)($row['bread_quantity'] ?? 0);
+        $deliveryQty = (int)($row['bread_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['bread_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
 
     public function getWingsSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['wings_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'wings_delivery_sales',
+                'wings_carryout_sales'
+            ])
         );
 
-        return round((float)($row['wings_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['wings_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['wings_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
     public function getWingsQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['wings_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'wings_delivery_quantity',
+                'wings_carryout_quantity'
+            ])
         );
 
-        return (int)($row['wings_quantity'] ?? 0);
+        $deliveryQty = (int)($row['wings_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['wings_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
 
     public function getBeveragesSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['beverages_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'beverages_delivery_sales',
+                'beverages_carryout_sales'
+            ])
         );
 
-        return round((float)($row['beverages_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['beverages_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['beverages_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
     public function getBeveragesQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['beverages_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'beverages_delivery_quantity',
+                'beverages_carryout_quantity'
+            ])
         );
 
-        return (int)($row['beverages_quantity'] ?? 0);
+        $deliveryQty = (int)($row['beverages_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['beverages_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
 
-    public function getCrazyPuffsSales(string $store, Carbon $startDate, Carbon $endDate): float
+    public function getOtherFoodsSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['crazy_puffs_sales'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'other_foods_delivery_sales',
+                'other_foods_carryout_sales'
+            ])
         );
 
-        return round((float)($row['crazy_puffs_sales'] ?? 0), 2);
+        $deliverySales = (float)($row['other_foods_delivery_sales'] ?? 0);
+        $carryoutSales = (float)($row['other_foods_carryout_sales'] ?? 0);
+
+        return round($deliverySales + $carryoutSales, 2);
     }
 
-    public function getCrazyPuffsQuantity(string $store, Carbon $startDate, Carbon $endDate): int
+    public function getOtherFoodsQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
         $row = $this->fetchSingle(
-            $this->baseStoreRequest($store, $startDate, $endDate, ['crazy_puffs_quantity'])
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'other_foods_delivery_quantity',
+                'other_foods_carryout_quantity'
+            ])
         );
 
-        return (int)($row['crazy_puffs_quantity'] ?? 0);
+        $deliveryQty = (int)($row['other_foods_delivery_quantity'] ?? 0);
+        $carryoutQty = (int)($row['other_foods_carryout_quantity'] ?? 0);
+
+        return $deliveryQty + $carryoutQty;
     }
+
 
     public function getProductCategorySales(string $store, Carbon $startDate, Carbon $endDate): array
     {
@@ -540,8 +613,8 @@ class SummaryQueryService
             'wings_sales'            => $this->getWingsSales($store, $startDate, $endDate),
             'beverages_quantity'     => $this->getBeveragesQuantity($store, $startDate, $endDate),
             'beverages_sales'        => $this->getBeveragesSales($store, $startDate, $endDate),
-            'crazy_puffs_quantity'   => $this->getCrazyPuffsQuantity($store, $startDate, $endDate),
-            'crazy_puffs_sales'      => $this->getCrazyPuffsSales($store, $startDate, $endDate),
+            'other_foods_quantity'   => $this->getOtherFoodsQuantity($store, $startDate, $endDate),
+            'other_foods_sales'      => $this->getOtherFoodsSales($store, $startDate, $endDate),
         ];
     }
 

@@ -4,6 +4,11 @@ namespace App\Services\Aggregation;
 
 use DateTime;
 use InvalidArgumentException;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
+
+// Import all your existing models
+use App\Models\Aggregation\{HourlyStoreSummary, HourlyItemSummary, DailyStoreSummary, DailyItemSummary, WeeklyStoreSummary, WeeklyItemSummary, MonthlyStoreSummary, MonthlyItemSummary, QuarterlyStoreSummary, QuarterlyItemSummary, YearlyStoreSummary, YearlyItemSummary};
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -23,14 +28,31 @@ class IntelligentAggregationService
     private float $executionStartTime;
     private int $debugLevel = 0; // Set to 1 for optimization logs
 
+    /**
+     * Map granularity + summary type to model class
+     */
+    private const MODEL_MAP = [
+        'hourly_store' => HourlyStoreSummary::class,
+        'hourly_item' => HourlyItemSummary::class,
+        'daily_store' => DailyStoreSummary::class,
+        'daily_item' => DailyItemSummary::class,
+        'weekly_store' => WeeklyStoreSummary::class,
+        'weekly_item' => WeeklyItemSummary::class,
+        'monthly_store' => MonthlyStoreSummary::class,
+        'monthly_item' => MonthlyItemSummary::class,
+        'quarterly_store' => QuarterlyStoreSummary::class,
+        'quarterly_item' => QuarterlyItemSummary::class,
+        'yearly_store' => YearlyStoreSummary::class,
+        'yearly_item' => YearlyItemSummary::class,
+    ];
+
     public function fetchAggregatedData(array $input): array
     {
         $this->executionStartTime = microtime(true);
 
         $request = $this->parseRequest($input);
         $strategy = $this->optimizeStrategy($request);
-        $sqlOperations = $this->buildSQL($request, $strategy);
-        $data = $this->executeQueries($sqlOperations, $request);
+        $data = $this->executeQueries($request, $strategy);
 
         return [
             'success' => true,
@@ -49,12 +71,10 @@ class IntelligentAggregationService
         $this->debugLevel = 1;
         $request = $this->parseRequest($input);
         $strategy = $this->optimizeStrategy($request);
-        $sqlOperations = $this->buildSQL($request, $strategy);
 
         return [
             'request' => $request,
             'strategy' => $strategy,
-            'sql_operations' => $sqlOperations,
         ];
     }
 
@@ -245,17 +265,12 @@ class IntelligentAggregationService
                 // Cost of excluding leading days
                 if ($yearStart < $start) {
                     $exclusionEnd = (clone $start)->modify('-1 day');
-                    $exclusionDays = $yearStart->diff($exclusionEnd)->days + 1;
-
-                    // Choose optimal granularity for exclusion
                     $cost += $this->getOptimalExclusionCost($yearStart, $exclusionEnd);
                 }
 
                 // Cost of excluding trailing days
                 if ($yearEnd > $end && $yearEnd->format('Y') == $end->format('Y')) {
                     $exclusionStart = (clone $end)->modify('+1 day');
-                    $exclusionDays = $exclusionStart->diff($yearEnd)->days + 1;
-
                     $cost += $this->getOptimalExclusionCost($exclusionStart, $yearEnd);
                 }
             } else {
@@ -528,10 +543,8 @@ class IntelligentAggregationService
         // Try weekly if aligned
         if ($start->format('N') == 1 && $days >= 7) {
             $weeks = (int)floor($days / 7);
-            $weekEnd = (clone $start)->modify('+' . ($weeks * 7 - 1) . ' days');
 
             if ($weeks > 0) {
-                // For simplicity, we'll subtract weekly periods individually
                 $current = clone $start;
                 for ($i = 1; $i <= $weeks; $i++) {
                     $wEnd = (clone $current)->modify('+6 days');
@@ -597,97 +610,137 @@ class IntelligentAggregationService
     }
 
     // ========================================================================
-    // LAYER 3: SQL GENERATION (same as before)
+    // LAYER 3: QUERY BUILDING WITH ELOQUENT
     // ========================================================================
 
-    private function buildSQL(array $request, array $strategy): array
+    /**
+     * Get the Eloquent model class for a given granularity and summary type
+     */
+    private function getModelClass(string $granularity, string $summaryType): string
     {
-        $sqlOperations = [];
+        $key = "{$granularity}_{$summaryType}";
 
-        foreach ($strategy['operations'] as $operation) {
-            $table = "{$operation['granularity']}_{$request['summary_type']}_summary";
-            $select = $this->buildSelectClause($request['metrics'], $operation['granularity'], $request['summary_type']);
-            $where = $this->buildWhereClause($operation, $request['filters'], $request['summary_type']);
-            $groupBy = $this->buildGroupByClause($operation['granularity'], $request['summary_type']);
-
-            $sql = "SELECT {$select} FROM {$table} WHERE {$where} GROUP BY {$groupBy}";
-
-            if ($request['order_by']) {
-                $sql .= " ORDER BY {$request['order_by']}";
-            }
-
-            if ($request['limit']) {
-                $sql .= " LIMIT {$request['limit']}";
-            }
-
-            $sqlOperations[] = [
-                'type' => $operation['type'],
-                'granularity' => $operation['granularity'],
-                'sql' => $sql
-            ];
+        if (!isset(self::MODEL_MAP[$key])) {
+            throw new InvalidArgumentException("No model found for {$key}");
         }
 
-        return $sqlOperations;
+        return self::MODEL_MAP[$key];
     }
 
-    private function buildSelectClause(array $metrics, string $granularity, string $summaryType): string
+    /**
+     * Build Eloquent query for an operation
+     */
+    private function buildQuery(array $request, array $operation): Builder
     {
-        $fields = ['franchise_store'];
+        $modelClass = $this->getModelClass($operation['granularity'], $request['summary_type']);
+        $query = $modelClass::query();
 
-        $fields = array_merge($fields, match ($granularity) {
-            'hourly' => ['business_date', 'hour'],
-            'daily' => ['business_date'],
-            'weekly' => ['year_num', 'week_num'],
-            'monthly' => ['year_num', 'month_num'],
-            'yearly' => ['year_num'],
-            default => ['business_date']
-        });
+        // Apply WHERE conditions
+        $this->applyWhereConditions($query, $operation, $request['filters']);
 
-        if ($summaryType === 'item') {
-            $fields = array_merge($fields, ['item_id', 'menu_item_name']);
+        // Apply SELECT with aggregations
+        $this->applySelectClause($query, $request['metrics'], $operation['granularity'], $request['summary_type']);
+
+        // Apply GROUP BY
+        $this->applyGroupBy($query, $operation['granularity'], $request['summary_type']);
+
+        // Apply ORDER BY
+        if ($request['order_by']) {
+            $query->orderByRaw($request['order_by']);
         }
 
-        foreach ($metrics as $metric) {
-            $fields[] = "{$metric['agg']}({$metric['field']}) as {$metric['alias']}";
+        // Apply LIMIT
+        if ($request['limit']) {
+            $query->limit($request['limit']);
         }
 
-        return implode(', ', $fields);
+        return $query;
     }
 
-    private function buildWhereClause(array $operation, array $filters, string $summaryType): string
+    /**
+     * Apply WHERE conditions to query
+     */
+    private function applyWhereConditions(Builder $query, array $operation, array $filters): void
     {
-        $conditions = [];
-
+        // Date/Period filtering
         if (isset($operation['metadata']['year_num'])) {
-            $conditions[] = "year_num = {$operation['metadata']['year_num']}";
+            $query->where('year_num', $operation['metadata']['year_num']);
 
             if (isset($operation['metadata']['week_num'])) {
-                $conditions[] = "week_num = {$operation['metadata']['week_num']}";
+                $query->where('week_num', $operation['metadata']['week_num']);
             }
             if (isset($operation['metadata']['month_num'])) {
-                $conditions[] = "month_num = {$operation['metadata']['month_num']}";
+                $query->where('month_num', $operation['metadata']['month_num']);
             }
         } else {
-            $conditions[] = "business_date BETWEEN '{$operation['start']->format('Y-m-d')}' AND '{$operation['end']->format('Y-m-d')}'";
+            $query->whereBetween('business_date', [
+                $operation['start']->format('Y-m-d'),
+                $operation['end']->format('Y-m-d')
+            ]);
         }
 
+        // Store filtering
         if (isset($filters['franchise_store'])) {
             if (is_array($filters['franchise_store'])) {
-                $stores = "'" . implode("','", array_map('addslashes', $filters['franchise_store'])) . "'";
-                $conditions[] = "franchise_store IN ({$stores})";
+                $query->whereIn('franchise_store', $filters['franchise_store']);
             } else {
-                $conditions[] = "franchise_store = '" . addslashes($filters['franchise_store']) . "'";
+                $query->where('franchise_store', $filters['franchise_store']);
             }
         }
 
-        return implode(' AND ', $conditions);
+        // Additional filters
+        foreach ($filters as $key => $value) {
+            if ($key === 'franchise_store') {
+                continue; // Already handled
+            }
+
+            if (is_array($value)) {
+                $query->whereIn($key, $value);
+            } else {
+                $query->where($key, $value);
+            }
+        }
     }
 
-    private function buildGroupByClause(string $granularity, string $summaryType): string
+    /**
+     * Apply SELECT clause with aggregations
+     */
+    private function applySelectClause(Builder $query, array $metrics, string $granularity, string $summaryType): void
     {
-        $groups = ['franchise_store'];
+        $selectFields = ['franchise_store'];
 
-        $groups = array_merge($groups, match ($granularity) {
+        // Add granularity-specific fields
+        $selectFields = array_merge($selectFields, match ($granularity) {
+            'hourly' => ['business_date', 'hour'],
+            'daily' => ['business_date'],
+            'weekly' => ['year_num', 'week_num'],
+            'monthly' => ['year_num', 'month_num'],
+            'yearly' => ['year_num'],
+            default => ['business_date']
+        });
+
+        // Add item fields if needed
+        if ($summaryType === 'item') {
+            $selectFields = array_merge($selectFields, ['item_id', 'menu_item_name']);
+        }
+
+        // Add metric aggregations
+        $aggregations = [];
+        foreach ($metrics as $metric) {
+            $aggregations[] = DB::raw("{$metric['agg']}({$metric['field']}) as {$metric['alias']}");
+        }
+
+        $query->select(array_merge($selectFields, $aggregations));
+    }
+
+    /**
+     * Apply GROUP BY clause
+     */
+    private function applyGroupBy(Builder $query, string $granularity, string $summaryType): void
+    {
+        $groupFields = ['franchise_store'];
+
+        $groupFields = array_merge($groupFields, match ($granularity) {
             'hourly' => ['business_date', 'hour'],
             'daily' => ['business_date'],
             'weekly' => ['year_num', 'week_num'],
@@ -697,23 +750,24 @@ class IntelligentAggregationService
         });
 
         if ($summaryType === 'item') {
-            $groups = array_merge($groups, ['item_id', 'menu_item_name']);
+            $groupFields = array_merge($groupFields, ['item_id', 'menu_item_name']);
         }
 
-        return implode(', ', $groups);
+        $query->groupBy($groupFields);
     }
 
     // ========================================================================
-    // LAYER 4: QUERY EXECUTION & SUBTRACTION (same as before)
+    // LAYER 4: QUERY EXECUTION & SUBTRACTION
     // ========================================================================
 
-    private function executeQueries(array $sqlOperations, array $request): array
+    private function executeQueries(array $request, array $strategy): array
     {
         $additions = [];
         $subtractions = [];
 
-        foreach ($sqlOperations as $operation) {
-            $result = DB::select($operation['sql']);
+        foreach ($strategy['operations'] as $operation) {
+            $query = $this->buildQuery($request, $operation);
+            $result = $query->get()->toArray();
             $normalized = $this->normalizeResult($result, $operation['granularity']);
 
             if ($operation['type'] === '+') {
@@ -737,7 +791,6 @@ class IntelligentAggregationService
         $normalized = [];
 
         foreach ($rows as $row) {
-            $row = (array)$row;
             $row['_key'] = ($row['franchise_store'] ?? '') . '|' . ($row['item_id'] ?? '');
             $normalized[] = $row;
         }
@@ -789,9 +842,13 @@ class IntelligentAggregationService
     private function sumRows(array $row1, array $row2): array
     {
         $result = $row1;
-        $sumFields = ['total_sales', 'gross_sales', 'net_sales', 'total_orders', 'completed_orders'];
 
-        foreach ($sumFields as $field) {
+        // Get all numeric fields dynamically
+        $numericFields = array_filter($row1, function ($value, $key) {
+            return is_numeric($value) && $key !== '_key' && !in_array($key, ['year_num', 'month_num', 'week_num', 'hour', 'item_id']);
+        }, ARRAY_FILTER_USE_BOTH);
+
+        foreach (array_keys($numericFields) as $field) {
             if (isset($row1[$field]) && isset($row2[$field])) {
                 $result[$field] = $row1[$field] + $row2[$field];
             }
