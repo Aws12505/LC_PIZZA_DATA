@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\{
     ExportingController,
+    ReportsController
 };
 
 /**
@@ -21,6 +22,8 @@ Route::prefix('export')->group(function () {
     Route::get('csv', [ExportingController::class, 'exportCSV'])->name('export.csv');
     Route::get('json', [ExportingController::class, 'exportJson'])->name('export.json');
 });
+
+Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dspr']);
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // EXAMPLE REQUESTS
