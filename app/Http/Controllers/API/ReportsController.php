@@ -2,12 +2,12 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Models\Aggregation\{HourlyStoreSummary, DailyStoreSummary, DailyItemSummary};
 use App\Services\Analytics\SummaryQueryService;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
@@ -258,31 +258,36 @@ class ReportsController extends Controller
     }
 
     /**
-     * Build daily hourly sales data from hourly_store_summary table
+     * Build daily hourly sales data from HourlyStoreSummary model
      */
     protected function buildDailyHourlySales(string $store, Carbon $date): array
     {
         $hours = [];
 
         for ($h = 0; $h <= 23; $h++) {
-            // Query hourly_store_summary table
-            $hourlyData = DB::table('hourly_store_summary')
-                ->where('franchise_store', $store)
-                ->where('business_date', $date->toDateString())
-                ->where('hour', $h)
+            // Query using HourlyStoreSummary model
+            $hourlyData = HourlyStoreSummary::where('franchise_store', '=', $store)
+                ->where('business_date', '=', $date->toDateString())
+                ->where('hour', '=', $h)
                 ->first();
 
             if ($hourlyData) {
+                // Calculate combined fields
+                $hnrDeliveryQty = (int)($hourlyData->hnr_delivery_quantity ?? 0);
+                $hnrCarryoutQty = (int)($hourlyData->hnr_carryout_quantity ?? 0);
+                $hnrDeliverySales = (float)($hourlyData->hnr_delivery_sales ?? 0);
+                $hnrCarryoutSales = (float)($hourlyData->hnr_carryout_sales ?? 0);
+
                 $hours[$h] = [
-                    'Total_Sales' => round((float)$hourlyData->total_sales, 2),
+                    'Total_Sales' => round((float)$hourlyData->gross_sales, 2),
                     'Phone_Sales' => round((float)$hourlyData->phone_sales, 2),
                     'Call_Center_Agent' => round((float)$hourlyData->call_center_sales, 2),
                     'Drive_Thru' => round((float)$hourlyData->drive_thru_sales, 2),
                     'Website' => round((float)$hourlyData->website_sales, 2),
                     'Mobile' => round((float)$hourlyData->mobile_sales, 2),
                     'Order_Count' => (int)$hourlyData->total_orders,
-                    'HNR_Quantity' => (int)$hourlyData->hnr_quantity,
-                    'HNR_Sales' => round((float)$hourlyData->hnr_sales, 2),
+                    'HNR_Quantity' => $hnrDeliveryQty + $hnrCarryoutQty,
+                    'HNR_Sales' => round($hnrDeliverySales + $hnrCarryoutSales, 2),
                 ];
             } else {
                 $hours[$h] = (object)[];
@@ -297,13 +302,12 @@ class ReportsController extends Controller
     }
 
     /**
-     * Build daily DSPR data from daily_store_summary table
+     * Build daily DSPR data from DailyStoreSummary model
      */
     protected function buildDailyDSPR(string $store, Carbon $date, $depositDeliveryCollection): array|string
     {
-        $dailySummary = DB::table('daily_store_summary')
-            ->where('franchise_store', $store)
-            ->where('business_date', $date->toDateString())
+        $dailySummary = DailyStoreSummary::where('franchise_store', '=', $store)
+            ->where('business_date', '=', $date->toDateString())
             ->first();
 
         if (!$dailySummary) {
@@ -323,8 +327,14 @@ class ReportsController extends Controller
             ? round(($portalOnTime / $portalUsed) * 100, 2)
             : 0.0;
 
+        // Calculate combined HNR fields
+        $hnrDeliveryQty = (int)($dailySummary->hnr_delivery_quantity ?? 0);
+        $hnrCarryoutQty = (int)($dailySummary->hnr_carryout_quantity ?? 0);
+        $hnrDeliverySales = (float)($dailySummary->hnr_delivery_sales ?? 0);
+        $hnrCarryoutSales = (float)($dailySummary->hnr_carryout_sales ?? 0);
+
         return [
-            'Royalty_Obligation' => round((float)$dailySummary->total_sales, 2),
+            'Royalty_Obligation' => round((float)$dailySummary->gross_sales, 2),
             'Phone_Sales' => round((float)$dailySummary->phone_sales, 2),
             'Call_Center_Agent' => round((float)$dailySummary->call_center_sales, 2),
             'Drive_Thru' => round((float)$dailySummary->drive_thru_sales, 2),
@@ -332,8 +342,8 @@ class ReportsController extends Controller
             'Mobile_Sales' => round((float)$dailySummary->mobile_sales, 2),
             'Customer_Count' => (int)$dailySummary->customer_count,
             'Customer_count_percent' => 0, // Will be filled by customer service calculation
-            'HNR_Total_Quantity' => (int)$dailySummary->hnr_quantity,
-            'HNR_Total_Sales' => round((float)$dailySummary->hnr_sales, 2),
+            'HNR_Total_Quantity' => $hnrDeliveryQty + $hnrCarryoutQty,
+            'HNR_Total_Sales' => round($hnrDeliverySales + $hnrCarryoutSales, 2),
             'Portal_Transaction' => $portalEligible,
             'Put_into_Portal' => $portalUsed,
             'Put_into_Portal_Percent' => $putIntoPortalPercent,
@@ -344,18 +354,17 @@ class ReportsController extends Controller
             'Total_Tips' => round((float)$dailySummary->total_tips, 2),
             'Over_Short' => round((float)$dailySummary->over_short, 2),
             'Cash_Sales' => round((float)$dailySummary->cash_sales, 2),
-            'Total_Waste_Cost' => round((float)$dailySummary->total_waste_cost, 2),
+            'Total_Waste_Cost' => round((float)($dailySummary->total_waste_cost ?? 0), 2),
             'Upselling' => 0, // Will be filled by upselling calculation
         ];
     }
 
     /**
-     * Build weekly DSPR data from daily_store_summary aggregation
+     * Build weekly DSPR data from DailyStoreSummary model aggregation
      */
     protected function buildWeeklyDSPR(string $store, Carbon $startDate, Carbon $endDate, $depositDeliveryCollection): array|string
     {
-        $weeklySummaries = DB::table('daily_store_summary')
-            ->where('franchise_store', $store)
+        $weeklySummaries = DailyStoreSummary::where('franchise_store', '=', $store)
             ->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()])
             ->get();
 
@@ -363,7 +372,7 @@ class ReportsController extends Controller
             return 'No weekly data available.';
         }
 
-        $totalSales = $weeklySummaries->sum('total_sales');
+        $totalSales = $weeklySummaries->sum('gross_sales');
         $portalEligible = $weeklySummaries->sum('portal_eligible_orders');
         $portalUsed = $weeklySummaries->sum('portal_used_orders');
         $portalOnTime = $weeklySummaries->sum('portal_on_time_orders');
@@ -376,6 +385,12 @@ class ReportsController extends Controller
             ? round(($portalOnTime / $portalUsed) * 100, 2)
             : 0.0;
 
+        // Calculate combined HNR fields
+        $hnrDeliveryQty = $weeklySummaries->sum('hnr_delivery_quantity');
+        $hnrCarryoutQty = $weeklySummaries->sum('hnr_carryout_quantity');
+        $hnrDeliverySales = $weeklySummaries->sum('hnr_delivery_sales');
+        $hnrCarryoutSales = $weeklySummaries->sum('hnr_carryout_sales');
+
         return [
             'Royalty_Obligation' => round($totalSales, 2),
             'Phone_Sales' => round($weeklySummaries->sum('phone_sales'), 2),
@@ -385,8 +400,8 @@ class ReportsController extends Controller
             'Mobile_Sales' => round($weeklySummaries->sum('mobile_sales'), 2),
             'Customer_Count' => (int)$weeklySummaries->sum('customer_count'),
             'Customer_count_percent' => 0,
-            'HNR_Total_Quantity' => (int)$weeklySummaries->sum('hnr_quantity'),
-            'HNR_Total_Sales' => round($weeklySummaries->sum('hnr_sales'), 2),
+            'HNR_Total_Quantity' => (int)($hnrDeliveryQty + $hnrCarryoutQty),
+            'HNR_Total_Sales' => round($hnrDeliverySales + $hnrCarryoutSales, 2),
             'Portal_Transaction' => (int)$portalEligible,
             'Put_into_Portal' => (int)$portalUsed,
             'Put_into_Portal_Percent' => $putIntoPortalPercent,
@@ -403,23 +418,21 @@ class ReportsController extends Controller
     }
 
     /**
-     * Calculate customer service score (from old system logic)
+     * Calculate customer service score using DailyStoreSummary model
      */
     protected function calculateCustomerService(string $store, string $dayName, Carbon $weekStart, Carbon $weekEnd, Carbon $lookbackStart, Carbon $lookbackEnd): array
     {
-        // Get weekly data grouped by day
-        $weeklyData = DB::table('daily_store_summary')
-            ->selectRaw('DAYNAME(business_date) as day_name, SUM(total_sales) as total_sales')
-            ->where('franchise_store', $store)
+        // Get weekly data grouped by day using Eloquent
+        $weeklyData = DailyStoreSummary::selectRaw('DAYNAME(business_date) as day_name, SUM(gross_sales) as total_sales', [])
+            ->where('franchise_store', '=', $store)
             ->whereBetween('business_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
             ->groupBy('day_name')
             ->get()
             ->keyBy('day_name');
 
         // Get lookback data grouped by day with averages
-        $lookbackData = DB::table('daily_store_summary')
-            ->selectRaw('DAYNAME(business_date) as day_name, AVG(total_sales) as avg_sales')
-            ->where('franchise_store', $store)
+        $lookbackData = DailyStoreSummary::selectRaw('DAYNAME(business_date) as day_name, AVG(gross_sales) as avg_sales', [])
+            ->where('franchise_store', '=', $store)
             ->whereBetween('business_date', [$lookbackStart->toDateString(), $lookbackEnd->toDateString()])
             ->groupBy('day_name')
             ->get()
@@ -451,14 +464,13 @@ class ReportsController extends Controller
     }
 
     /**
-     * Calculate upselling score based on item sales (from old system logic)
+     * Calculate upselling score based on item sales using DailyItemSummary model
      */
     protected function calculateUpselling(string $store, string $dayName, Carbon $weekStart, Carbon $weekEnd, Carbon $lookbackStart, Carbon $lookbackEnd, array $itemIds): array
     {
-        // Get weekly item data grouped by day
-        $weeklyData = DB::table('daily_item_summary')
-            ->selectRaw('DAYNAME(business_date) as day_name, SUM(gross_sales) as total_sales')
-            ->where('franchise_store', $store)
+        // Get weekly item data grouped by day using Eloquent
+        $weeklyData = DailyItemSummary::selectRaw('DAYNAME(business_date) as day_name, SUM(gross_sales) as total_sales', [])
+            ->where('franchise_store', '=', $store)
             ->whereIn('item_id', $itemIds)
             ->whereBetween('business_date', [$weekStart->toDateString(), $weekEnd->toDateString()])
             ->groupBy('day_name')
@@ -466,9 +478,8 @@ class ReportsController extends Controller
             ->keyBy('day_name');
 
         // Get lookback item data grouped by day
-        $lookbackData = DB::table('daily_item_summary')
-            ->selectRaw('DAYNAME(business_date) as day_name, AVG(gross_sales) as avg_sales')
-            ->where('franchise_store', $store)
+        $lookbackData = DailyItemSummary::selectRaw('DAYNAME(business_date) as day_name, AVG(gross_sales) as avg_sales', [])
+            ->where('franchise_store', '=', $store)
             ->whereIn('item_id', $itemIds)
             ->whereBetween('business_date', [$lookbackStart->toDateString(), $lookbackEnd->toDateString()])
             ->groupBy('day_name')
