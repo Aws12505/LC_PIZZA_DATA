@@ -2,398 +2,342 @@
 
 namespace App\Services\Analytics;
 
-use App\Models\Aggregation\{
-    HourlyStoreSummary,
-    HourlyItemSummary,
-    DailyStoreSummary,
-    DailyItemSummary,
-    WeeklyStoreSummary,
-    WeeklyItemSummary,
-    MonthlyStoreSummary,
-    MonthlyItemSummary,
-    QuarterlyStoreSummary,
-    QuarterlyItemSummary,
-    YearlyStoreSummary,
-    YearlyItemSummary
-};
+use App\Services\Aggregation\IntelligentAggregationService;
 use Carbon\Carbon;
 
 /**
  * SummaryQueryService
- * 
- * Optimized query service that intelligently selects the best summary table
- * based on date range for maximum performance.
- * 
- * Replicates ALL queries from LogicsAndQueriesServices.php but using 
- * pre-aggregated summary tables instead of raw data.
+ *
+ * Now delegates all data access to IntelligentAggregationService,
+ * which builds the optimal multi-granularity query plan.
  */
 class SummaryQueryService
 {
-    /**
-     * Smart table selection based on date range
-     */
-    private function getOptimalStoreSummaryModel(Carbon $startDate, Carbon $endDate): string
+    private IntelligentAggregationService $agg;
+
+    public function __construct(IntelligentAggregationService $agg)
     {
-        $days = $startDate->diffInDays($endDate);
-
-        if ($days === 0) {
-            return HourlyStoreSummary::class;
-        } elseif ($days <= 6) {
-            return DailyStoreSummary::class;
-        } elseif ($days <= 27) {
-            return WeeklyStoreSummary::class;
-        } elseif ($days <= 89) {
-            return MonthlyStoreSummary::class;
-        } elseif ($days <= 364) {
-            return QuarterlyStoreSummary::class;
-        } else {
-            return YearlyStoreSummary::class;
-        }
-    }
-
-    private function getOptimalItemSummaryModel(Carbon $startDate, Carbon $endDate): string
-    {
-        $days = $startDate->diffInDays($endDate);
-
-        if ($days === 0) {
-            return HourlyItemSummary::class;
-        } elseif ($days <= 6) {
-            return DailyItemSummary::class;
-        } elseif ($days <= 27) {
-            return WeeklyItemSummary::class;
-        } elseif ($days <= 89) {
-            return MonthlyItemSummary::class;
-        } elseif ($days <= 364) {
-            return QuarterlyItemSummary::class;
-        } else {
-            return YearlyItemSummary::class;
-        }
+        $this->agg = $agg;
     }
 
     /**
-     * Get base query for store summaries
+     * Helper: base request array for store-level metrics.
      */
-    private function getStoreSummaryQuery(string $store, Carbon $startDate, Carbon $endDate)
+    private function baseStoreRequest(string $store, Carbon $startDate, Carbon $endDate, array $metrics): array
     {
-        $model = $this->getOptimalStoreSummaryModel($startDate, $endDate);
-
-        $query = $model::where('franchise_store', $store);
-
-        // Apply date range filter based on model type
-        if ($model === HourlyStoreSummary::class || $model === DailyStoreSummary::class) {
-            $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
-        } elseif ($model === WeeklyStoreSummary::class) {
-            $query->where(function($q) use ($startDate, $endDate) {
-                $q->whereBetween('week_start_date', [$startDate->toDateString(), $endDate->toDateString()])
-                  ->orWhereBetween('week_end_date', [$startDate->toDateString(), $endDate->toDateString()]);
-            });
-        } elseif ($model === MonthlyStoreSummary::class) {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year)
-                  ->where('month_num', '>=', $startDate->month)
-                  ->where('month_num', '<=', $endDate->month);
-        } elseif ($model === QuarterlyStoreSummary::class) {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year)
-                  ->where('quarter_num', '>=', $startDate->quarter)
-                  ->where('quarter_num', '<=', $endDate->quarter);
-        } else {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year);
-        }
-
-        return $query;
+        return [
+            'start_date'   => $startDate->toDateString(),
+            'end_date'     => $endDate->toDateString(),
+            'summary_type' => 'store',
+            'metrics'      => $metrics,
+            'filters'      => ['franchise_store' => $store],
+        ];
     }
 
     /**
-     * Get base query for item summaries
+     * Helper: base request array for item-level metrics.
      */
-    private function getItemSummaryQuery(string $store, Carbon $startDate, Carbon $endDate)
+    private function baseItemRequest(string $store, Carbon $startDate, Carbon $endDate, array $metrics, array $extraFilters = []): array
     {
-        $model = $this->getOptimalItemSummaryModel($startDate, $endDate);
+        $filters = array_merge(['franchise_store' => $store], $extraFilters);
 
-        $query = $model::where('franchise_store', $store);
+        return [
+            'start_date'   => $startDate->toDateString(),
+            'end_date'     => $endDate->toDateString(),
+            'summary_type' => 'item',
+            'metrics'      => $metrics,
+            'filters'      => $filters,
+        ];
+    }
 
-        // Apply date range filter based on model type
-        if ($model === HourlyItemSummary::class || $model === DailyItemSummary::class) {
-            $query->whereBetween('business_date', [$startDate->toDateString(), $endDate->toDateString()]);
-        } elseif ($model === WeeklyItemSummary::class) {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year)
-                  ->where('week_num', '>=', $startDate->week)
-                  ->where('week_num', '<=', $endDate->week);
-        } elseif ($model === MonthlyItemSummary::class) {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year)
-                  ->where('month_num', '>=', $startDate->month)
-                  ->where('month_num', '<=', $endDate->month);
-        } elseif ($model === QuarterlyItemSummary::class) {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year)
-                  ->where('quarter_num', '>=', $startDate->quarter)
-                  ->where('quarter_num', '<=', $endDate->quarter);
-        } else {
-            $query->where('year_num', '>=', $startDate->year)
-                  ->where('year_num', '<=', $endDate->year);
-        }
+    /**
+     * Helper: run aggregation and return first row (or empty array).
+     */
+    private function fetchSingle(array $request): array
+    {
+        $result = $this->agg->fetchAggregatedData($request);
+        return $result['data'][0] ?? [];
+    }
 
-        return $query;
+    /**
+     * Helper: run aggregation and return array of rows.
+     */
+    private function fetchAll(array $request): array
+    {
+        $result = $this->agg->fetchAggregatedData($request);
+        return $result['data'] ?? [];
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // SALES METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get total sales (royalty_obligation equivalent)
-     * OLD: sum(royalty_obligation) from detail_order_hot
-     * NEW: sum(total_sales) from summary tables
-     */
     public function getSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('total_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['total_sales'])
+        );
+
+        return round((float)($row['total_sales'] ?? 0), 2);
     }
 
-    /**
-     * Get gross sales
-     * OLD: sum(gross_sales) from detail_order_hot
-     * NEW: sum(gross_sales) from summary tables
-     */
     public function getGrossSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('gross_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['gross_sales'])
+        );
+
+        return round((float)($row['gross_sales'] ?? 0), 2);
     }
 
-    /**
-     * Get net sales
-     */
     public function getNetSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('net_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['net_sales'])
+        );
+
+        return round((float)($row['net_sales'] ?? 0), 2);
     }
 
-    /**
-     * Get refund amount
-     */
     public function getRefundAmount(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('refund_amount'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['refund_amount'])
+        );
+
+        return round((float)($row['refund_amount'] ?? 0), 2);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // ORDER METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get total orders
-     * OLD: count(distinct order_id) from detail_order_hot
-     * NEW: sum(total_orders) from summary tables
-     */
     public function getOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('total_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['total_orders'])
+        );
+
+        return (int)($row['total_orders'] ?? 0);
     }
 
-    /**
-     * Get completed orders
-     */
     public function getCompletedOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('completed_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['completed_orders'])
+        );
+
+        return (int)($row['completed_orders'] ?? 0);
     }
 
-    /**
-     * Get cancelled orders
-     */
     public function getCancelledOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('cancelled_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['cancelled_orders'])
+        );
+
+        return (int)($row['cancelled_orders'] ?? 0);
     }
 
-    /**
-     * Get modified orders
-     * OLD: count WHERE override_approval_employee IS NOT NULL
-     * NEW: sum(modified_orders) from summary tables
-     */
     public function getModifiedOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('modified_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['modified_orders'])
+        );
+
+        return (int)($row['modified_orders'] ?? 0);
     }
 
-    /**
-     * Get refunded orders
-     */
     public function getRefundedOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('refunded_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['refunded_orders'])
+        );
+
+        return (int)($row['refunded_orders'] ?? 0);
     }
 
-    /**
-     * Get average order value
-     */
     public function getAvgOrderValue(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $orders = $this->getOrders($store, $startDate, $endDate);
-        $sales = $this->getSales($store, $startDate, $endDate);
-        return $orders > 0 ? round($sales / $orders, 2) : 0;
+        $sales  = $this->getSales($store, $startDate, $endDate);
+
+        return $orders > 0 ? round($sales / $orders, 2) : 0.0;
     }
 
-    /**
-     * Get customer count
-     * OLD: sum(customer_count) from detail_order_hot
-     * NEW: sum(customer_count) from summary tables
-     */
     public function getCustomerCount(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('customer_count');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['customer_count'])
+        );
+
+        return (int)($row['customer_count'] ?? 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // CHANNEL METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get phone sales
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'Phone'
-     * NEW: sum(phone_sales) from summary tables
-     */
     public function getPhoneSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('phone_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['phone_sales'])
+        );
+
+        return round((float)($row['phone_sales'] ?? 0), 2);
     }
 
     public function getPhoneOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('phone_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['phone_orders'])
+        );
+
+        return (int)($row['phone_orders'] ?? 0);
     }
 
-    /**
-     * Get website sales
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'Website'
-     * NEW: sum(website_sales) from summary tables
-     */
     public function getWebsiteSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('website_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['website_sales'])
+        );
+
+        return round((float)($row['website_sales'] ?? 0), 2);
     }
 
     public function getWebsiteOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('website_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['website_orders'])
+        );
+
+        return (int)($row['website_orders'] ?? 0);
     }
 
-    /**
-     * Get mobile sales
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'Mobile'
-     * NEW: sum(mobile_sales) from summary tables
-     */
     public function getMobileSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('mobile_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['mobile_sales'])
+        );
+
+        return round((float)($row['mobile_sales'] ?? 0), 2);
     }
 
     public function getMobileOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('mobile_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['mobile_orders'])
+        );
+
+        return (int)($row['mobile_orders'] ?? 0);
     }
 
-    /**
-     * Get call center sales (SoundHoundAgent)
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'SoundHoundAgent'
-     * NEW: sum(call_center_sales) from summary tables
-     */
     public function getCallCenterSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('call_center_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['call_center_sales'])
+        );
+
+        return round((float)($row['call_center_sales'] ?? 0), 2);
     }
 
     public function getCallCenterOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('call_center_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['call_center_orders'])
+        );
+
+        return (int)($row['call_center_orders'] ?? 0);
     }
 
-    /**
-     * Get drive thru sales
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'Drive Thru'
-     * NEW: sum(drive_thru_sales) from summary tables
-     */
     public function getDriveThruSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('drive_thru_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['drive_thru_sales'])
+        );
+
+        return round((float)($row['drive_thru_sales'] ?? 0), 2);
     }
 
     public function getDriveThruOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('drive_thru_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['drive_thru_orders'])
+        );
+
+        return (int)($row['drive_thru_orders'] ?? 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // MARKETPLACE METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get DoorDash sales
-     * OLD: sum(royalty_obligation) WHERE order_placed_method = 'DoorDash'
-     * NEW: sum(doordash_sales) from summary tables
-     */
     public function getDoordashSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('doordash_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['doordash_sales'])
+        );
+
+        return round((float)($row['doordash_sales'] ?? 0), 2);
     }
 
     public function getDoordashOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('doordash_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['doordash_orders'])
+        );
+
+        return (int)($row['doordash_orders'] ?? 0);
     }
 
-    /**
-     * Get UberEats sales
-     */
     public function getUbereatsSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('ubereats_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['ubereats_sales'])
+        );
+
+        return round((float)($row['ubereats_sales'] ?? 0), 2);
     }
 
     public function getUbereatsOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('ubereats_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['ubereats_orders'])
+        );
+
+        return (int)($row['ubereats_orders'] ?? 0);
     }
 
-    /**
-     * Get Grubhub sales
-     */
     public function getGrubhubSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('grubhub_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['grubhub_sales'])
+        );
+
+        return round((float)($row['grubhub_sales'] ?? 0), 2);
     }
 
     public function getGrubhubOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('grubhub_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['grubhub_orders'])
+        );
+
+        return (int)($row['grubhub_orders'] ?? 0);
     }
 
-    /**
-     * Third Party Marketplace Summary
-     * Replicates: ThirdPartyMarketplace() from LogicsAndQueriesServices
-     */
     public function getThirdPartyMarketplace(string $store, Carbon $startDate, Carbon $endDate): array
     {
         return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-
-            // DoorDash
-            'doordash_product_costs' => $this->getDoordashSales($store, $startDate, $endDate),
-            'doordash_orders' => $this->getDoordashOrders($store, $startDate, $endDate),
-
-            // UberEats
-            'ubereats_product_costs' => $this->getUbereatsSales($store, $startDate, $endDate),
-            'ubereats_orders' => $this->getUbereatsOrders($store, $startDate, $endDate),
-
-            // Grubhub
-            'grubhub_product_costs' => $this->getGrubhubSales($store, $startDate, $endDate),
-            'grubhub_orders' => $this->getGrubhubOrders($store, $startDate, $endDate),
+            'franchise_store'         => $store,
+            'start_date'              => $startDate->toDateString(),
+            'end_date'                => $endDate->toDateString(),
+            'doordash_product_costs'  => $this->getDoordashSales($store, $startDate, $endDate),
+            'doordash_orders'         => $this->getDoordashOrders($store, $startDate, $endDate),
+            'ubereats_product_costs'  => $this->getUbereatsSales($store, $startDate, $endDate),
+            'ubereats_orders'         => $this->getUbereatsOrders($store, $startDate, $endDate),
+            'grubhub_product_costs'   => $this->getGrubhubSales($store, $startDate, $endDate),
+            'grubhub_orders'          => $this->getGrubhubOrders($store, $startDate, $endDate),
         ];
     }
 
@@ -401,60 +345,70 @@ class SummaryQueryService
     // FULFILLMENT METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get delivery sales
-     * OLD: sum(royalty_obligation) WHERE order_fulfilled_method = 'Delivery'
-     * NEW: sum(delivery_sales) from summary tables
-     */
     public function getDeliverySales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('delivery_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['delivery_sales'])
+        );
+
+        return round((float)($row['delivery_sales'] ?? 0), 2);
     }
 
     public function getDeliveryOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('delivery_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['delivery_orders'])
+        );
+
+        return (int)($row['delivery_orders'] ?? 0);
     }
 
-    /**
-     * Get carryout sales
-     * OLD: sum(royalty_obligation) WHERE order_fulfilled_method IN ('Register', 'Drive-Thru')
-     * NEW: sum(carryout_sales) from summary tables
-     */
     public function getCarryoutSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('carryout_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['carryout_sales'])
+        );
+
+        return round((float)($row['carryout_sales'] ?? 0), 2);
     }
 
     public function getCarryoutOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('carryout_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['carryout_orders'])
+        );
+
+        return (int)($row['carryout_orders'] ?? 0);
     }
 
-    /**
-     * Delivery Order Summary
-     * Replicates: DeliveryOrderSummary() from LogicsAndQueriesServices
-     */
     public function getDeliveryOrderSummary(string $store, Carbon $startDate, Carbon $endDate): array
     {
-        $data = $this->getStoreSummaryQuery($store, $startDate, $endDate)->get();
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, [
+                'delivery_orders',
+                'delivery_sales',
+                'delivery_fees',
+                'delivery_tips',
+                'sales_tax',
+            ])
+        );
 
-        $deliveryOrders = $data->sum('delivery_orders');
-        $deliverySales = $data->sum('delivery_sales');
-        $deliveryFees = $data->sum('delivery_fees');
-        $deliveryTips = $data->sum('delivery_tips');
-        $salesTax = $data->sum('sales_tax');
+        $deliveryOrders = (int)($row['delivery_orders'] ?? 0);
+        $deliverySales  = (float)($row['delivery_sales'] ?? 0);
+        $deliveryFees   = (float)($row['delivery_fees'] ?? 0);
+        $deliveryTips   = (float)($row['delivery_tips'] ?? 0);
+        $salesTax       = (float)($row['sales_tax'] ?? 0);
 
         return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-            'orders_count' => (int) $deliveryOrders,
-            'product_cost' => round($deliverySales, 2),
-            'tax' => round($salesTax, 2),
-            'delivery_charges' => round($deliveryFees, 2),
-            'tip' => round($deliveryTips, 2),
-            'order_total' => round($deliverySales + $salesTax + $deliveryFees + $deliveryTips, 2),
+            'franchise_store'   => $store,
+            'start_date'        => $startDate->toDateString(),
+            'end_date'          => $endDate->toDateString(),
+            'orders_count'      => $deliveryOrders,
+            'product_cost'      => round($deliverySales, 2),
+            'tax'               => round($salesTax, 2),
+            'delivery_charges'  => round($deliveryFees, 2),
+            'tip'               => round($deliveryTips, 2),
+            'order_total'       => round($deliverySales + $salesTax + $deliveryFees + $deliveryTips, 2),
         ];
     }
 
@@ -462,84 +416,133 @@ class SummaryQueryService
     // PRODUCT CATEGORY METRICS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get pizza sales
-     * OLD: sum from order_line_hot WHERE menu_item_account = 'Pizza'
-     * NEW: sum(pizza_sales) from summary tables
-     */
     public function getPizzaSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('pizza_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['pizza_sales'])
+        );
+
+        return round((float)($row['pizza_sales'] ?? 0), 2);
     }
 
     public function getPizzaQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('pizza_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['pizza_quantity'])
+        );
+
+        return (int)($row['pizza_quantity'] ?? 0);
     }
 
-    /**
-     * Get HNR (Hot-N-Ready) sales
-     */
     public function getHnrSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('hnr_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['hnr_sales'])
+        );
+
+        return round((float)($row['hnr_sales'] ?? 0), 2);
     }
 
     public function getHnrQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('hnr_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['hnr_quantity'])
+        );
+
+        return (int)($row['hnr_quantity'] ?? 0);
     }
 
-    /**
-     * Get bread sales
-     */
     public function getBreadSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('bread_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['bread_sales'])
+        );
+
+        return round((float)($row['bread_sales'] ?? 0), 2);
     }
 
     public function getBreadQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('bread_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['bread_quantity'])
+        );
+
+        return (int)($row['bread_quantity'] ?? 0);
     }
 
-    /**
-     * Get wings sales
-     */
     public function getWingsSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('wings_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['wings_sales'])
+        );
+
+        return round((float)($row['wings_sales'] ?? 0), 2);
     }
 
     public function getWingsQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('wings_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['wings_quantity'])
+        );
+
+        return (int)($row['wings_quantity'] ?? 0);
     }
 
-    /**
-     * Get beverages sales
-     */
     public function getBeveragesSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('beverages_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['beverages_sales'])
+        );
+
+        return round((float)($row['beverages_sales'] ?? 0), 2);
     }
 
     public function getBeveragesQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('beverages_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['beverages_quantity'])
+        );
+
+        return (int)($row['beverages_quantity'] ?? 0);
     }
 
-    /**
-     * Get crazy puffs sales
-     */
     public function getCrazyPuffsSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('crazy_puffs_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['crazy_puffs_sales'])
+        );
+
+        return round((float)($row['crazy_puffs_sales'] ?? 0), 2);
     }
 
     public function getCrazyPuffsQuantity(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('crazy_puffs_quantity');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['crazy_puffs_quantity'])
+        );
+
+        return (int)($row['crazy_puffs_quantity'] ?? 0);
+    }
+
+    public function getProductCategorySales(string $store, Carbon $startDate, Carbon $endDate): array
+    {
+        return [
+            'franchise_store'        => $store,
+            'start_date'             => $startDate->toDateString(),
+            'end_date'               => $endDate->toDateString(),
+            'pizza_quantity'         => $this->getPizzaQuantity($store, $startDate, $endDate),
+            'pizza_sales'            => $this->getPizzaSales($store, $startDate, $endDate),
+            'hnr_quantity'           => $this->getHnrQuantity($store, $startDate, $endDate),
+            'hnr_sales'              => $this->getHnrSales($store, $startDate, $endDate),
+            'bread_quantity'         => $this->getBreadQuantity($store, $startDate, $endDate),
+            'bread_sales'            => $this->getBreadSales($store, $startDate, $endDate),
+            'wings_quantity'         => $this->getWingsQuantity($store, $startDate, $endDate),
+            'wings_sales'            => $this->getWingsSales($store, $startDate, $endDate),
+            'beverages_quantity'     => $this->getBeveragesQuantity($store, $startDate, $endDate),
+            'beverages_sales'        => $this->getBeveragesSales($store, $startDate, $endDate),
+            'crazy_puffs_quantity'   => $this->getCrazyPuffsQuantity($store, $startDate, $endDate),
+            'crazy_puffs_sales'      => $this->getCrazyPuffsSales($store, $startDate, $endDate),
+        ];
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -548,27 +551,47 @@ class SummaryQueryService
 
     public function getSalesTax(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('sales_tax'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['sales_tax'])
+        );
+
+        return round((float)($row['sales_tax'] ?? 0), 2);
     }
 
     public function getDeliveryFees(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('delivery_fees'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['delivery_fees'])
+        );
+
+        return round((float)($row['delivery_fees'] ?? 0), 2);
     }
 
     public function getDeliveryTips(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('delivery_tips'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['delivery_tips'])
+        );
+
+        return round((float)($row['delivery_tips'] ?? 0), 2);
     }
 
     public function getStoreTips(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('store_tips'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['store_tips'])
+        );
+
+        return round((float)($row['store_tips'] ?? 0), 2);
     }
 
     public function getTotalTips(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('total_tips'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['total_tips'])
+        );
+
+        return round((float)($row['total_tips'] ?? 0), 2);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -577,22 +600,38 @@ class SummaryQueryService
 
     public function getCashSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('cash_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['cash_sales'])
+        );
+
+        return round((float)($row['cash_sales'] ?? 0), 2);
     }
 
     public function getCreditCardSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('credit_card_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['credit_card_sales'])
+        );
+
+        return round((float)($row['credit_card_sales'] ?? 0), 2);
     }
 
     public function getPrepaidSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('prepaid_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['prepaid_sales'])
+        );
+
+        return round((float)($row['prepaid_sales'] ?? 0), 2);
     }
 
     public function getOverShort(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('over_short'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['over_short'])
+        );
+
+        return round((float)($row['over_short'] ?? 0), 2);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -601,31 +640,45 @@ class SummaryQueryService
 
     public function getPortalEligibleOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('portal_eligible_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['portal_eligible_orders'])
+        );
+
+        return (int)($row['portal_eligible_orders'] ?? 0);
     }
 
     public function getPortalUsedOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('portal_used_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['portal_used_orders'])
+        );
+
+        return (int)($row['portal_used_orders'] ?? 0);
     }
 
     public function getPortalUsageRate(string $store, Carbon $startDate, Carbon $endDate): float
     {
         $eligible = $this->getPortalEligibleOrders($store, $startDate, $endDate);
-        $used = $this->getPortalUsedOrders($store, $startDate, $endDate);
-        return $eligible > 0 ? round(($used / $eligible) * 100, 2) : 0;
+        $used     = $this->getPortalUsedOrders($store, $startDate, $endDate);
+
+        return $eligible > 0 ? round(($used / $eligible) * 100, 2) : 0.0;
     }
 
     public function getPortalOnTimeOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('portal_on_time_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['portal_on_time_orders'])
+        );
+
+        return (int)($row['portal_on_time_orders'] ?? 0);
     }
 
     public function getPortalOnTimeRate(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        $used = $this->getPortalUsedOrders($store, $startDate, $endDate);
+        $used   = $this->getPortalUsedOrders($store, $startDate, $endDate);
         $onTime = $this->getPortalOnTimeOrders($store, $startDate, $endDate);
-        return $used > 0 ? round(($onTime / $used) * 100, 2) : 0;
+
+        return $used > 0 ? round(($onTime / $used) * 100, 2) : 0.0;
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -634,12 +687,20 @@ class SummaryQueryService
 
     public function getTotalWasteItems(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('total_waste_items');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['total_waste_items'])
+        );
+
+        return (int)($row['total_waste_items'] ?? 0);
     }
 
     public function getTotalWasteCost(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('total_waste_cost'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['total_waste_cost'])
+        );
+
+        return round((float)($row['total_waste_cost'] ?? 0), 2);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -648,106 +709,158 @@ class SummaryQueryService
 
     public function getDigitalOrders(string $store, Carbon $startDate, Carbon $endDate): int
     {
-        return (int) $this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('digital_orders');
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['digital_orders'])
+        );
+
+        return (int)($row['digital_orders'] ?? 0);
     }
 
     public function getDigitalSales(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        return round($this->getStoreSummaryQuery($store, $startDate, $endDate)->sum('digital_sales'), 2);
+        $row = $this->fetchSingle(
+            $this->baseStoreRequest($store, $startDate, $endDate, ['digital_sales'])
+        );
+
+        return round((float)($row['digital_sales'] ?? 0), 2);
     }
 
     public function getDigitalPenetration(string $store, Carbon $startDate, Carbon $endDate): float
     {
-        $totalSales = $this->getSales($store, $startDate, $endDate);
+        $totalSales   = $this->getSales($store, $startDate, $endDate);
         $digitalSales = $this->getDigitalSales($store, $startDate, $endDate);
-        return $totalSales > 0 ? round(($digitalSales / $totalSales) * 100, 2) : 0;
+
+        return $totalSales > 0 ? round(($digitalSales / $totalSales) * 100, 2) : 0.0;
     }
 
     // ═════════════════════════════════════════════════════════════════════════
     // ITEM-LEVEL QUERIES
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get specific item sales
-     * OLD: Query order_line_hot WHERE item_id = X
-     * NEW: Query *_item_summary WHERE item_id = X
-     */
     public function getItemSales(string $store, Carbon $startDate, Carbon $endDate, string $itemId): float
     {
-        return round(
-            $this->getItemSummaryQuery($store, $startDate, $endDate)
-                ->where('item_id', $itemId)
-                ->sum('gross_sales'),
-            2
+        $row = $this->fetchSingle(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['gross_sales'],
+                ['item_id' => $itemId]
+            )
         );
+
+        return round((float)($row['gross_sales'] ?? 0), 2);
     }
 
     public function getItemQuantity(string $store, Carbon $startDate, Carbon $endDate, string $itemId): int
     {
-        return (int) $this->getItemSummaryQuery($store, $startDate, $endDate)
-            ->where('item_id', $itemId)
-            ->sum('quantity_sold');
+        $row = $this->fetchSingle(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['quantity_sold'],
+                ['item_id' => $itemId]
+            )
+        );
+
+        return (int)($row['quantity_sold'] ?? 0);
     }
 
-    /**
-     * Get items by name
-     */
     public function getItemsByName(string $store, Carbon $startDate, Carbon $endDate, string $itemName): array
     {
-        $items = $this->getItemSummaryQuery($store, $startDate, $endDate)
-            ->where('menu_item_name', $itemName)
-            ->get();
+        $data = $this->fetchAll(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['quantity_sold', 'gross_sales', 'net_sales', 'avg_item_price'],
+                ['menu_item_name' => $itemName]
+            )
+        );
+
+        $quantity   = array_sum(array_column($data, 'quantity_sold'));
+        $grossSales = array_sum(array_column($data, 'gross_sales'));
+        $netSales   = array_sum(array_column($data, 'net_sales'));
+        $avgPrice   = 0.0;
+
+        if (count($data) > 0) {
+            $avgValues = array_column($data, 'avg_item_price');
+            $avgPrice  = round(array_sum($avgValues) / count($avgValues), 2);
+        }
 
         return [
-            'item_name' => $itemName,
-            'quantity_sold' => $items->sum('quantity_sold'),
-            'gross_sales' => round($items->sum('gross_sales'), 2),
-            'net_sales' => round($items->sum('net_sales'), 2),
-            'avg_price' => $items->count() > 0 ? round($items->avg('avg_item_price'), 2) : 0,
+            'item_name'     => $itemName,
+            'quantity_sold' => (int)$quantity,
+            'gross_sales'   => round($grossSales, 2),
+            'net_sales'     => round($netSales, 2),
+            'avg_price'     => $avgPrice,
         ];
     }
 
-    /**
-     * Bread Boost Analysis
-     * Replicates: BreadBoost() from LogicsAndQueriesServices
-     * 
-     * Tracks how many Classic pizza orders included Crazy Bread
-     */
     public function getBreadBoost(string $store, Carbon $startDate, Carbon $endDate): array
     {
-        // Get all orders with Classic Pepperoni or Classic Cheese
-        $classicPizzaQty = $this->getItemSummaryQuery($store, $startDate, $endDate)
-            ->whereIn('menu_item_name', ['Classic Pepperoni', 'Classic Cheese'])
-            ->sum('quantity_sold');
+        // Classic pizzas
+        $classicRows = $this->fetchAll(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['quantity_sold'],
+                ['menu_item_name' => ['Classic Pepperoni', 'Classic Cheese']]
+            )
+        );
+        $classicPizzaQty = array_sum(array_column($classicRows, 'quantity_sold'));
 
-        // Get Crazy Bread quantity
-        $crazyBreadQty = $this->getItemSummaryQuery($store, $startDate, $endDate)
-            ->where('menu_item_name', 'Crazy Bread')
-            ->sum('quantity_sold');
+        // Crazy Bread
+        $breadRows = $this->fetchAll(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['quantity_sold'],
+                ['menu_item_name' => 'Crazy Bread']
+            )
+        );
+        $crazyBreadQty = array_sum(array_column($breadRows, 'quantity_sold'));
 
-        // Get other pizza quantity (excluding specific item IDs from old service)
-        $excludedIds = [-1,6,7,8,9,101001,101002,101288,103044,202901,101289,204100,204200];
-        $otherPizzaQty = $this->getItemSummaryQuery($store, $startDate, $endDate)
-            ->whereNotIn('item_id', $excludedIds)
-            ->where('menu_item_account', 'Pizza')
-            ->whereNotIn('menu_item_name', ['Classic Pepperoni', 'Classic Cheese'])
-            ->sum('quantity_sold');
+        // Other pizzas
+        $excludedIds = [-1, 6, 7, 8, 9, 101001, 101002, 101288, 103044, 202901, 101289, 204100, 204200];
 
-        // Estimate bread attachment (simplified without order-level tracking)
+        $otherRows = $this->fetchAll(
+            $this->baseItemRequest(
+                $store,
+                $startDate,
+                $endDate,
+                ['quantity_sold'],
+                [
+                    'menu_item_account' => 'Pizza',
+                    'exclude_item_ids'  => $excludedIds,
+                    'exclude_names'     => ['Classic Pepperoni', 'Classic Cheese'],
+                ]
+            )
+        );
+        $otherPizzaQty = array_sum(array_column($otherRows, 'quantity_sold'));
+
+        // Estimated attachment
         $estimatedClassicWithBread = min($classicPizzaQty, $crazyBreadQty);
-        $remainingBread = max(0, $crazyBreadQty - $estimatedClassicWithBread);
-        $estimatedOtherWithBread = min($otherPizzaQty, $remainingBread);
+        $remainingBread            = max(0, $crazyBreadQty - $estimatedClassicWithBread);
+        $estimatedOtherWithBread   = min($otherPizzaQty, $remainingBread);
 
         return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-            'classic_orders' => (int) $classicPizzaQty,
-            'classic_with_bread' => (int) $estimatedClassicWithBread,
-            'classic_attach_rate' => $classicPizzaQty > 0 ? round(($estimatedClassicWithBread / $classicPizzaQty) * 100, 2) : 0,
-            'other_pizza_orders' => (int) $otherPizzaQty,
-            'other_with_bread' => (int) $estimatedOtherWithBread,
-            'other_attach_rate' => $otherPizzaQty > 0 ? round(($estimatedOtherWithBread / $otherPizzaQty) * 100, 2) : 0,
+            'franchise_store'       => $store,
+            'start_date'            => $startDate->toDateString(),
+            'end_date'              => $endDate->toDateString(),
+            'classic_orders'        => (int)$classicPizzaQty,
+            'classic_with_bread'    => (int)$estimatedClassicWithBread,
+            'classic_attach_rate'   => $classicPizzaQty > 0
+                ? round(($estimatedClassicWithBread / $classicPizzaQty) * 100, 2)
+                : 0,
+            'other_pizza_orders'    => (int)$otherPizzaQty,
+            'other_with_bread'      => (int)$estimatedOtherWithBread,
+            'other_attach_rate'     => $otherPizzaQty > 0
+                ? round(($estimatedOtherWithBread / $otherPizzaQty) * 100, 2)
+                : 0,
         ];
     }
 
@@ -755,165 +868,90 @@ class SummaryQueryService
     // COMPREHENSIVE SUMMARY METHODS
     // ═════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Get complete channel data breakdown
-     * Replicates: ChannelData() from LogicsAndQueriesServices
-     */
     public function getChannelData(string $store, Carbon $startDate, Carbon $endDate): array
     {
         return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-
-            // Phone
-            'phone_orders' => $this->getPhoneOrders($store, $startDate, $endDate),
-            'phone_sales' => $this->getPhoneSales($store, $startDate, $endDate),
-
-            // Website
-            'website_orders' => $this->getWebsiteOrders($store, $startDate, $endDate),
-            'website_sales' => $this->getWebsiteSales($store, $startDate, $endDate),
-
-            // Mobile
-            'mobile_orders' => $this->getMobileOrders($store, $startDate, $endDate),
-            'mobile_sales' => $this->getMobileSales($store, $startDate, $endDate),
-
-            // Call Center
+            'franchise_store'   => $store,
+            'start_date'        => $startDate->toDateString(),
+            'end_date'          => $endDate->toDateString(),
+            'phone_orders'      => $this->getPhoneOrders($store, $startDate, $endDate),
+            'phone_sales'       => $this->getPhoneSales($store, $startDate, $endDate),
+            'website_orders'    => $this->getWebsiteOrders($store, $startDate, $endDate),
+            'website_sales'     => $this->getWebsiteSales($store, $startDate, $endDate),
+            'mobile_orders'     => $this->getMobileOrders($store, $startDate, $endDate),
+            'mobile_sales'      => $this->getMobileSales($store, $startDate, $endDate),
             'call_center_orders' => $this->getCallCenterOrders($store, $startDate, $endDate),
             'call_center_sales' => $this->getCallCenterSales($store, $startDate, $endDate),
-
-            // Drive Thru
             'drive_thru_orders' => $this->getDriveThruOrders($store, $startDate, $endDate),
-            'drive_thru_sales' => $this->getDriveThruSales($store, $startDate, $endDate),
-
-            // Marketplace
-            'doordash_orders' => $this->getDoordashOrders($store, $startDate, $endDate),
-            'doordash_sales' => $this->getDoordashSales($store, $startDate, $endDate),
-            'ubereats_orders' => $this->getUbereatsOrders($store, $startDate, $endDate),
-            'ubereats_sales' => $this->getUbereatsSales($store, $startDate, $endDate),
-            'grubhub_orders' => $this->getGrubhubOrders($store, $startDate, $endDate),
-            'grubhub_sales' => $this->getGrubhubSales($store, $startDate, $endDate),
-
-            // Fulfillment
-            'delivery_orders' => $this->getDeliveryOrders($store, $startDate, $endDate),
-            'delivery_sales' => $this->getDeliverySales($store, $startDate, $endDate),
-            'carryout_orders' => $this->getCarryoutOrders($store, $startDate, $endDate),
-            'carryout_sales' => $this->getCarryoutSales($store, $startDate, $endDate),
+            'drive_thru_sales'  => $this->getDriveThruSales($store, $startDate, $endDate),
+            'doordash_orders'   => $this->getDoordashOrders($store, $startDate, $endDate),
+            'doordash_sales'    => $this->getDoordashSales($store, $startDate, $endDate),
+            'ubereats_orders'   => $this->getUbereatsOrders($store, $startDate, $endDate),
+            'ubereats_sales'    => $this->getUbereatsSales($store, $startDate, $endDate),
+            'grubhub_orders'    => $this->getGrubhubOrders($store, $startDate, $endDate),
+            'grubhub_sales'     => $this->getGrubhubSales($store, $startDate, $endDate),
+            'delivery_orders'   => $this->getDeliveryOrders($store, $startDate, $endDate),
+            'delivery_sales'    => $this->getDeliverySales($store, $startDate, $endDate),
+            'carryout_orders'   => $this->getCarryoutOrders($store, $startDate, $endDate),
+            'carryout_sales'    => $this->getCarryoutSales($store, $startDate, $endDate),
         ];
     }
 
-    /**
-     * Get final summaries
-     * Replicates: FinalSummaries() from LogicsAndQueriesServices
-     */
     public function getFinalSummaries(string $store, Carbon $startDate, Carbon $endDate): array
     {
-        $totalSales = $this->getSales($store, $startDate, $endDate);
+        $totalSales   = $this->getSales($store, $startDate, $endDate);
         $digitalSales = $this->getDigitalSales($store, $startDate, $endDate);
 
         return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-
-            // Sales
-            'total_sales' => $totalSales,
-            'gross_sales' => $this->getGrossSales($store, $startDate, $endDate),
-            'net_sales' => $this->getNetSales($store, $startDate, $endDate),
-
-            // Orders
-            'total_orders' => $this->getOrders($store, $startDate, $endDate),
-            'modified_orders' => $this->getModifiedOrders($store, $startDate, $endDate),
-            'refunded_orders' => $this->getRefundedOrders($store, $startDate, $endDate),
-            'customer_count' => $this->getCustomerCount($store, $startDate, $endDate),
-
-            // Channel breakdown
-            'phone_sales' => $this->getPhoneSales($store, $startDate, $endDate),
-            'call_center_sales' => $this->getCallCenterSales($store, $startDate, $endDate),
-            'drive_thru_sales' => $this->getDriveThruSales($store, $startDate, $endDate),
-            'website_sales' => $this->getWebsiteSales($store, $startDate, $endDate),
-            'mobile_sales' => $this->getMobileSales($store, $startDate, $endDate),
-
-            // Marketplace
-            'doordash_sales' => $this->getDoordashSales($store, $startDate, $endDate),
-            'grubhub_sales' => $this->getGrubhubSales($store, $startDate, $endDate),
-            'ubereats_sales' => $this->getUbereatsSales($store, $startDate, $endDate),
-
-            // Fulfillment
-            'delivery_sales' => $this->getDeliverySales($store, $startDate, $endDate),
-            'carryout_sales' => $this->getCarryoutSales($store, $startDate, $endDate),
-
-            // Digital
-            'digital_sales' => $digitalSales,
-            'digital_sales_percent' => $totalSales > 0 ? round(($digitalSales / $totalSales) * 100, 2) : 0,
-
-            // Portal
-            'portal_transactions' => $this->getPortalEligibleOrders($store, $startDate, $endDate),
-            'put_into_portal' => $this->getPortalUsedOrders($store, $startDate, $endDate),
-            'portal_used_percent' => $this->getPortalUsageRate($store, $startDate, $endDate),
-            'put_in_portal_on_time' => $this->getPortalOnTimeOrders($store, $startDate, $endDate),
+            'franchise_store'         => $store,
+            'start_date'              => $startDate->toDateString(),
+            'end_date'                => $endDate->toDateString(),
+            'total_sales'             => $totalSales,
+            'gross_sales'             => $this->getGrossSales($store, $startDate, $endDate),
+            'net_sales'               => $this->getNetSales($store, $startDate, $endDate),
+            'total_orders'            => $this->getOrders($store, $startDate, $endDate),
+            'modified_orders'         => $this->getModifiedOrders($store, $startDate, $endDate),
+            'refunded_orders'         => $this->getRefundedOrders($store, $startDate, $endDate),
+            'customer_count'          => $this->getCustomerCount($store, $startDate, $endDate),
+            'phone_sales'             => $this->getPhoneSales($store, $startDate, $endDate),
+            'call_center_sales'       => $this->getCallCenterSales($store, $startDate, $endDate),
+            'drive_thru_sales'        => $this->getDriveThruSales($store, $startDate, $endDate),
+            'website_sales'           => $this->getWebsiteSales($store, $startDate, $endDate),
+            'mobile_sales'            => $this->getMobileSales($store, $startDate, $endDate),
+            'doordash_sales'          => $this->getDoordashSales($store, $startDate, $endDate),
+            'grubhub_sales'           => $this->getGrubhubSales($store, $startDate, $endDate),
+            'ubereats_sales'          => $this->getUbereatsSales($store, $startDate, $endDate),
+            'delivery_sales'          => $this->getDeliverySales($store, $startDate, $endDate),
+            'carryout_sales'          => $this->getCarryoutSales($store, $startDate, $endDate),
+            'digital_sales'           => $digitalSales,
+            'digital_sales_percent'   => $totalSales > 0 ? round(($digitalSales / $totalSales) * 100, 2) : 0,
+            'portal_transactions'     => $this->getPortalEligibleOrders($store, $startDate, $endDate),
+            'put_into_portal'         => $this->getPortalUsedOrders($store, $startDate, $endDate),
+            'portal_used_percent'     => $this->getPortalUsageRate($store, $startDate, $endDate),
+            'put_in_portal_on_time'   => $this->getPortalOnTimeOrders($store, $startDate, $endDate),
             'in_portal_on_time_percent' => $this->getPortalOnTimeRate($store, $startDate, $endDate),
-
-            // Tips
-            'delivery_tips' => $this->getDeliveryTips($store, $startDate, $endDate),
-            'store_tips' => $this->getStoreTips($store, $startDate, $endDate),
-            'total_tips' => $this->getTotalTips($store, $startDate, $endDate),
-
-            // Financial
-            'over_short' => $this->getOverShort($store, $startDate, $endDate),
-            'cash_sales' => $this->getCashSales($store, $startDate, $endDate),
-
-            // Waste
-            'total_waste_cost' => $this->getTotalWasteCost($store, $startDate, $endDate),
-        ];
-    }
-
-    /**
-     * Get all product category sales
-     */
-    public function getProductCategorySales(string $store, Carbon $startDate, Carbon $endDate): array
-    {
-        return [
-            'franchise_store' => $store,
-            'start_date' => $startDate->toDateString(),
-            'end_date' => $endDate->toDateString(),
-
-            'pizza_quantity' => $this->getPizzaQuantity($store, $startDate, $endDate),
-            'pizza_sales' => $this->getPizzaSales($store, $startDate, $endDate),
-
-            'hnr_quantity' => $this->getHnrQuantity($store, $startDate, $endDate),
-            'hnr_sales' => $this->getHnrSales($store, $startDate, $endDate),
-
-            'bread_quantity' => $this->getBreadQuantity($store, $startDate, $endDate),
-            'bread_sales' => $this->getBreadSales($store, $startDate, $endDate),
-
-            'wings_quantity' => $this->getWingsQuantity($store, $startDate, $endDate),
-            'wings_sales' => $this->getWingsSales($store, $startDate, $endDate),
-
-            'beverages_quantity' => $this->getBeveragesQuantity($store, $startDate, $endDate),
-            'beverages_sales' => $this->getBeveragesSales($store, $startDate, $endDate),
-
-            'crazy_puffs_quantity' => $this->getCrazyPuffsQuantity($store, $startDate, $endDate),
-            'crazy_puffs_sales' => $this->getCrazyPuffsSales($store, $startDate, $endDate),
+            'delivery_tips'           => $this->getDeliveryTips($store, $startDate, $endDate),
+            'store_tips'              => $this->getStoreTips($store, $startDate, $endDate),
+            'total_tips'              => $this->getTotalTips($store, $startDate, $endDate),
+            'over_short'              => $this->getOverShort($store, $startDate, $endDate),
+            'cash_sales'              => $this->getCashSales($store, $startDate, $endDate),
+            'total_waste_cost'        => $this->getTotalWasteCost($store, $startDate, $endDate),
         ];
     }
 
     // ═════════════════════════════════════════════════════════════════════════
-    // UTILITY METHODS
+    // TABLE INFO (OPTIONAL)
     // ═════════════════════════════════════════════════════════════════════════
 
     /**
-     * Get table info for debugging/logging
+     * Kept for compatibility but now only calculates days difference.
      */
     public function getTableInfo(Carbon $startDate, Carbon $endDate): array
     {
-        $storeModel = $this->getOptimalStoreSummaryModel($startDate, $endDate);
-        $itemModel = $this->getOptimalItemSummaryModel($startDate, $endDate);
-
         return [
             'date_range_days' => $startDate->diffInDays($endDate),
-            'store_summary_table' => class_basename($storeModel),
-            'item_summary_table' => class_basename($itemModel),
+            'store_summary_table' => 'INTELLIGENT_MIX',
+            'item_summary_table'  => 'INTELLIGENT_MIX',
         ];
     }
 }
