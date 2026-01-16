@@ -194,15 +194,15 @@ class AggregationService
         $grossSales = (float) (clone $baseOrders)->sum('gross_sales');
 
         $netSales = (clone $baseOrders)
-            ->get(['gross_sales', 'non_royalty_amount'])
-            ->sum(fn ($r) => (float) $r->gross_sales - (float) ($r->non_royalty_amount ?? 0));
+            ->get(['taxable_amount', 'non_taxable_amount'])
+            ->sum(fn($r) => (float) $r->taxable_amount + (float) ($r->non_taxable_amount ?? 0));
 
         $refundAmount = (float) (clone $baseOrders)
             ->where('refunded', 'Yes')
             ->sum('royalty_obligation');
 
         // ORDERS
-        $totalOrders = (int) (clone $baseOrders)->where('customer_count', '>',0)->distinct()->count('order_id');
+        $totalOrders = (int) (clone $baseOrders)->where('customer_count', '>', 0)->distinct()->count('order_id');
 
         $refundedOrders = (int) (clone $baseOrders)
             ->where('refunded', 'Yes')
@@ -232,8 +232,8 @@ class AggregationService
         $mobileOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
         $mobileSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
 
-        $callCenterOrders = (int) (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->distinct()->count('order_id');
-        $callCenterSales  = (float) (clone $baseOrders)->where('order_placed_method', 'SoundHoundAgent')->sum('royalty_obligation');
+        $callCenterOrders = (int) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->distinct()->count('order_id');
+        $callCenterSales  = (float) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->sum('royalty_obligation');
 
         $driveThruOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->distinct()->count('order_id');
         $driveThruSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
@@ -268,7 +268,7 @@ class AggregationService
         $deliveryLines = (clone $baseLines)->where('order_fulfilled_method', 'Delivery');
         $carryoutLines = (clone $baseLines)->where(function ($q) {
             $q->whereNull('order_fulfilled_method')
-              ->orWhere('order_fulfilled_method', '!=', 'Delivery');
+                ->orWhere('order_fulfilled_method', '!=', 'Delivery');
         });
 
         $cats = [
@@ -295,8 +295,10 @@ class AggregationService
             $cSales = (float) (clone $carryoutLines)->where('menu_item_account', $account)->sum('net_amount');
 
             $split[$key] = [
-                'dQty' => $dQty,   'dSales' => $dSales,
-                'cQty' => $cQty,   'cSales' => $cSales,
+                'dQty' => $dQty,
+                'dSales' => $dSales,
+                'cQty' => $cQty,
+                'cSales' => $cSales,
             ];
 
             $deliveryQtyTotal   += $dQty;
@@ -471,16 +473,25 @@ class AggregationService
             ->where('business_date', $date)
             ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour])
             ->get([
-                'franchise_store', 'business_date', 'item_id', 'menu_item_name',
-                'menu_item_account', 'quantity', 'net_amount', 'modification_reason',
-                'order_fulfilled_method', 'refunded', 'modified_order_amount',
+                'franchise_store',
+                'business_date',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity',
+                'net_amount',
+                'modification_reason',
+                'order_fulfilled_method',
+                'refunded',
+                'modified_order_amount',
             ]);
 
         if ($lines->isEmpty()) {
             return;
         }
 
-        $items = $lines->groupBy(fn ($r) =>
+        $items = $lines->groupBy(
+            fn($r) =>
             "{$r->franchise_store}|{$r->business_date}|{$r->item_id}|{$r->menu_item_name}|{$r->menu_item_account}"
         );
 
@@ -502,7 +513,7 @@ class AggregationService
                 'gross_sales'   => round($gross, 2),
 
                 'net_sales' => round(
-                    (float) $group->filter(fn ($r) => empty($r->modification_reason))->sum('net_amount'),
+                    (float) $group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount'),
                     2
                 ),
 
@@ -512,11 +523,12 @@ class AggregationService
                 // delivery = order_fulfilled_method == "Delivery"
                 // carryout = order_fulfilled_method != "Delivery" (including NULL)
                 'delivery_quantity' => (float) $group->where('order_fulfilled_method', 'Delivery')->sum('quantity'),
-                'carryout_quantity' => (float) $group->filter(fn ($r) =>
+                'carryout_quantity' => (float) $group->filter(
+                    fn($r) =>
                     empty($r->order_fulfilled_method) || $r->order_fulfilled_method !== 'Delivery'
                 )->sum('quantity'),
 
-                'modified_quantity' => (float) $group->filter(fn ($r) => !empty($r->modified_order_amount))->sum('quantity'),
+                'modified_quantity' => (float) $group->filter(fn($r) => !empty($r->modified_order_amount))->sum('quantity'),
                 'refunded_quantity' => (float) $group->where('refunded', 'Yes')->sum('quantity'),
             ];
 
@@ -762,7 +774,7 @@ class AggregationService
         $stores = WeeklyStoreSummary::where('year_num', $year)
             ->where(function ($q) use ($monthStart, $monthEnd) {
                 $q->whereBetween('week_start_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
-                  ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
+                    ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
             })
             ->distinct()
             ->pluck('franchise_store');
@@ -782,7 +794,7 @@ class AggregationService
             ->where('year_num', $year)
             ->where(function ($q) use ($monthStart, $monthEnd) {
                 $q->whereBetween('week_start_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
-                  ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
+                    ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
             })
             ->get();
 
@@ -848,7 +860,7 @@ class AggregationService
             ->where('year_num', $year)
             ->where(function ($q) use ($monthStart, $monthEnd) {
                 $q->whereBetween('week_start_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
-                  ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
+                    ->orWhereBetween('week_end_date', [$monthStart->toDateString(), $monthEnd->toDateString()]);
             })
             ->selectRaw('
                 item_id,
@@ -1254,12 +1266,12 @@ class AggregationService
 
         $summary['delivery_sales'] = round(
             $summary['pizza_delivery_sales']
-            + $summary['hnr_delivery_sales']
-            + $summary['bread_delivery_sales']
-            + $summary['wings_delivery_sales']
-            + $summary['beverages_delivery_sales']
-            + $summary['other_foods_delivery_sales']
-            + $summary['side_items_delivery_sales'],
+                + $summary['hnr_delivery_sales']
+                + $summary['bread_delivery_sales']
+                + $summary['wings_delivery_sales']
+                + $summary['beverages_delivery_sales']
+                + $summary['other_foods_delivery_sales']
+                + $summary['side_items_delivery_sales'],
             2
         );
 
@@ -1276,12 +1288,12 @@ class AggregationService
 
         $summary['carryout_sales'] = round(
             $summary['pizza_carryout_sales']
-            + $summary['hnr_carryout_sales']
-            + $summary['bread_carryout_sales']
-            + $summary['wings_carryout_sales']
-            + $summary['beverages_carryout_sales']
-            + $summary['other_foods_carryout_sales']
-            + $summary['side_items_carryout_sales'],
+                + $summary['hnr_carryout_sales']
+                + $summary['bread_carryout_sales']
+                + $summary['wings_carryout_sales']
+                + $summary['beverages_carryout_sales']
+                + $summary['other_foods_carryout_sales']
+                + $summary['side_items_carryout_sales'],
             2
         );
 
