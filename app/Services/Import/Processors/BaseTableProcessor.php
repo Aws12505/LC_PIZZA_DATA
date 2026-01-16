@@ -118,8 +118,14 @@ abstract class BaseTableProcessor
      */
     protected function transformData(array $row): array
     {
+        // Normalize business_date to YYYY-MM-DD for MySQL DATE columns
+        if (array_key_exists('business_date', $row) && $row['business_date'] !== null && $row['business_date'] !== '') {
+            $row['business_date'] = $this->parseDate($row['business_date']);
+        }
+
         return $row;
     }
+
 
     /**
      * Process and import data for this table
@@ -179,13 +185,13 @@ abstract class BaseTableProcessor
      * Execute import based on strategy with chunking to avoid "too many placeholders" error
      */
     protected function executeImport(
-        array $data, 
-        string $business_date, 
-        string $tableName, 
-        string $connection, 
+        array $data,
+        string $business_date,
+        string $tableName,
+        string $connection,
         string $strategy
     ): int {
-        return DB::connection($connection)->transaction(function() use ($data, $business_date, $tableName, $connection, $strategy) {
+        return DB::connection($connection)->transaction(function () use ($data, $business_date, $tableName, $connection, $strategy) {
             if ($strategy === self::STRATEGY_REPLACE) {
                 $this->deleteExistingData($business_date, $tableName, $connection);
             }
@@ -222,7 +228,6 @@ abstract class BaseTableProcessor
             ->table($tableName)
             ->where('business_date', $business_date)
             ->delete();
-
     }
 
     // ========== HELPER METHODS ==========
@@ -274,7 +279,7 @@ abstract class BaseTableProcessor
         }
         return is_numeric($value) ? $value : null;
     }
-        /**
+    /**
      * Convert to integer, handling empty strings
      */
     protected function toInteger($value): ?int
@@ -282,11 +287,11 @@ abstract class BaseTableProcessor
         if ($value === '' || $value === null) {
             return null;
         }
-        
+
         if (is_numeric($value)) {
             return (int) $value;
         }
-        
+
         return null;
     }
 

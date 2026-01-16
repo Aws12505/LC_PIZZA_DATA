@@ -15,9 +15,6 @@ class ProcessCsvImportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    // Send job logs to this dedicated file/channel
-    private string $traceChannel = 'csv_import_trace';
-
     public $timeout = 3600; // 1 hour
     public $tries = 3;
 
@@ -48,18 +45,6 @@ class ProcessCsvImportJob implements ShouldQueue
 
         $succeeded = false;
 
-        // Snapshot at job start (helps catch any rename/missing-file issues)
-        $this->trace('job_start', [
-            'attempt' => method_exists($this, 'attempts') ? $this->attempts() : null,
-            'upload_id' => $this->uploadId,
-            'filename' => $this->filename,
-            'csv_path' => $this->csvPath,
-            'csv_exists' => file_exists($this->csvPath),
-            'dir' => dirname($this->csvPath),
-            'dir_listing' => $this->safeDirList(dirname($this->csvPath)),
-            'processor_class' => $this->processorClass,
-        ]);
-
         try {
             if (!file_exists($this->csvPath)) {
                 throw new \Exception("CSV file not found (before processing): {$this->csvPath}");
@@ -80,18 +65,10 @@ class ProcessCsvImportJob implements ShouldQueue
                 'memory_mb' => $memoryPeak
             ]);
 
-            $this->trace('job_completed', [
-                'rows' => $result['rows'],
-                'dates_count' => count($result['dates'] ?? []),
-                'duration_sec' => $duration,
-                'memory_peak_mb' => $memoryPeak,
-            ]);
-
             $succeeded = true;
         } catch (\Exception $e) {
             $this->updateProgress('failed', ['error' => $e->getMessage()]);
 
-            // Log to BOTH: default laravel log + dedicated trace
             Log::error("Import job failed", [
                 'upload_id' => $this->uploadId,
                 'file' => $this->filename,
@@ -101,43 +78,15 @@ class ProcessCsvImportJob implements ShouldQueue
                 'trace' => $e->getTraceAsString()
             ]);
 
-            $this->trace('job_failed', [
-                'error' => $e->getMessage(),
-                'exception_class' => get_class($e),
-                'attempt' => method_exists($this, 'attempts') ? $this->attempts() : null,
-                'csv_exists_now' => file_exists($this->csvPath),
-                'dir_listing_now' => $this->safeDirList(dirname($this->csvPath)),
-            ], 'error');
-
             throw $e;
         } finally {
             $attempt = method_exists($this, 'attempts') ? $this->attempts() : 1;
             $finalAttempt = ($attempt >= $this->tries);
 
-            // Only delete CSV if succeeded OR final attempt (no more retries)
             if ($succeeded || $finalAttempt) {
                 if (file_exists($this->csvPath)) {
                     @unlink($this->csvPath);
-                    $this->trace('cleanup_deleted_csv', [
-                        'csv_path' => $this->csvPath,
-                        'deleted' => true,
-                        'reason' => $succeeded ? 'succeeded' : 'final_attempt',
-                    ]);
-                } else {
-                    $this->trace('cleanup_deleted_csv', [
-                        'csv_path' => $this->csvPath,
-                        'deleted' => false,
-                        'reason' => 'file_missing_at_cleanup',
-                        'dir_listing_now' => $this->safeDirList(dirname($this->csvPath)),
-                    ], 'warning');
                 }
-            } else {
-                $this->trace('cleanup_skipped_csv_delete', [
-                    'csv_path' => $this->csvPath,
-                    'reason' => 'will_retry',
-                    'attempt' => $attempt,
-                    'tries' => $this->tries,
-                ]);
             }
 
             $this->cleanupIfComplete();
@@ -146,13 +95,6 @@ class ProcessCsvImportJob implements ShouldQueue
 
     protected function streamCsvOptimized($processor): array
     {
-        // Snapshot right before opening the file (helps pinpoint “rename” timing)
-        $this->trace('pre_fopen', [
-            'csv_path' => $this->csvPath,
-            'csv_exists' => file_exists($this->csvPath),
-            'dir_listing' => $this->safeDirList(dirname($this->csvPath)),
-        ]);
-
         $handle = fopen($this->csvPath, 'r');
         if ($handle === false) {
             throw new \Exception("Cannot open CSV file: {$this->csvPath}");
@@ -169,11 +111,6 @@ class ProcessCsvImportJob implements ShouldQueue
             $normalized = str_replace([' ', '-', '.'], '_', $normalized);
             return preg_replace('/[^a-z0-9_]/', '', $normalized);
         }, $headers);
-
-        $this->trace('headers_normalized', [
-            'header_count' => count($headers),
-            'headers' => array_slice($headers, 0, 80),
-        ]);
 
         $chunkSize = 500;
         $chunk = [];
@@ -196,9 +133,14 @@ class ProcessCsvImportJob implements ShouldQueue
 
             $rowData = array_combine($headers, $row);
 
-            // --- FIX: normalize business_date if present (prevents MySQL DATE errors like 12/9/2025)
+            // FIX: normalize BusinessDate (usually becomes "businessdate")
+            if (isset($rowData['businessdate']) && $rowData['businessdate'] !== '' && $rowData['businessdate'] !== null) {
+                $rowData['businessdate'] = $this->normalizeToYmd($rowData['businessdate']);
+            }
+
+            // In case some files already provide business_date
             if (isset($rowData['business_date']) && $rowData['business_date'] !== '' && $rowData['business_date'] !== null) {
-                $rowData['business_date'] = $this->normalizeBusinessDate($rowData['business_date'], $rowNumber);
+                $rowData['business_date'] = $this->normalizeToYmd($rowData['business_date']);
             }
 
             $chunk[] = $rowData;
@@ -208,12 +150,10 @@ class ProcessCsvImportJob implements ShouldQueue
                 $totalRows += $processed;
 
                 $this->updateProgress('processing', ['processed_rows' => $totalRows]);
-
                 $chunk = [];
 
                 if ($rowNumber % 5000 === 0) {
                     gc_collect_cycles();
-                    $this->trace('gc', ['rowNumber' => $rowNumber, 'totalRows' => $totalRows]);
                 }
             }
         }
@@ -232,29 +172,10 @@ class ProcessCsvImportJob implements ShouldQueue
         ];
     }
 
-    /**
-     * Convert any incoming business_date format to YYYY-MM-DD (or null if impossible)
-     */
-    private function normalizeBusinessDate($value, int $rowNumber): ?string
+    private function normalizeToYmd($value): string
     {
-        $raw = trim((string)$value);
-
-        // Common format from your error: 12/9/2025
-        // Carbon can parse this, but we’ll log failures.
-        try {
-            $normalized = Carbon::parse($raw)->toDateString();
-            return $normalized;
-        } catch (\Exception $e) {
-            $this->trace('business_date_parse_failed', [
-                'row' => $rowNumber,
-                'raw_value' => $raw,
-                'error' => $e->getMessage(),
-            ], 'warning');
-
-            // Returning null may still fail if DB column is NOT NULL / part of unique keys.
-            // If you want to hard-fail instead, throw here.
-            return null;
-        }
+        // Throws if invalid -> job fails clearly instead of inserting bad dates
+        return Carbon::parse(trim((string)$value))->toDateString();
     }
 
     protected function processChunk(array $chunk, $processor, array &$detectedDates): int
@@ -266,7 +187,7 @@ class ProcessCsvImportJob implements ShouldQueue
             $processor->process($dateData, $date);
             $processed += count($dateData);
 
-            if (!in_array($date, $detectedDates)) {
+            if (!in_array($date, $detectedDates, true)) {
                 $detectedDates[] = $date;
             }
         }
@@ -279,9 +200,6 @@ class ProcessCsvImportJob implements ShouldQueue
         $grouped = [];
         foreach ($chunk as $row) {
             $date = $this->extractDate($row);
-            if (!isset($grouped[$date])) {
-                $grouped[$date] = [];
-            }
             $grouped[$date][] = $row;
         }
         return $grouped;
@@ -289,13 +207,12 @@ class ProcessCsvImportJob implements ShouldQueue
 
     protected function extractDate(array $row): string
     {
-        // Prefer already-normalized business_date if present
+        // Prefer known columns first
+        if (!empty($row['businessdate'])) {
+            return Carbon::parse($row['businessdate'])->toDateString();
+        }
         if (!empty($row['business_date'])) {
-            try {
-                return Carbon::parse($row['business_date'])->toDateString();
-            } catch (\Exception $e) {
-                // fall through
-            }
+            return Carbon::parse($row['business_date'])->toDateString();
         }
 
         foreach ($row as $key => $value) {
@@ -303,7 +220,7 @@ class ProcessCsvImportJob implements ShouldQueue
                 try {
                     return Carbon::parse($value)->toDateString();
                 } catch (\Exception $e) {
-                    // Continue searching
+                    // continue
                 }
             }
         }
@@ -323,7 +240,6 @@ class ProcessCsvImportJob implements ShouldQueue
             'storage_path' => null
         ]);
 
-        // Keep status updated (optional but recommended)
         $progress['status'] = $status;
         $progress['current_file'] = $this->filename;
 
@@ -370,13 +286,6 @@ class ProcessCsvImportJob implements ShouldQueue
 
         if ($progress['processed_files'] >= $progress['total_files']) {
             $storagePath = $progress['storage_path'];
-
-            $this->trace('cleanupIfComplete', [
-                'upload_id' => $this->uploadId,
-                'storage_path' => $storagePath,
-                'dir_listing_before_delete' => $this->safeDirList($storagePath),
-            ]);
-
             if (is_dir($storagePath)) {
                 $this->deleteDirectory($storagePath);
             }
@@ -398,33 +307,5 @@ class ProcessCsvImportJob implements ShouldQueue
         }
 
         @rmdir($path);
-    }
-
-    private function trace(string $event, array $context = [], string $level = 'info'): void
-    {
-        $payload = array_merge([
-            'event' => $event,
-            'upload_id' => $this->uploadId ?? null,
-            'filename' => $this->filename ?? null,
-        ], $context);
-
-        if ($level === 'error') {
-            Log::channel($this->traceChannel)->error($event, $payload);
-        } elseif ($level === 'warning') {
-            Log::channel($this->traceChannel)->warning($event, $payload);
-        } else {
-            Log::channel($this->traceChannel)->info($event, $payload);
-        }
-    }
-
-    private function safeDirList(string $dir): ?array
-    {
-        try {
-            if (!is_dir($dir)) return null;
-            $items = array_values(array_diff(scandir($dir), ['.', '..']));
-            return array_slice($items, 0, 200);
-        } catch (\Throwable $e) {
-            return ['<dir_list_failed>' => $e->getMessage()];
-        }
     }
 }
