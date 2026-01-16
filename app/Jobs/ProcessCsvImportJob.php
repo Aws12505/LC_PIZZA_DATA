@@ -32,9 +32,9 @@ class ProcessCsvImportJob implements ShouldQueue
     protected int $totalFiles;
 
     public function __construct(
-        string $uploadId, 
-        string $csvPath, 
-        string $filename, 
+        string $uploadId,
+        string $csvPath,
+        string $filename,
         string $processorClass,
         int $totalFiles
     ) {
@@ -49,11 +49,17 @@ class ProcessCsvImportJob implements ShouldQueue
     {
         ini_set('memory_limit', '2G');
         $startTime = microtime(true);
-        
+
+        $succeeded = false;
+
         try {
+            // Bail early with a clearer error if file is missing
+            if (!file_exists($this->csvPath)) {
+                throw new \Exception("CSV file not found (before processing): {$this->csvPath}");
+            }
+
             $this->updateProgress('processing');
-            
-            // OPTIMIZED: Stream CSV using YOUR pattern
+
             $processor = new $this->processorClass();
             $result = $this->streamCsvOptimized($processor);
 
@@ -67,25 +73,33 @@ class ProcessCsvImportJob implements ShouldQueue
                 'memory_mb' => $memoryPeak
             ]);
 
+            $succeeded = true;
         } catch (\Exception $e) {
             $this->updateProgress('failed', ['error' => $e->getMessage()]);
-            
+
             Log::error("Import job failed", [
                 'upload_id' => $this->uploadId,
                 'file' => $this->filename,
+                'csv_path' => $this->csvPath,
+                'attempt' => method_exists($this, 'attempts') ? $this->attempts() : null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
             throw $e;
-
         } finally {
-            // CLEANUP: Delete CSV file after processing
-            if (file_exists($this->csvPath)) {
-                @unlink($this->csvPath);
+            // Only delete the CSV if the job succeeded
+            // OR if this was the final attempt (so no more retries will happen)
+            $attempt = method_exists($this, 'attempts') ? $this->attempts() : 1;
+            $finalAttempt = ($attempt >= $this->tries);
+
+            if ($succeeded || $finalAttempt) {
+                if (file_exists($this->csvPath)) {
+                    @unlink($this->csvPath);
+                }
             }
 
-            // Check if all files processed, then delete entire directory
+            // Only cleanup the directory when the whole import is complete
             $this->cleanupIfComplete();
         }
     }
@@ -110,7 +124,7 @@ class ProcessCsvImportJob implements ShouldQueue
             throw new \Exception("CSV file has no headers");
         }
 
-        $headers = array_map(function($header) {
+        $headers = array_map(function ($header) {
             $normalized = strtolower(trim($header));
             $normalized = str_replace([' ', '-', '.'], '_', $normalized);
             return preg_replace('/[^a-z0-9_]/', '', $normalized);
@@ -142,12 +156,12 @@ class ProcessCsvImportJob implements ShouldQueue
             if (count($chunk) >= $chunkSize) {
                 $processed = $this->processChunk($chunk, $processor, $detectedDates);
                 $totalRows += $processed;
-                
+
                 // Update real-time progress
                 $this->updateProgress('processing', ['processed_rows' => $totalRows]);
-                
+
                 $chunk = []; // Clear chunk
-                
+
                 // Garbage collection every 5000 rows for memory optimization
                 if ($rowNumber % 5000 === 0) {
                     gc_collect_cycles();
@@ -176,18 +190,18 @@ class ProcessCsvImportJob implements ShouldQueue
     protected function processChunk(array $chunk, $processor, array &$detectedDates): int
     {
         $grouped = $this->groupByDate($chunk);
-        
+
         $processed = 0;
         foreach ($grouped as $date => $dateData) {
             // Use YOUR existing processor->process($data, $date) method
             $processor->process($dateData, $date);
             $processed += count($dateData);
-            
+
             if (!in_array($date, $detectedDates)) {
                 $detectedDates[] = $date;
             }
         }
-        
+
         return $processed;
     }
 
@@ -282,7 +296,7 @@ class ProcessCsvImportJob implements ShouldQueue
     protected function cleanupIfComplete(): void
     {
         $progress = Cache::get("import_progress_{$this->uploadId}");
-        
+
         if (!$progress || !isset($progress['storage_path'])) {
             return;
         }
@@ -290,7 +304,7 @@ class ProcessCsvImportJob implements ShouldQueue
         // Check if all files processed
         if ($progress['processed_files'] >= $progress['total_files']) {
             $storagePath = $progress['storage_path'];
-            
+
             if (is_dir($storagePath)) {
                 $this->deleteDirectory($storagePath);
             }
