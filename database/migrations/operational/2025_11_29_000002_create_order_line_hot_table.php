@@ -47,7 +47,7 @@ return new class extends Migration
             // Modifications
             $table->decimal('modified_order_amount', 15, 2)->nullable();
             $table->string('modification_reason')->nullable();
-            $table->string('payment_methods', 50)->nullable();
+            $table->string('payment_methods', 100)->nullable();
             $table->string('refunded', 50)->nullable();
 
             // Laravel timestamps

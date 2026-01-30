@@ -48,7 +48,7 @@ return new class extends Migration
             // Modifications
             $table->decimal('modified_order_amount', 15, 2)->nullable();
             $table->string('modification_reason')->nullable();
-            $table->string('payment_methods', 50)->nullable();
+            $table->string('payment_methods', 100)->nullable();
             $table->string('refunded', 50)->nullable();
 
             // Laravel timestamps
@@ -99,7 +99,7 @@ return new class extends Migration
         $partitions[] = "PARTITION p_future VALUES LESS THAN MAXVALUE";
 
         $partitionSql = "ALTER TABLE {$tableName} 
-            PARTITION BY RANGE (YEAR(business_date) * 100 + MONTH(business_date)) (" 
+            PARTITION BY RANGE (YEAR(business_date) * 100 + MONTH(business_date)) ("
             . implode(", ", $partitions) . ")";
 
         DB::connection($this->connection)->statement($partitionSql);
