@@ -23,7 +23,7 @@ Route::prefix('export')->group(function () {
     Route::get('json', [ExportingController::class, 'exportJson'])->name('export.json');
 });
 
-Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dspr']);
+Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dsprLite']);
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // EXAMPLE REQUESTS
