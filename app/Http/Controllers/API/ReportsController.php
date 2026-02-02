@@ -56,9 +56,6 @@ class ReportsController extends Controller
     // Core builder (cached)
     // ---------------------------------------------------------------------
 
-    /**
-     * Build the DSPR Lite payload (pure, deterministic, cache-safe)
-     */
     private function buildReport(string $store, string $date): array
     {
         $day = CarbonImmutable::parse($date)->startOfDay();
@@ -122,11 +119,7 @@ class ReportsController extends Controller
 
     private function cacheKey(string $store, string $date): string
     {
-        return sprintf(
-            'reports:dspr-lite:%s:%s',
-            strtolower($store),
-            $date
-        );
+        return sprintf('reports:dspr-lite:%s:%s', strtolower($store), $date);
     }
 
     // ---------------------------------------------------------------------
@@ -148,9 +141,6 @@ class ReportsController extends Controller
     // Week helpers
     // ---------------------------------------------------------------------
 
-    /**
-     * ISO week, Tuesday → Monday
-     */
     private function isoBusinessWeek(CarbonImmutable $date): array
     {
         $start = $date->startOfWeek(CarbonInterface::TUESDAY);
@@ -199,32 +189,40 @@ class ReportsController extends Controller
     }
 
     // ---------------------------------------------------------------------
-    // Ingredients
+    // ✅ FIXED: Top Ingredients (uses correct schema)
     // ---------------------------------------------------------------------
 
     private function topIngredientsForDay(string $store, CarbonImmutable $day): array
     {
-        $src = DatabaseRouter::routedQueries(
+        $queries = DatabaseRouter::routedQueries(
             'alta_inventory_ingredient_usage',
             $day->toMutable(),
             $day->toMutable()
         );
 
-        $union = array_shift($src);
-        foreach ($src as $q) {
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
             $union->unionAll($q);
         }
 
         return DB::query()
             ->fromSub($union, 'u')
             ->where('franchise_store', $store)
-            ->groupBy('ingredient_name')
-            ->orderByDesc(DB::raw('SUM(quantity_used)'))
+            ->groupBy('ingredient_id', 'ingredient_description')
+            ->orderByDesc(DB::raw('SUM(actual_usage)'))
             ->limit(3)
             ->get([
-                'ingredient_name',
-                DB::raw('SUM(quantity_used) as quantity_used'),
+                'ingredient_id',
+                'ingredient_description',
+                DB::raw('SUM(actual_usage) as total_actual_usage'),
             ])
+            ->map(static function ($row) {
+                return [
+                    'ingredient_id' => $row->ingredient_id,
+                    'ingredient_description' => $row->ingredient_description,
+                    'actual_usage' => round((float) $row->total_actual_usage, 2),
+                ];
+            })
             ->toArray();
     }
 
@@ -258,14 +256,14 @@ class ReportsController extends Controller
 
     private function totalDepositForDay(string $store, CarbonImmutable $day): float
     {
-        $src = DatabaseRouter::routedQueries(
+        $queries = DatabaseRouter::routedQueries(
             'financial_views',
             $day->toMutable(),
             $day->toMutable()
         );
 
-        $union = array_shift($src);
-        foreach ($src as $q) {
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
             $union->unionAll($q);
         }
 
@@ -282,39 +280,37 @@ class ReportsController extends Controller
 
     private function altaInventoryWasteForDay(string $store, CarbonImmutable $day): float
     {
-        $src = DatabaseRouter::routedQueries(
+        $queries = DatabaseRouter::routedQueries(
             'alta_inventory_waste',
             $day->toMutable(),
             $day->toMutable()
         );
 
-        $union = array_shift($src);
-        foreach ($src as $q) {
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
             $union->unionAll($q);
         }
 
         return (float) DB::query()
             ->fromSub($union, 'w')
-            ->where('franchise_store', $store)
             ->sum('waste_cost');
     }
 
     private function normalWasteForDay(string $store, CarbonImmutable $day): float
     {
-        $src = DatabaseRouter::routedQueries(
+        $queries = DatabaseRouter::routedQueries(
             'waste',
             $day->toMutable(),
             $day->toMutable()
         );
 
-        $union = array_shift($src);
-        foreach ($src as $q) {
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
             $union->unionAll($q);
         }
 
         return (float) DB::query()
             ->fromSub($union, 'w')
-            ->where('franchise_store', $store)
             ->sum('waste_cost');
     }
 
