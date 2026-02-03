@@ -137,6 +137,9 @@ return new class extends Migration
             $table->decimal('digital_sales', 12, 2)->default(0);
             $table->decimal('digital_penetration', 5, 2)->default(0);
 
+            $table->integer('hnr_transactions')->default(0);
+            $table->integer('hnr_broken_promises')->default(0);
+
             $table->timestamps();
             $table->unique(['franchise_store', 'year_num', 'week_num'], 'unique_weekly_store_summary');
             $table->index(['year_num', 'week_num']);

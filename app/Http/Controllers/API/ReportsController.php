@@ -15,6 +15,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Models\Aggregation\DailyStoreSummary;
 
 /**
  * DSPR Lite Report Controller
@@ -68,6 +69,7 @@ class ReportsController extends Controller
         // Same business week last year (Tue–Mon)
         $lastYearWeekStart = $weekStart->subWeeks(52);
         $lastYearWeekEnd   = $weekEnd->subWeeks(52);
+        $daily = $this->dailySummary($store, $day);
 
         return [
             'filtering' => [
@@ -92,15 +94,17 @@ class ReportsController extends Controller
             'day' => [
                 'hourly_sales_and_channels' => $this->hourlySalesByChannel($store, $day),
 
-                'total_cash_sales' => $this->summaryQuery->getCashSales($store, $day->toMutable(), $day->toMutable()),
+                'total_cash_sales' => (float) ($daily->cash_sales ?? 0),
                 'total_deposit' => $this->totalDepositForDay($store, $day),
 
-                'over_short' => $this->summaryQuery->getOverShort($store, $day->toMutable(), $day->toMutable()),
+                'over_short' => (float) ($daily->over_short ?? 0),
 
                 'refunded_orders' => [
-                    'count' => $this->summaryQuery->getRefundedOrders($store, $day->toMutable(), $day->toMutable()),
-                    'sales' => $this->summaryQuery->getRefundAmount($store, $day->toMutable(), $day->toMutable()),
+                    'count' => (int) ($daily->refund_orders ?? 0),
+                    'sales' => (float) ($daily->refund_amount ?? 0),
                 ],
+
+                'customer_count' => (int) ($daily->customer_count ?? 0),
 
                 'waste' => [
                     'alta_inventory' => $this->altaInventoryWasteForDay($store, $day),
@@ -112,6 +116,13 @@ class ReportsController extends Controller
                 'portal' => $this->portalMetrics($store, $day),
             ],
         ];
+    }
+
+    private function dailySummary(string $store, CarbonImmutable $day): ?DailyStoreSummary
+    {
+        return DailyStoreSummary::where('franchise_store', $store)
+            ->where('business_date', $day->toDateString())
+            ->first();
     }
 
     // ---------------------------------------------------------------------

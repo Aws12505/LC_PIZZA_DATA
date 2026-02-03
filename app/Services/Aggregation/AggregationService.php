@@ -201,6 +201,8 @@ class AggregationService
             ->where('refunded', 'Yes')
             ->sum('royalty_obligation');
 
+        $hnrTransactions = (int) (clone $baseOrders)->where('hnrOrder', 'Yes')->count();
+        $hnrBrokenPromises = (int) (clone $baseOrders)->where('hnrOrder', 'Yes')->where('broken_promise', 'Yes')->count();
         // ORDERS
         $totalOrders = (int) (clone $baseOrders)->where('customer_count', '>', 0)->distinct()->count('order_id');
 
@@ -431,6 +433,9 @@ class AggregationService
             'digital_orders'      => $digitalOrders,
             'digital_sales'       => round($digitalSales, 2),
             'digital_penetration' => $totalOrders > 0 ? round(($digitalOrders / $totalOrders) * 100, 2) : 0,
+
+            'hnr_transactions'    => $hnrTransactions,
+            'hnr_broken_promises' => $hnrBrokenPromises,
         ];
 
         HourlyStoreSummary::updateOrCreate(
@@ -1233,6 +1238,9 @@ class AggregationService
             // Digital
             'digital_orders' => (int) $records->sum('digital_orders'),
             'digital_sales'  => round((float) $records->sum('digital_sales'), 2),
+
+            'hnr_transactions' => (int) $records->sum('hnr_transactions'),
+            'hnr_broken_promises' => (int) $records->sum('hnr_broken_promises'),
         ];
 
         // Recompute derived rates

@@ -128,6 +128,9 @@ return new class extends Migration
             $table->decimal('digital_sales', 12, 2)->default(0);
             $table->decimal('digital_penetration', 5, 2)->default(0);
 
+            $table->integer('hnr_transactions')->default(0);
+            $table->integer('hnr_broken_promises')->default(0);
+
             $table->timestamps();
             $table->primary(['id', 'business_date']);
             $table->unique(['franchise_store', 'business_date', 'hour'], 'unique_hourly_store_summary');
