@@ -112,7 +112,8 @@ class ReportsController extends Controller
                 ],
 
                 'total_tips' => $this->summaryQuery->getTotalTips($store, $day->toMutable(), $day->toMutable()),
-
+                'hnr_transactions' => (int) ($daily->hnr_transactions ?? 0),
+                'hnr_broken_promises' => (int) ($daily->hnr_broken_promises ?? 0),
                 'portal' => $this->portalMetrics($store, $day),
             ],
         ];
