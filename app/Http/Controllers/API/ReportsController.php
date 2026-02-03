@@ -238,7 +238,7 @@ class ReportsController extends Controller
             ->orderBy('hour')
             ->get([
                 'hour',
-                'gross_sales',
+                'royalty_obligation',
                 'phone_sales',
                 'call_center_sales',
                 'drive_thru_sales',
