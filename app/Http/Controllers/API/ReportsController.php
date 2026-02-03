@@ -65,15 +65,9 @@ class ReportsController extends Controller
         $prevWeekStart = $weekStart->subWeek();
         $prevWeekEnd   = $weekEnd->subWeek();
 
-        $isoWeek = $day->isoWeek();
-        $isoYear = $day->isoWeekYear() - 1;
-
-        $lastYearSameWeekDay = CarbonImmutable::now()
-            ->setISODate($isoYear, $isoWeek)
-            ->startOfDay();
-
-        [$lastYearWeekStart, $lastYearWeekEnd] =
-            $this->isoBusinessWeek($lastYearSameWeekDay);
+        // Same business week last year (Tue–Mon)
+        $lastYearWeekStart = $weekStart->subWeeks(52);
+        $lastYearWeekEnd   = $weekEnd->subWeeks(52);
 
         return [
             'filtering' => [
