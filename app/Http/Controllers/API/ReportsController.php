@@ -291,14 +291,11 @@ class ReportsController extends Controller
             $union->unionAll($q);
         }
 
-        /**
-         * Alta inventory waste cost is derived:
-         * waste_qty * ingredient_unit_cost
-         */
         return (float) DB::query()
             ->fromSub($union, 'w')
             ->where('franchise_store', $store)
-            ->sum(DB::raw('waste_qty * ingredient_unit_cost'));
+            ->selectRaw('SUM(unit_food_cost * qty) as total_waste_cost')
+            ->value('total_waste_cost') ?? 0.0;
     }
 
     private function normalWasteForDay(string $store, CarbonImmutable $day): float
@@ -314,15 +311,13 @@ class ReportsController extends Controller
             $union->unionAll($q);
         }
 
-        /**
-         * Normal waste cost is also derived from qty * unit_cost
-         * (No waste_cost column exists)
-         */
         return (float) DB::query()
             ->fromSub($union, 'w')
             ->where('franchise_store', $store)
-            ->sum(DB::raw('waste_qty * unit_cost'));
+            ->selectRaw('SUM(item_cost * quantity) as total_waste_cost')
+            ->value('total_waste_cost') ?? 0.0;
     }
+
 
     // ---------------------------------------------------------------------
     // Portal
