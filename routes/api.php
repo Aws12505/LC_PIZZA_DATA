@@ -18,12 +18,12 @@ use App\Http\Controllers\API\{
 // EXPORT ROUTES
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-Route::prefix('export')->group(function () {
+Route::prefix('export')->middleware(['auth.token.store'])->group(function () {
     Route::get('csv', [ExportingController::class, 'exportCSV'])->name('export.csv');
     Route::get('json', [ExportingController::class, 'exportJson'])->name('export.json');
 });
 
-Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dsprLite']);
+Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dsprLite'])->middleware(['auth.token.store']);
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // EXAMPLE REQUESTS
