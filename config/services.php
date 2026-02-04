@@ -41,24 +41,26 @@ return [
         'portal_server' => env('LC_GATEWAY_PORTAL_SERVER'),
         'hmac_user'     => env('LC_GATEWAY_HMAC_USER'),
         'hmac_key'      => env('LC_GATEWAY_HMAC_KEY'),
-      ],
+    ],
 
     'auth_server' => [
-        'base_url'     => env('AUTH_SERVER_BASE_URL', 'http://localhost'),
-        'verify_path'  => env('AUTH_TOKEN_VERIFY_PATH', '/auth/token-verify'),
-        'service_name' => env('SERVICE_NAME', 'data'),
-        'call_token'   => env('SERVICE_CALL_TOKEN'),
+        'base_url'    => env('AUTH_SERVER_BASE_URL', 'http://auth-service.local'),
+        'verify_path' => env('AUTH_SERVER_VERIFY_PATH', '/api/v1/auth/token/verify'),
+        'service_name' => env('AUTH_SERVER_SERVICE_NAME', 'my-service'),
+        'call_token'  => env('AUTH_SERVER_CALL_TOKEN', ''),
 
-        'timeout'   => (int) env('AUTH_TIMEOUT_SECONDS', 2),
-        'retries'   => (int) env('AUTH_RETRIES', 2),
-        'retry_ms'  => (int) env('AUTH_RETRY_BACKOFF_MS', 100),
-        'cache_ttl' => (int) env('AUTH_DECISION_CACHE_TTL', 30),
+        'timeout'  => (int) env('AUTH_SERVER_TIMEOUT', 3),
+        'retries'  => (int) env('AUTH_SERVER_RETRIES', 1),
+        'retry_ms' => (int) env('AUTH_SERVER_RETRY_MS', 100),
+
+        // Redis caching on client side
+        'cache_ttl' => (int) env('AUTH_SERVER_CACHE_TTL', 30),
     ],
 
     'old_api' => [
         'base_url' => env('OLD_API_BASE_URL', 'http://localhost'),
         'api_key' => env('OLD_API_KEY'),
     ],
-    
+
     'X_SECRET_KEY' => env('X_SECRET_KEY'),
 ];
