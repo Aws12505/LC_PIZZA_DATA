@@ -7,66 +7,111 @@ class DailyStoreSummary extends AggregationModel
     protected $table = 'daily_store_summary';
 
     protected $fillable = [
-        'franchise_store', 'business_date',
+        'franchise_store',
+        'business_date',
 
         // Sales
-        'royalty_obligation', 'gross_sales', 'net_sales', 'refund_amount',
+        'royalty_obligation',
+        'gross_sales',
+        'net_sales',
+        'refund_amount',
 
         // Orders
-        'total_orders', 'completed_orders', 'cancelled_orders',
-        'modified_orders', 'refunded_orders', 'avg_order_value',
+        'total_orders',
+        'completed_orders',
+        'cancelled_orders',
+        'modified_orders',
+        'refunded_orders',
+        'avg_order_value',
         'customer_count',
 
         // Channels
-        'phone_orders', 'phone_sales',
-        'website_orders', 'website_sales',
-        'mobile_orders', 'mobile_sales',
-        'call_center_orders', 'call_center_sales',
-        'drive_thru_orders', 'drive_thru_sales',
+        'phone_orders',
+        'phone_sales',
+        'website_orders',
+        'website_sales',
+        'mobile_orders',
+        'mobile_sales',
+        'call_center_orders',
+        'call_center_sales',
+        'drive_thru_orders',
+        'drive_thru_sales',
 
         // Marketplace
-        'doordash_orders', 'doordash_sales',
-        'ubereats_orders', 'ubereats_sales',
-        'grubhub_orders', 'grubhub_sales',
+        'doordash_orders',
+        'doordash_sales',
+        'ubereats_orders',
+        'ubereats_sales',
+        'grubhub_orders',
+        'grubhub_sales',
 
         // Fulfillment totals (SUM of category splits)
-        'delivery_orders', 'delivery_sales',
-        'carryout_orders', 'carryout_sales',
+        'delivery_orders',
+        'delivery_sales',
+        'carryout_orders',
+        'carryout_sales',
 
         // ✅ Category splits (Delivery vs Carryout)
-        'pizza_delivery_quantity', 'pizza_delivery_sales',
-        'pizza_carryout_quantity', 'pizza_carryout_sales',
+        'pizza_delivery_quantity',
+        'pizza_delivery_sales',
+        'pizza_carryout_quantity',
+        'pizza_carryout_sales',
 
-        'hnr_delivery_quantity', 'hnr_delivery_sales',
-        'hnr_carryout_quantity', 'hnr_carryout_sales',
+        'hnr_delivery_quantity',
+        'hnr_delivery_sales',
+        'hnr_carryout_quantity',
+        'hnr_carryout_sales',
 
-        'bread_delivery_quantity', 'bread_delivery_sales',
-        'bread_carryout_quantity', 'bread_carryout_sales',
+        'bread_delivery_quantity',
+        'bread_delivery_sales',
+        'bread_carryout_quantity',
+        'bread_carryout_sales',
 
-        'wings_delivery_quantity', 'wings_delivery_sales',
-        'wings_carryout_quantity', 'wings_carryout_sales',
+        'wings_delivery_quantity',
+        'wings_delivery_sales',
+        'wings_carryout_quantity',
+        'wings_carryout_sales',
 
-        'beverages_delivery_quantity', 'beverages_delivery_sales',
-        'beverages_carryout_quantity', 'beverages_carryout_sales',
+        'beverages_delivery_quantity',
+        'beverages_delivery_sales',
+        'beverages_carryout_quantity',
+        'beverages_carryout_sales',
 
-        'other_foods_delivery_quantity', 'other_foods_delivery_sales',
-        'other_foods_carryout_quantity', 'other_foods_carryout_sales',
+        'other_foods_delivery_quantity',
+        'other_foods_delivery_sales',
+        'other_foods_carryout_quantity',
+        'other_foods_carryout_sales',
 
-        'side_items_delivery_quantity', 'side_items_delivery_sales',
-        'side_items_carryout_quantity', 'side_items_carryout_sales',
+        'side_items_delivery_quantity',
+        'side_items_delivery_sales',
+        'side_items_carryout_quantity',
+        'side_items_carryout_sales',
 
         // Financial
-        'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
+        'sales_tax',
+        'delivery_fees',
+        'delivery_tips',
+        'store_tips',
+        'total_tips',
 
         // Payments
-        'cash_sales', 'over_short',
+        'cash_sales',
+        'over_short',
 
         // Portal
-        'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-        'portal_on_time_orders', 'portal_on_time_rate',
+        'portal_eligible_orders',
+        'portal_used_orders',
+        'portal_usage_rate',
+        'portal_on_time_orders',
+        'portal_on_time_rate',
 
         // Digital
-        'digital_orders', 'digital_sales', 'digital_penetration',
+        'digital_orders',
+        'digital_sales',
+        'digital_penetration',
+
+        'hnr_transactions',
+        'hnr_broken_promises'
     ];
 
     protected $casts = [
