@@ -44,20 +44,7 @@ class AuthTokenStoreScopeMiddleware
         $cache = Cache::store('redis');
         $cacheKey = $this->verifyCacheKey($serviceName, $userToken, $request, $storeContext);
 
-        // $verify = $cache->remember($cacheKey, $cacheTtl, function () use (
-        //     $baseUrl,
-        //     $verifyPath,
-        //     $serviceName,
-        //     $callToken,
-        //     $timeout,
-        //     $retries,
-        //     $retryMs,
-        //     $userToken,
-        //     $request,
-        //     $storeContext
-        // ) {
-        //     return
-        $verify =   $this->verifyWithAuthServer(
+        $verify = $cache->remember($cacheKey, $cacheTtl, function () use (
             $baseUrl,
             $verifyPath,
             $serviceName,
@@ -68,8 +55,20 @@ class AuthTokenStoreScopeMiddleware
             $userToken,
             $request,
             $storeContext
-        );
-        // });
+        ) {
+            return $this->verifyWithAuthServer(
+                $baseUrl,
+                $verifyPath,
+                $serviceName,
+                $callToken,
+                $timeout,
+                $retries,
+                $retryMs,
+                $userToken,
+                $request,
+                $storeContext
+            );
+        });
 
         // 5) Enforce BOTH token validity + authorization decision
         $active = (bool) ($verify['active'] ?? false);
