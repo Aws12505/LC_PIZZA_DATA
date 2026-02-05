@@ -4,6 +4,10 @@ namespace App\Services\Import\Processors;
 
 class WasteProcessor extends BaseTableProcessor
 {
+    protected function getImportStrategy(): string
+    {
+        return self::STRATEGY_REPLACE;
+    }
     protected function getTableName(): string
     {
         return 'waste';
