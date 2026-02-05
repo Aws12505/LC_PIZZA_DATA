@@ -71,6 +71,7 @@
             justify-content:space-between;
             gap:16px;
             flex: 0 0 auto;
+            flex-wrap: wrap;
         }
 
         .brand{
@@ -98,6 +99,30 @@
             font-weight: 700;
             color: var(--muted);
             font-size: .92rem;
+        }
+
+        /* ✅ NEW: top actions (nav + secret) */
+        .top-actions{
+            display:flex;
+            align-items:center;
+            gap:12px;
+            flex-wrap:wrap;
+        }
+        .secret-input{
+            width: min(340px, 90vw);
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0,0,0,0.45);
+            color: var(--text);
+            font-size: .95rem;
+            font-family: inherit;
+            outline:none;
+            font-weight: 800;
+        }
+        .secret-input:focus{
+            border-color: rgba(255,65,54,.65);
+            box-shadow: var(--focus);
         }
 
         /* Card */
@@ -400,6 +425,7 @@
             user-select:none;
             white-space:nowrap;
             transition: transform .12s ease, opacity .12s ease, border-color .12s ease, background .12s ease;
+            text-decoration: none;
         }
         .btn:focus{ outline:none; box-shadow: var(--focus); }
         .btn:hover:not(:disabled){ transform: translateY(-1px); }
@@ -754,6 +780,7 @@
             .file-item{ grid-template-columns: 1fr; }
             .file-icon{ display:none; }
             .file-actions-inner .btn{ width:100%; }
+            .secret-input{ width: 100%; }
         }
 
         /* ===== MENU PORTAL (prevents dropdown from breaking layout / being clipped) ===== */
@@ -765,6 +792,48 @@
         }
         .menu-portal .proc-menu{
             pointer-events: auto;
+        }
+
+        /* ✅ NEW: LOCK OVERLAY (auto-lock until secret entered) */
+        .ui-lock{
+            position:absolute;
+            inset:0;
+            z-index: 9000;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background: rgba(0,0,0,0.88);
+            backdrop-filter: blur(6px);
+        }
+        .ui-lock.hidden{ display:none; }
+        .lock-box{
+            max-width: 520px;
+            width: calc(100% - 36px);
+            padding: 18px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(0,0,0,0.80);
+            box-shadow: var(--shadow);
+            text-align:center;
+        }
+        .lock-box h2{
+            font-size: 1.15rem;
+            font-weight: 900;
+            display:flex;
+            gap:10px;
+            align-items:center;
+            justify-content:center;
+            margin-bottom: 8px;
+        }
+        .lock-box h2 i{ color: var(--secondary); }
+        .lock-box p{
+            color: var(--muted);
+            font-weight: 800;
+        }
+        .lock-box .hint{
+            margin-top: 10px;
+            font-weight: 800;
+            color: rgba(255,255,255,0.88);
         }
     </style>
 </head>
@@ -779,9 +848,28 @@
                 <div class="page">Manual CSV Import</div>
             </div>
         </div>
+
+        <!-- ✅ NEW: NAV + SECRET INPUT -->
+        <div class="top-actions">
+            <a href="{{ route('manual.export.index') }}" class="btn btn-secondary">
+                <i class="fas fa-file-export"></i> Manual Export
+            </a>
+
+            <input id="secretKeyInput" class="secret-input" type="password" placeholder="Enter Secret Key (X-Secret-Key)" autocomplete="off">
+        </div>
     </div>
 
     <div class="card">
+
+        <!-- ✅ NEW: AUTO-LOCK OVERLAY -->
+        <div id="uiLock" class="ui-lock">
+            <div class="lock-box">
+                <h2><i class="fas fa-lock"></i> Locked</h2>
+                <p>Enter the secret key above to unlock upload & processing actions.</p>
+                <div class="hint"><i class="fas fa-shield-halved" style="color:var(--secondary)"></i> The key is stored only for this tab session.</div>
+            </div>
+        </div>
+
         <div class="card-head">
             <h1><i class="fas fa-file-csv"></i> Manual CSV Import</h1>
             <p class="subtitle">Upload multiple CSV files or a ZIP archive. Map each file to a data processor.</p>
@@ -925,6 +1013,9 @@
     let progressInterval = null;
     let aggProgressInterval = null;
 
+    // ✅ NEW: persist file -> processor mapping so removing a file doesn't reset everything
+    let fileMappings = {};
+
     const uploadZone = document.getElementById('uploadZone');
     const fileInput = document.getElementById('fileInput');
 
@@ -1008,53 +1099,19 @@
     }, true);
 
     // ✅ Close menu when scrolling anywhere OUTSIDE the proc-menu
-    // Works for wheel/trackpad/touch scroll.
     document.addEventListener('wheel', (e) => {
         const openMenu = document.querySelector('.proc-menu.open');
         if (!openMenu) return;
-
-        // If the wheel event happens inside the menu, allow scrolling it
         if (e.target.closest('.proc-menu')) return;
-
         closeAllProcMenus();
     }, { capture: true, passive: true });
 
     document.addEventListener('touchmove', (e) => {
         const openMenu = document.querySelector('.proc-menu.open');
         if (!openMenu) return;
-
         if (e.target.closest('.proc-menu')) return;
-
         closeAllProcMenus();
     }, { capture: true, passive: true });
-
-    // Click/keyboard open file picker
-    uploadZone.addEventListener('click', () => fileInput.click());
-    uploadZone.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            fileInput.click();
-        }
-    });
-
-    uploadZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        uploadZone.classList.add('drag-over');
-    });
-
-    uploadZone.addEventListener('dragleave', () => {
-        uploadZone.classList.remove('drag-over');
-    });
-
-    uploadZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadZone.classList.remove('drag-over');
-        handleFiles(e.dataTransfer.files);
-    });
-
-    fileInput.addEventListener('change', (e) => {
-        handleFiles(e.target.files);
-    });
 
     // Close menus on outside click / ESC
     document.addEventListener('click', (e) => {
@@ -1065,6 +1122,90 @@
 
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') closeAllProcMenus();
+    });
+
+    /* ============================================================
+       ✅ NEW: SECRET KEY + AUTO-LOCK (session only)
+       - The key persists while tab is open (sessionStorage)
+       - Overlay blocks UI until key exists
+       - Every request adds X-Secret-Key header
+    ============================================================ */
+    const SECRET_STORAGE_KEY = 'manual_import_secret_key';
+    const secretInput = document.getElementById('secretKeyInput');
+    const uiLock = document.getElementById('uiLock');
+
+    function hasSecretKey(){
+        return !!(sessionStorage.getItem(SECRET_STORAGE_KEY) || '').trim();
+    }
+
+    function syncLockState(){
+        if (hasSecretKey()) {
+            uiLock.classList.add('hidden');
+        } else {
+            uiLock.classList.remove('hidden');
+        }
+    }
+
+    // Restore secret key
+    const savedSecret = sessionStorage.getItem(SECRET_STORAGE_KEY);
+    if (savedSecret) {
+        secretInput.value = savedSecret;
+    }
+    syncLockState();
+
+    // Persist on change
+    secretInput.addEventListener('input', () => {
+        const v = (secretInput.value || '').trim();
+        if (v) {
+            sessionStorage.setItem(SECRET_STORAGE_KEY, v);
+        } else {
+            sessionStorage.removeItem(SECRET_STORAGE_KEY);
+        }
+        syncLockState();
+    });
+
+    function authHeaders(extra = {}) {
+        const secret = (sessionStorage.getItem(SECRET_STORAGE_KEY) || '').trim();
+        if (!secret) {
+            showToast('Secret key is required', 'error');
+            throw new Error('Missing secret key');
+        }
+        return { ...extra, 'X-Secret-Key': secret };
+    }
+
+    // Click/keyboard open file picker (locked UI blocks clicks anyway, but keep safe checks)
+    uploadZone.addEventListener('click', () => {
+        if (!hasSecretKey()) { showToast('Enter secret key to unlock', 'error'); return; }
+        fileInput.click();
+    });
+    uploadZone.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (!hasSecretKey()) { showToast('Enter secret key to unlock', 'error'); return; }
+            fileInput.click();
+        }
+    });
+
+    uploadZone.addEventListener('dragover', (e) => {
+        if (!hasSecretKey()) return;
+        e.preventDefault();
+        uploadZone.classList.add('drag-over');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+        uploadZone.classList.remove('drag-over');
+    });
+
+    uploadZone.addEventListener('drop', (e) => {
+        if (!hasSecretKey()) { showToast('Enter secret key to unlock', 'error'); return; }
+        e.preventDefault();
+        uploadZone.classList.remove('drag-over');
+        handleFiles(e.dataTransfer.files);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (!hasSecretKey()) { showToast('Enter secret key to unlock', 'error'); return; }
+        handleFiles(e.target.files);
     });
 
     async function handleFiles(files) {
@@ -1090,7 +1231,9 @@
         try {
             const response = await fetch('{{ route("manual.import.inspect.zip") }}', {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
+                headers: authHeaders({
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                }),
                 body: formData
             });
 
@@ -1158,10 +1301,16 @@
 
     function selectProcessor(index, key){
         const select = document.getElementById(`mapping_${index}`);
+        const file = selectedFiles[index];
+
+        if (!select || !file) return;
+
+        // ✅ persist mapping by filename
+        fileMappings[file.name] = key;
+
         const label = processors[key] || key;
         const meta = getProcMetaByKeyOrLabel(key);
 
-        if (!select) return;
         select.value = key;
 
         const labelEl = document.getElementById(`procLabel_${index}`);
@@ -1215,10 +1364,13 @@
             const sizeMB = file.size_mb || (file.size / 1024 / 1024).toFixed(2);
             const displayName = baseName(file.name);
 
+            // ✅ restore saved mapping if exists
+            const savedMapping = fileMappings[file.name] || '';
+
             const optionsHtml = `
                 <option value="">-- Select Processor --</option>
                 ${Object.entries(processors).map(([key, label]) =>
-                    `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`
+                    `<option value="${escapeHtml(key)}" ${savedMapping === key ? 'selected' : ''}>${escapeHtml(label)}</option>`
                 ).join('')}
             `;
 
@@ -1235,6 +1387,16 @@
                     </div>
                 `;
             }).join('');
+
+            // ✅ if savedMapping exists, show it in trigger label
+            let triggerLabelHtml = `
+                <i class="fas fa-wand-magic-sparkles"></i>
+                <span>Select processor</span>
+            `;
+            if (savedMapping) {
+                const meta = getProcMetaByKeyOrLabel(savedMapping);
+                triggerLabelHtml = `<i class="fas ${meta.icon}"></i><span>${escapeHtml(processors[savedMapping] || savedMapping)}</span>`;
+            }
 
             html += `
                 <div class="file-item">
@@ -1261,8 +1423,7 @@
                                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleProcMenu(${index});}"
                             >
                                 <div class="proc-label" id="procLabel_${index}">
-                                    <i class="fas fa-wand-magic-sparkles"></i>
-                                    <span>Select processor</span>
+                                    ${triggerLabelHtml}
                                 </div>
                                 <i class="fas fa-chevron-down" style="color:rgba(255,255,255,0.65);"></i>
                             </div>
@@ -1297,13 +1458,25 @@
         `;
 
         fileList.innerHTML = html;
+
+        // ✅ After DOM paint, update selected menu state for each file
+        selectedFiles.forEach((_, index) => updateMenuSelectedState(index));
+
         checkReadyToUpload();
     }
 
     function removeFile(index) {
         closeAllProcMenus();
+
+        const removed = selectedFiles[index];
+        if (removed && removed.name && fileMappings[removed.name]) {
+            // ✅ remove only this file mapping
+            delete fileMappings[removed.name];
+        }
+
         selectedFiles.splice(index, 1);
         renderFileList();
+
         if (selectedFiles.length === 0) resetUpload();
     }
 
@@ -1311,6 +1484,10 @@
         closeAllProcMenus();
         selectedFiles = [];
         zipTempId = null;
+
+        // ✅ reset mappings when user explicitly starts over
+        fileMappings = {};
+
         document.getElementById('fileList').innerHTML = `
             <div class="block empty-state">
                 <div class="title"><i class="fas fa-folder-open"></i> No files selected</div>
@@ -1367,7 +1544,9 @@
         try {
             const response = await fetch('{{ route("manual.import.upload") }}', {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
+                headers: authHeaders({
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                }),
                 body: formData
             });
 
@@ -1395,7 +1574,10 @@
 
         progressInterval = setInterval(async () => {
             try {
-                const response = await fetch(`/manual-import/progress/${currentUploadId}`);
+                const response = await fetch(`/manual-import/progress/${currentUploadId}`, {
+                    headers: authHeaders()
+                });
+
                 const data = await response.json();
 
                 if (data.success) {
@@ -1485,10 +1667,10 @@
         try {
             const response = await fetch('{{ route("manual.import.reaggregate") }}', {
                 method: 'POST',
-                headers: {
+                headers: authHeaders({
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
-                },
+                }),
                 body: JSON.stringify({ start_date: startDate, end_date: endDate, type })
             });
 
@@ -1516,7 +1698,10 @@
 
         aggProgressInterval = setInterval(async () => {
             try {
-                const response = await fetch(`/manual-import/aggregation-progress/${currentAggregationId}`);
+                const response = await fetch(`/manual-import/aggregation-progress/${currentAggregationId}`, {
+                    headers: authHeaders()
+                });
+
                 const data = await response.json();
 
                 if (data.success) {

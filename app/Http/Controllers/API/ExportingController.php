@@ -48,7 +48,6 @@ class ExportingController extends Controller
             }
 
             return $this->exportSingleModelCsv($model, $startDate, $endDate, $store);
-
         } catch (\Throwable $e) {
             $this->logExportException($e, [
                 'type'  => 'csv',
@@ -319,7 +318,6 @@ class ExportingController extends Controller
 
             $totalRows += $queryRows;
         }
-
     }
 
     /**
@@ -383,99 +381,119 @@ class ExportingController extends Controller
     protected function isAggregationTable(string $model): bool
     {
         return in_array($model, [
-            'yearly_store_summary', 'yearly_item_summary',
-            'weekly_store_summary', 'weekly_item_summary',
-            'quarterly_store_summary', 'quarterly_item_summary',
-            'monthly_store_summary', 'monthly_item_summary',
-            'daily_store_summary', 'daily_item_summary',
-            'hourly_store_summary', 'hourly_item_summary',
+            'yearly_store_summary',
+            'yearly_item_summary',
+            'weekly_store_summary',
+            'weekly_item_summary',
+            'quarterly_store_summary',
+            'quarterly_item_summary',
+            'monthly_store_summary',
+            'monthly_item_summary',
+            'daily_store_summary',
+            'daily_item_summary',
+            'hourly_store_summary',
+            'hourly_item_summary',
         ], true);
     }
 
-   protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate): Builder
-{
-    $query = DB::connection('aggregation')->table($model);
+    protected function buildAggregationQuery(string $model, ?Carbon $startDate, ?Carbon $endDate): Builder
+    {
+        $query = DB::connection('aggregation')->table($model);
 
-    // Normalize open-ended ranges
-    if ($startDate && !$endDate) {
-        $endDate = Carbon::now();
-    }
-    if (!$startDate && $endDate) {
-        // pick something safely early for your dataset
-        $startDate = Carbon::create(2000, 1, 1);
-    }
+        // Normalize open-ended ranges
+        if ($startDate && !$endDate) {
+            $endDate = Carbon::now();
+        }
+        if (!$startDate && $endDate) {
+            // pick something safely early for your dataset
+            $startDate = Carbon::create(2000, 1, 1);
+        }
 
-    // No date filtering requested
-    if (!$startDate && !$endDate) {
-        return $query;
-    }
-
-    // Always compare on date strings to avoid time parts
-    $start = $startDate->toDateString();
-    $end   = $endDate->toDateString();
-
-    // Helper: overlap logic for period tables
-    // period overlaps requested range iff period_start <= end AND period_end >= start
-    $applyOverlap = function (Builder $q, string $periodStartCol, string $periodEndCol) use ($start, $end) {
-        return $q->where($periodStartCol, '<=', $end)
-                 ->where($periodEndCol, '>=', $start);
-    };
-
-    // If you want: a simple mapping makes this harder to break later
-    switch ($model) {
-
-        // Yearly: if yearly tables represent a year bucket, filter by year_num range.
-        case 'yearly_store_summary':
-        case 'yearly_item_summary':
-            return $query->whereBetween('year_num', [$startDate->year, $endDate->year]);
-
-        // Weekly: use overlap, NOT whereBetween on starts/ends.
-        case 'weekly_store_summary':
-        case 'weekly_item_summary':
-            return $applyOverlap($query, 'week_start_date', 'week_end_date');
-
-        // Quarterly: use overlap, NOT whereBetween on starts/ends.
-        case 'quarterly_store_summary':
-        case 'quarterly_item_summary':
-            return $applyOverlap($query, 'quarter_start_date', 'quarter_end_date');
-
-        // Monthly: your schema uses (year_num, month_num).
-        // Filter by a computed numeric key YYYYMM so ranges work across years.
-        case 'monthly_store_summary':
-        case 'monthly_item_summary':
-            $startKey = ($startDate->year * 100) + $startDate->month;
-            $endKey   = ($endDate->year   * 100) + $endDate->month;
-
-            // This works even when spanning multiple years.
-            return $query->whereRaw('(year_num * 100 + month_num) BETWEEN ? AND ?', [$startKey, $endKey]);
-
-        // Daily / hourly: business_date is the grain, so simple between is correct.
-        case 'daily_store_summary':
-        case 'daily_item_summary':
-        case 'hourly_store_summary':
-        case 'hourly_item_summary':
-            return $query->whereBetween('business_date', [$start, $end]);
-
-        default:
-            // safest fallback: do nothing (or throw if you prefer strict)
+        // No date filtering requested
+        if (!$startDate && !$endDate) {
             return $query;
+        }
+
+        // Always compare on date strings to avoid time parts
+        $start = $startDate->toDateString();
+        $end   = $endDate->toDateString();
+
+        // Helper: overlap logic for period tables
+        // period overlaps requested range iff period_start <= end AND period_end >= start
+        $applyOverlap = function (Builder $q, string $periodStartCol, string $periodEndCol) use ($start, $end) {
+            return $q->where($periodStartCol, '<=', $end)
+                ->where($periodEndCol, '>=', $start);
+        };
+
+        // If you want: a simple mapping makes this harder to break later
+        switch ($model) {
+
+            // Yearly: if yearly tables represent a year bucket, filter by year_num range.
+            case 'yearly_store_summary':
+            case 'yearly_item_summary':
+                return $query->whereBetween('year_num', [$startDate->year, $endDate->year]);
+
+                // Weekly: use overlap, NOT whereBetween on starts/ends.
+            case 'weekly_store_summary':
+            case 'weekly_item_summary':
+                return $applyOverlap($query, 'week_start_date', 'week_end_date');
+
+                // Quarterly: use overlap, NOT whereBetween on starts/ends.
+            case 'quarterly_store_summary':
+            case 'quarterly_item_summary':
+                return $applyOverlap($query, 'quarter_start_date', 'quarter_end_date');
+
+                // Monthly: your schema uses (year_num, month_num).
+                // Filter by a computed numeric key YYYYMM so ranges work across years.
+            case 'monthly_store_summary':
+            case 'monthly_item_summary':
+                $startKey = ($startDate->year * 100) + $startDate->month;
+                $endKey   = ($endDate->year   * 100) + $endDate->month;
+
+                // This works even when spanning multiple years.
+                return $query->whereRaw('(year_num * 100 + month_num) BETWEEN ? AND ?', [$startKey, $endKey]);
+
+                // Daily / hourly: business_date is the grain, so simple between is correct.
+            case 'daily_store_summary':
+            case 'daily_item_summary':
+            case 'hourly_store_summary':
+            case 'hourly_item_summary':
+                return $query->whereBetween('business_date', [$start, $end]);
+
+            default:
+                // safest fallback: do nothing (or throw if you prefer strict)
+                return $query;
+        }
     }
-}
 
     protected function getAvailableModels(): array
     {
         return [
-            'detail_orders', 'order_line', 'summary_sales', 'summary_items',
-            'summary_transactions', 'waste', 'cash_management', 'financial_views',
-            'alta_inventory_waste', 'alta_inventory_ingredient_usage',
-            'alta_inventory_ingredient_orders', 'alta_inventory_cogs',
+            'detail_orders',
+            'order_line',
+            'summary_sales',
+            'summary_items',
+            'summary_transactions',
+            'waste',
+            'cash_management',
+            'financial_views',
+            'alta_inventory_waste',
+            'alta_inventory_ingredient_usage',
+            'alta_inventory_ingredient_orders',
+            'alta_inventory_cogs',
 
-            'yearly_store_summary', 'yearly_item_summary',
-            'weekly_store_summary', 'weekly_item_summary',
-            'quarterly_store_summary', 'quarterly_item_summary',
-            'monthly_store_summary', 'monthly_item_summary',
-            'daily_store_summary', 'daily_item_summary',
-            'hourly_store_summary', 'hourly_item_summary',
+            'yearly_store_summary',
+            'yearly_item_summary',
+            'weekly_store_summary',
+            'weekly_item_summary',
+            'quarterly_store_summary',
+            'quarterly_item_summary',
+            'monthly_store_summary',
+            'monthly_item_summary',
+            'daily_store_summary',
+            'daily_item_summary',
+            'hourly_store_summary',
+            'hourly_item_summary',
         ];
     }
 
@@ -489,120 +507,306 @@ class ExportingController extends Controller
     {
 
         $storeCategorySplits = [
-            'pizza_delivery_quantity', 'pizza_delivery_sales', 'pizza_carryout_quantity', 'pizza_carryout_sales',
-            'hnr_delivery_quantity', 'hnr_delivery_sales', 'hnr_carryout_quantity', 'hnr_carryout_sales',
-            'bread_delivery_quantity', 'bread_delivery_sales', 'bread_carryout_quantity', 'bread_carryout_sales',
-            'wings_delivery_quantity', 'wings_delivery_sales', 'wings_carryout_quantity', 'wings_carryout_sales',
-            'beverages_delivery_quantity', 'beverages_delivery_sales', 'beverages_carryout_quantity', 'beverages_carryout_sales',
-            'other_foods_delivery_quantity', 'other_foods_delivery_sales', 'other_foods_carryout_quantity', 'other_foods_carryout_sales',
-            'side_items_delivery_quantity', 'side_items_delivery_sales', 'side_items_carryout_quantity', 'side_items_carryout_sales',
+            'pizza_delivery_quantity',
+            'pizza_delivery_sales',
+            'pizza_carryout_quantity',
+            'pizza_carryout_sales',
+            'hnr_delivery_quantity',
+            'hnr_delivery_sales',
+            'hnr_carryout_quantity',
+            'hnr_carryout_sales',
+            'bread_delivery_quantity',
+            'bread_delivery_sales',
+            'bread_carryout_quantity',
+            'bread_carryout_sales',
+            'wings_delivery_quantity',
+            'wings_delivery_sales',
+            'wings_carryout_quantity',
+            'wings_carryout_sales',
+            'beverages_delivery_quantity',
+            'beverages_delivery_sales',
+            'beverages_carryout_quantity',
+            'beverages_carryout_sales',
+            'other_foods_delivery_quantity',
+            'other_foods_delivery_sales',
+            'other_foods_carryout_quantity',
+            'other_foods_carryout_sales',
+            'side_items_delivery_quantity',
+            'side_items_delivery_sales',
+            'side_items_carryout_quantity',
+            'side_items_carryout_sales',
         ];
 
         $commonStoreSummary = array_merge([
-            'royalty_obligation', 'gross_sales', 'net_sales', 'refund_amount',
-            'total_orders', 'completed_orders', 'cancelled_orders',
-            'modified_orders', 'refunded_orders', 'avg_order_value', 'customer_count',
+            'royalty_obligation',
+            'gross_sales',
+            'net_sales',
+            'refund_amount',
+            'total_orders',
+            'completed_orders',
+            'cancelled_orders',
+            'modified_orders',
+            'refunded_orders',
+            'avg_order_value',
+            'customer_count',
 
-            'phone_orders', 'phone_sales',
-            'website_orders', 'website_sales',
-            'mobile_orders', 'mobile_sales',
-            'call_center_orders', 'call_center_sales',
-            'drive_thru_orders', 'drive_thru_sales',
+            'phone_orders',
+            'phone_sales',
+            'website_orders',
+            'website_sales',
+            'mobile_orders',
+            'mobile_sales',
+            'call_center_orders',
+            'call_center_sales',
+            'drive_thru_orders',
+            'drive_thru_sales',
 
-            'doordash_orders', 'doordash_sales',
-            'ubereats_orders', 'ubereats_sales',
-            'grubhub_orders', 'grubhub_sales',
+            'doordash_orders',
+            'doordash_sales',
+            'ubereats_orders',
+            'ubereats_sales',
+            'grubhub_orders',
+            'grubhub_sales',
 
-            'delivery_orders', 'delivery_sales',
-            'carryout_orders', 'carryout_sales',
+            'delivery_orders',
+            'delivery_sales',
+            'carryout_orders',
+            'carryout_sales',
 
             // ✅ NEW totals + splits
         ], $storeCategorySplits, [
-            'sales_tax', 'delivery_fees', 'delivery_tips', 'store_tips', 'total_tips',
-            'cash_sales', 'over_short',
+            'sales_tax',
+            'delivery_fees',
+            'delivery_tips',
+            'store_tips',
+            'total_tips',
+            'cash_sales',
+            'over_short',
 
-            'portal_eligible_orders', 'portal_used_orders', 'portal_usage_rate',
-            'portal_on_time_orders', 'portal_on_time_rate',
+            'portal_eligible_orders',
+            'portal_used_orders',
+            'portal_usage_rate',
+            'portal_on_time_orders',
+            'portal_on_time_rate',
 
-            'digital_orders', 'digital_sales', 'digital_penetration',
+            'digital_orders',
+            'digital_sales',
+            'digital_penetration',
         ]);
 
         $columnMap = [
             // RAW MODELS (unchanged)
             'detail_orders' => [
-                'franchise_store', 'business_date', 'order_id', 'date_time_placed',
-                'date_time_fulfilled', 'royalty_obligation', 'quantity', 'customer_count',
-                'taxable_amount', 'non_taxable_amount', 'tax_exempt_amount', 'non_royalty_amount',
-                'sales_tax', 'gross_sales', 'occupational_tax', 'employee',
-                'override_approval_employee', 'order_placed_method', 'order_fulfilled_method',
-                'delivery_tip', 'delivery_tip_tax', 'delivery_fee', 'delivery_fee_tax',
-                'delivery_service_fee', 'delivery_service_fee_tax', 'delivery_small_order_fee',
-                'delivery_small_order_fee_tax', 'modified_order_amount', 'modification_reason',
-                'refunded', 'payment_methods', 'transaction_type', 'store_tip_amount',
-                'promise_date', 'tax_exemption_id', 'tax_exemption_entity_name', 'user_id',
-                'hnrOrder', 'broken_promise', 'portal_eligible', 'portal_used',
-                'put_into_portal_before_promise_time', 'portal_compartments_used', 'time_loaded_into_portal'
+                'franchise_store',
+                'business_date',
+                'order_id',
+                'date_time_placed',
+                'date_time_fulfilled',
+                'royalty_obligation',
+                'quantity',
+                'customer_count',
+                'taxable_amount',
+                'non_taxable_amount',
+                'tax_exempt_amount',
+                'non_royalty_amount',
+                'sales_tax',
+                'gross_sales',
+                'occupational_tax',
+                'employee',
+                'override_approval_employee',
+                'order_placed_method',
+                'order_fulfilled_method',
+                'delivery_tip',
+                'delivery_tip_tax',
+                'delivery_fee',
+                'delivery_fee_tax',
+                'delivery_service_fee',
+                'delivery_service_fee_tax',
+                'delivery_small_order_fee',
+                'delivery_small_order_fee_tax',
+                'modified_order_amount',
+                'modification_reason',
+                'refunded',
+                'payment_methods',
+                'transaction_type',
+                'store_tip_amount',
+                'promise_date',
+                'tax_exemption_id',
+                'tax_exemption_entity_name',
+                'user_id',
+                'hnrOrder',
+                'broken_promise',
+                'portal_eligible',
+                'portal_used',
+                'put_into_portal_before_promise_time',
+                'portal_compartments_used',
+                'time_loaded_into_portal'
             ],
             'order_line' => [
-                'franchise_store', 'business_date', 'order_id', 'item_id',
-                'date_time_placed', 'date_time_fulfilled', 'menu_item_name', 'menu_item_account',
-                'bundle_name', 'net_amount', 'quantity', 'royalty_item', 'taxable_item',
-                'tax_included_amount', 'employee', 'override_approval_employee',
-                'order_placed_method', 'order_fulfilled_method', 'modified_order_amount',
-                'modification_reason', 'payment_methods', 'refunded'
+                'franchise_store',
+                'business_date',
+                'order_id',
+                'item_id',
+                'date_time_placed',
+                'date_time_fulfilled',
+                'menu_item_name',
+                'menu_item_account',
+                'bundle_name',
+                'net_amount',
+                'quantity',
+                'royalty_item',
+                'taxable_item',
+                'tax_included_amount',
+                'employee',
+                'override_approval_employee',
+                'order_placed_method',
+                'order_fulfilled_method',
+                'modified_order_amount',
+                'modification_reason',
+                'payment_methods',
+                'refunded'
             ],
             'summary_sales' => [
-                'franchise_store', 'business_date', 'royalty_obligation', 'customer_count',
-                'taxable_amount', 'non_taxable_amount', 'tax_exempt_amount', 'non_royalty_amount',
-                'refund_amount', 'sales_tax', 'gross_sales', 'occupational_tax', 'delivery_tip',
-                'delivery_fee', 'delivery_service_fee', 'delivery_small_order_fee',
-                'modified_order_amount', 'store_tip_amount', 'prepaid_cash_orders',
-                'prepaid_non_cash_orders', 'prepaid_sales', 'prepaid_delivery_tip',
-                'prepaid_in_store_tip_amount', 'over_short', 'previous_day_refunds', 'saf', 'manager_notes'
+                'franchise_store',
+                'business_date',
+                'royalty_obligation',
+                'customer_count',
+                'taxable_amount',
+                'non_taxable_amount',
+                'tax_exempt_amount',
+                'non_royalty_amount',
+                'refund_amount',
+                'sales_tax',
+                'gross_sales',
+                'occupational_tax',
+                'delivery_tip',
+                'delivery_fee',
+                'delivery_service_fee',
+                'delivery_small_order_fee',
+                'modified_order_amount',
+                'store_tip_amount',
+                'prepaid_cash_orders',
+                'prepaid_non_cash_orders',
+                'prepaid_sales',
+                'prepaid_delivery_tip',
+                'prepaid_in_store_tip_amount',
+                'over_short',
+                'previous_day_refunds',
+                'saf',
+                'manager_notes'
             ],
             'summary_items' => [
-                'franchise_store', 'business_date', 'menu_item_name', 'menu_item_account',
-                'item_id', 'item_quantity', 'royalty_obligation', 'taxable_amount',
-                'non_taxable_amount', 'tax_exempt_amount', 'non_royalty_amount', 'tax_included_amount'
+                'franchise_store',
+                'business_date',
+                'menu_item_name',
+                'menu_item_account',
+                'item_id',
+                'item_quantity',
+                'royalty_obligation',
+                'taxable_amount',
+                'non_taxable_amount',
+                'tax_exempt_amount',
+                'non_royalty_amount',
+                'tax_included_amount'
             ],
             'summary_transactions' => [
-                'franchise_store', 'business_date', 'payment_method', 'sub_payment_method',
-                'total_amount', 'saf_qty', 'saf_total'
+                'franchise_store',
+                'business_date',
+                'payment_method',
+                'sub_payment_method',
+                'total_amount',
+                'saf_qty',
+                'saf_total'
             ],
             'waste' => [
-                'business_date', 'franchise_store', 'cv_item_id', 'menu_item_name',
-                'expired', 'waste_date_time', 'produce_date_time', 'waste_reason',
-                'cv_order_id', 'waste_type', 'item_cost', 'quantity'
+                'business_date',
+                'franchise_store',
+                'cv_item_id',
+                'menu_item_name',
+                'expired',
+                'waste_date_time',
+                'produce_date_time',
+                'waste_reason',
+                'cv_order_id',
+                'waste_type',
+                'item_cost',
+                'quantity'
             ],
             'cash_management' => [
-                'franchise_store', 'business_date', 'create_datetime', 'verified_datetime',
-                'till', 'check_type', 'system_totals', 'verified', 'variance',
-                'created_by', 'verified_by'
+                'franchise_store',
+                'business_date',
+                'create_datetime',
+                'verified_datetime',
+                'till',
+                'check_type',
+                'system_totals',
+                'verified',
+                'variance',
+                'created_by',
+                'verified_by'
             ],
             'financial_views' => [
-                'franchise_store', 'business_date', 'area', 'sub_account', 'amount'
+                'franchise_store',
+                'business_date',
+                'area',
+                'sub_account',
+                'amount'
             ],
             'alta_inventory_waste' => [
-                'franchise_store', 'business_date', 'item_id', 'item_description',
-                'waste_reason', 'unit_food_cost', 'qty'
+                'franchise_store',
+                'business_date',
+                'item_id',
+                'item_description',
+                'waste_reason',
+                'unit_food_cost',
+                'qty'
             ],
             'alta_inventory_ingredient_usage' => [
-                'franchise_store', 'business_date', 'count_period', 'ingredient_id',
-                'ingredient_description', 'ingredient_category', 'ingredient_unit',
-                'ingredient_unit_cost', 'starting_inventory_qty', 'received_qty',
-                'net_transferred_qty', 'ending_inventory_qty', 'actual_usage',
-                'theoretical_usage', 'variance_qty', 'waste_qty'
+                'franchise_store',
+                'business_date',
+                'count_period',
+                'ingredient_id',
+                'ingredient_description',
+                'ingredient_category',
+                'ingredient_unit',
+                'ingredient_unit_cost',
+                'starting_inventory_qty',
+                'received_qty',
+                'net_transferred_qty',
+                'ending_inventory_qty',
+                'actual_usage',
+                'theoretical_usage',
+                'variance_qty',
+                'waste_qty'
             ],
             'alta_inventory_ingredient_orders' => [
-                'franchise_store', 'business_date', 'supplier', 'invoice_number',
-                'purchase_order_number', 'ingredient_id', 'ingredient_description',
-                'ingredient_category', 'ingredient_unit', 'unit_price', 'order_qty',
-                'sent_qty', 'received_qty', 'total_cost'
+                'franchise_store',
+                'business_date',
+                'supplier',
+                'invoice_number',
+                'purchase_order_number',
+                'ingredient_id',
+                'ingredient_description',
+                'ingredient_category',
+                'ingredient_unit',
+                'unit_price',
+                'order_qty',
+                'sent_qty',
+                'received_qty',
+                'total_cost'
             ],
             'alta_inventory_cogs' => [
-                'franchise_store', 'business_date', 'count_period', 'inventory_category',
-                'starting_value', 'received_value', 'net_transfer_value', 'ending_value',
-                'used_value', 'theoretical_usage_value', 'variance_value'
+                'franchise_store',
+                'business_date',
+                'count_period',
+                'inventory_category',
+                'starting_value',
+                'received_value',
+                'net_transfer_value',
+                'ending_value',
+                'used_value',
+                'theoretical_usage_value',
+                'variance_value'
             ],
 
             // ✅ AGGREGATION MODELS (UPDATED)
@@ -614,9 +818,18 @@ class ExportingController extends Controller
             ),
 
             'yearly_item_summary' => [
-                'franchise_store', 'year_num', 'item_id', 'menu_item_name', 'menu_item_account',
-                'quantity_sold', 'gross_sales', 'net_sales', 'avg_item_price',
-                'avg_daily_quantity', 'delivery_quantity', 'carryout_quantity'
+                'franchise_store',
+                'year_num',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+                'avg_daily_quantity',
+                'delivery_quantity',
+                'carryout_quantity'
             ],
 
             'weekly_store_summary' => array_merge(
@@ -626,10 +839,21 @@ class ExportingController extends Controller
             ),
 
             'weekly_item_summary' => [
-                'franchise_store', 'year_num', 'week_num', 'week_start_date', 'week_end_date',
-                'item_id', 'menu_item_name', 'menu_item_account', 'quantity_sold',
-                'gross_sales', 'net_sales', 'avg_item_price', 'avg_daily_quantity',
-                'delivery_quantity', 'carryout_quantity'
+                'franchise_store',
+                'year_num',
+                'week_num',
+                'week_start_date',
+                'week_end_date',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+                'avg_daily_quantity',
+                'delivery_quantity',
+                'carryout_quantity'
             ],
 
             'quarterly_store_summary' => array_merge(
@@ -639,10 +863,21 @@ class ExportingController extends Controller
             ),
 
             'quarterly_item_summary' => [
-                'franchise_store', 'year_num', 'quarter_num', 'quarter_start_date', 'quarter_end_date',
-                'item_id', 'menu_item_name', 'menu_item_account', 'quantity_sold',
-                'gross_sales', 'net_sales', 'avg_item_price', 'avg_daily_quantity',
-                'delivery_quantity', 'carryout_quantity'
+                'franchise_store',
+                'year_num',
+                'quarter_num',
+                'quarter_start_date',
+                'quarter_end_date',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+                'avg_daily_quantity',
+                'delivery_quantity',
+                'carryout_quantity'
             ],
 
             'monthly_store_summary' => array_merge(
@@ -652,10 +887,19 @@ class ExportingController extends Controller
             ),
 
             'monthly_item_summary' => [
-                'franchise_store', 'year_num', 'month_num', 'item_id', 'menu_item_name',
-                'menu_item_account', 'quantity_sold', 'gross_sales', 'net_sales',
-                'avg_item_price', 'avg_daily_quantity',
-                'delivery_quantity', 'carryout_quantity'
+                'franchise_store',
+                'year_num',
+                'month_num',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+                'avg_daily_quantity',
+                'delivery_quantity',
+                'carryout_quantity'
             ],
 
             'daily_store_summary' => array_merge(
@@ -664,10 +908,19 @@ class ExportingController extends Controller
             ),
 
             'daily_item_summary' => [
-                'franchise_store', 'business_date', 'item_id', 'menu_item_name',
-                'menu_item_account', 'quantity_sold', 'gross_sales', 'net_sales',
-                'avg_item_price', 'delivery_quantity', 'carryout_quantity',
-                'modified_quantity', 'refunded_quantity'
+                'franchise_store',
+                'business_date',
+                'item_id',
+                'menu_item_name',
+                'menu_item_account',
+                'quantity_sold',
+                'gross_sales',
+                'net_sales',
+                'avg_item_price',
+                'delivery_quantity',
+                'carryout_quantity',
+                'modified_quantity',
+                'refunded_quantity'
             ],
 
             'hourly_store_summary' => array_merge(

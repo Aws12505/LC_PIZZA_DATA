@@ -19,7 +19,7 @@ use App\Http\Controllers\API\{
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 Route::prefix('export')->group(function () {
-    Route::get('csv', [ExportingController::class, 'exportCSV'])->name('export.csv');
+    Route::get('csv', [ExportingController::class, 'exportCSV'])->name('export.csv')->middleware('auth.secret.key');
     Route::get('json', [ExportingController::class, 'exportJson'])->name('export.json');
 });
 

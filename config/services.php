@@ -62,5 +62,5 @@ return [
         'api_key' => env('OLD_API_KEY'),
     ],
 
-    'X_SECRET_KEY' => env('X_SECRET_KEY'),
+    'x_secret_key' => env('X_SECRET_KEY'),
 ];
