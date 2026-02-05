@@ -338,7 +338,7 @@
 
         <div class="top-actions">
             <a href="{{ route('manual.import.index') }}" class="btn btn-secondary">
-                <i class="fas fa-file-export"></i> Manual Export
+                <i class="fas fa-file-export"></i> Manual Import
             </a>
 
             <input id="secretKeyInput" class="secret-input" type="password" placeholder="Enter Secret Key (X-Secret-Key)" autocomplete="off">
