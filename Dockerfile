@@ -1,4 +1,4 @@
-FROM php:8.2-apache
+FROM php:8.4-apache
 
 # Laravel needs rewrite + common headers
 RUN a2enmod rewrite headers expires
