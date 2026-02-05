@@ -20,7 +20,7 @@ return [
     'streams' => [
         [
             'name' => env('NATS_AUTH_STREAM', 'AUTH_EVENTS'),
-            'durable' => env('NATS_AUTH_DURABLE', 'QA_AUTH_CONSUMER'),
+            'durable' => env('NATS_AUTH_DURABLE', 'DATA_AUTH_CONSUMER'),
             'filter_subject' => 'auth.v1.>', // match your stream subjects
         ],
 
