@@ -29,7 +29,6 @@ return new class extends Migration
             $table->timestamps();
             $table->primary(['id', 'business_date']);
             $table->index(['franchise_store', 'business_date']);
-            $table->unique(['business_date', 'franchise_store', 'cv_item_id', 'waste_date_time'], 'unique_waste_archive');
         });
 
         // Add monthly partitioning with compression
@@ -56,7 +55,7 @@ return new class extends Migration
         $partitions[] = "PARTITION p_future VALUES LESS THAN MAXVALUE";
 
         $partitionSql = "ALTER TABLE {$tableName} 
-            PARTITION BY RANGE (YEAR(business_date) * 100 + MONTH(business_date)) (" 
+            PARTITION BY RANGE (YEAR(business_date) * 100 + MONTH(business_date)) ("
             . implode(", ", $partitions) . ")";
 
         DB::connection($this->connection)->statement($partitionSql);

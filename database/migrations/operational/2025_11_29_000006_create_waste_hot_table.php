@@ -27,7 +27,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['franchise_store', 'business_date']);
-            $table->unique(['business_date', 'franchise_store', 'cv_item_id', 'waste_date_time'], 'unique_waste_hot');
         });
     }
 
