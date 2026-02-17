@@ -83,15 +83,15 @@ class ReportsController extends Controller
 
         // Loop through the hourly data and sum the sales for each channel
         foreach ($hourlySalesByChannel as $hourlyData) {
-            $totalSales['royalty_obligation'] += round((float)$hourlyData['royalty_obligation'], 2);
-            $totalSales['phone_sales'] += round((float)$hourlyData['phone_sales'], 2);
-            $totalSales['call_center_sales'] += round((float)$hourlyData['call_center_sales'], 2);
-            $totalSales['drive_thru_sales'] += round((float)$hourlyData['drive_thru_sales'], 2);
-            $totalSales['website_sales'] += round((float)$hourlyData['website_sales'], 2);
-            $totalSales['mobile_sales'] += round((float)$hourlyData['mobile_sales'], 2);
-            $totalSales['doordash_sales'] += round((float)$hourlyData['doordash_sales'], 2);
-            $totalSales['ubereats_sales'] += round((float)$hourlyData['ubereats_sales'], 2);
-            $totalSales['grubhub_sales'] += round((float)$hourlyData['grubhub_sales'], 2);
+            $totalSales['royalty_obligation'] += $hourlyData['royalty_obligation'];
+            $totalSales['phone_sales'] += $hourlyData['phone_sales'];
+            $totalSales['call_center_sales'] += $hourlyData['call_center_sales'];
+            $totalSales['drive_thru_sales'] += $hourlyData['drive_thru_sales'];
+            $totalSales['website_sales'] += $hourlyData['website_sales'];
+            $totalSales['mobile_sales'] += $hourlyData['mobile_sales'];
+            $totalSales['doordash_sales'] += $hourlyData['doordash_sales'];
+            $totalSales['ubereats_sales'] += $hourlyData['ubereats_sales'];
+            $totalSales['grubhub_sales'] += $hourlyData['grubhub_sales'];
         }
         return [
             'filtering' => [
@@ -115,7 +115,17 @@ class ReportsController extends Controller
 
             'day' => [
                 'hourly_sales_and_channels' => $hourlySalesByChannel,
-                'total_sales' => $totalSales,
+                'total_sales' => [
+                    'royalty_obligation' => round($totalSales['royalty_obligation'], 2),
+                    'phone_sales' => round($totalSales['phone_sales'], 2),
+                    'call_center_sales' => round($totalSales['call_center_sales'], 2),
+                    'drive_thru_sales' => round($totalSales['drive_thru_sales'], 2),
+                    'website_sales' => round($totalSales['website_sales'], 2),
+                    'mobile_sales' => round($totalSales['mobile_sales'], 2),
+                    'doordash_sales' => round($totalSales['doordash_sales'], 2),
+                    'ubereats_sales' => round($totalSales['ubereats_sales'], 2),
+                    'grubhub_sales' => round($totalSales['grubhub_sales'], 2),
+                ],
 
                 'total_cash_sales' => (float) ($daily->cash_sales ?? 0),
                 'total_deposit' => $this->totalDepositForDay($store, $day),
