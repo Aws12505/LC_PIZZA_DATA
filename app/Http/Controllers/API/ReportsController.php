@@ -115,6 +115,7 @@ class ReportsController extends Controller
 
             'day' => [
                 'hourly_sales_and_channels' => $hourlySalesByChannel,
+                'total_sales' => $totalSales,
 
                 'total_cash_sales' => (float) ($daily->cash_sales ?? 0),
                 'total_deposit' => $this->totalDepositForDay($store, $day),
