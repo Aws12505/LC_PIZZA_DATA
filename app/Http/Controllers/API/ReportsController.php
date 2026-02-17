@@ -83,15 +83,15 @@ class ReportsController extends Controller
 
         // Loop through the hourly data and sum the sales for each channel
         foreach ($hourlySalesByChannel as $hourlyData) {
-            $totalSales['royalty_obligation'] += $hourlyData['royalty_obligation'];
-            $totalSales['phone_sales'] += $hourlyData['phone_sales'];
-            $totalSales['call_center_sales'] += $hourlyData['call_center_sales'];
-            $totalSales['drive_thru_sales'] += $hourlyData['drive_thru_sales'];
-            $totalSales['website_sales'] += $hourlyData['website_sales'];
-            $totalSales['mobile_sales'] += $hourlyData['mobile_sales'];
-            $totalSales['doordash_sales'] += $hourlyData['doordash_sales'];
-            $totalSales['ubereats_sales'] += $hourlyData['ubereats_sales'];
-            $totalSales['grubhub_sales'] += $hourlyData['grubhub_sales'];
+            $totalSales['royalty_obligation'] += round($hourlyData['royalty_obligation'], 2);
+            $totalSales['phone_sales'] += round($hourlyData['phone_sales'], 2);
+            $totalSales['call_center_sales'] += round($hourlyData['call_center_sales'], 2);
+            $totalSales['drive_thru_sales'] += round($hourlyData['drive_thru_sales'], 2);
+            $totalSales['website_sales'] += round($hourlyData['website_sales'], 2);
+            $totalSales['mobile_sales'] += round($hourlyData['mobile_sales'], 2);
+            $totalSales['doordash_sales'] += round($hourlyData['doordash_sales'], 2);
+            $totalSales['ubereats_sales'] += round($hourlyData['ubereats_sales'], 2);
+            $totalSales['grubhub_sales'] += round($hourlyData['grubhub_sales'], 2);
         }
         return [
             'filtering' => [
