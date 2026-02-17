@@ -44,11 +44,7 @@ class ReportsController extends Controller
     {
         $this->validateInputs($store, $date);
 
-        $cacheKey = $this->cacheKey($store, $date);
-
-        $payload = Cache::remember($cacheKey, self::CACHE_TTL, function () use ($store, $date) {
-            return $this->buildReport($store, $date);
-        });
+        $payload = $this->buildReport($store, $date);
 
         return response()->json($payload);
     }
