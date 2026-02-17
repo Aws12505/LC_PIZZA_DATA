@@ -67,6 +67,32 @@ class ReportsController extends Controller
         $lastYearWeekEnd   = $weekEnd->subWeeks(52);
         $daily = $this->dailySummary($store, $day);
 
+        $hourlySalesByChannel = $this->hourlySalesByChannel($store, $day);
+
+        $totalSales = [
+            'royalty_obligation' => 0,
+            'phone_sales' => 0,
+            'call_center_sales' => 0,
+            'drive_thru_sales' => 0,
+            'website_sales' => 0,
+            'mobile_sales' => 0,
+            'doordash_sales' => 0,
+            'ubereats_sales' => 0,
+            'grubhub_sales' => 0,
+        ];
+
+        // Loop through the hourly data and sum the sales for each channel
+        foreach ($hourlySalesByChannel as $hourlyData) {
+            $totalSales['royalty_obligation'] += $hourlyData['royalty_obligation'];
+            $totalSales['phone_sales'] += $hourlyData['phone_sales'];
+            $totalSales['call_center_sales'] += $hourlyData['call_center_sales'];
+            $totalSales['drive_thru_sales'] += $hourlyData['drive_thru_sales'];
+            $totalSales['website_sales'] += $hourlyData['website_sales'];
+            $totalSales['mobile_sales'] += $hourlyData['mobile_sales'];
+            $totalSales['doordash_sales'] += $hourlyData['doordash_sales'];
+            $totalSales['ubereats_sales'] += $hourlyData['ubereats_sales'];
+            $totalSales['grubhub_sales'] += $hourlyData['grubhub_sales'];
+        }
         return [
             'filtering' => [
                 'store' => $store,
@@ -88,7 +114,7 @@ class ReportsController extends Controller
             ],
 
             'day' => [
-                'hourly_sales_and_channels' => $this->hourlySalesByChannel($store, $day),
+                'hourly_sales_and_channels' => $hourlySalesByChannel,
 
                 'total_cash_sales' => (float) ($daily->cash_sales ?? 0),
                 'total_deposit' => $this->totalDepositForDay($store, $day),
@@ -235,12 +261,14 @@ class ReportsController extends Controller
                 'ingredient_id',
                 'ingredient_description',
                 DB::raw('SUM(actual_usage) as total_actual_usage'),
+                DB::raw('SUM(variance_qty) * SUM(ingredient_unit_cost) as total_variance_value'),
             ])
             ->map(static function ($row) {
                 return [
                     'ingredient_id' => $row->ingredient_id,
                     'ingredient_description' => $row->ingredient_description,
                     'actual_usage' => round((float) $row->total_actual_usage, 2),
+                    'variance_value' => round((float) $row->total_variance_value, 2),
                 ];
             })
             ->toArray();
