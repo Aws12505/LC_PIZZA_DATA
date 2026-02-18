@@ -58,25 +58,18 @@ Route::prefix('engine')->middleware('auth.token.store')->group(function () {
 
 
 Route::prefix('manual-import')
-    ->name('manual.import.')
     ->middleware('auth.token.store')
     ->group(function () {
 
         // UI page (NO secret key middleware, accessible for API requests)
-        Route::get('/', [ManualCsvImportController::class, 'index'])
-            ->name('index');
-        Route::post('/inspect-zip', [ManualCsvImportController::class, 'inspectZip'])
-            ->name('inspect.zip');
+        Route::get('/', [ManualCsvImportController::class, 'index']);
+        Route::post('/inspect-zip', [ManualCsvImportController::class, 'inspectZip']);
 
-        Route::post('/upload', [ManualCsvImportController::class, 'upload'])
-            ->name('upload');
+        Route::post('/upload', [ManualCsvImportController::class, 'upload']);
 
-        Route::get('/progress/{uploadId}', [ManualCsvImportController::class, 'progress'])
-            ->name('progress');
+        Route::get('/progress/{uploadId}', [ManualCsvImportController::class, 'progress']);
 
-        Route::post('/reaggregate', [ManualCsvImportController::class, 'reaggregate'])
-            ->name('reaggregate');
+        Route::post('/reaggregate', [ManualCsvImportController::class, 'reaggregate']);
 
-        Route::get('/aggregation-progress/{aggregationId}', [ManualCsvImportController::class, 'aggregationProgress'])
-            ->name('aggregation.progress');
+        Route::get('/aggregation-progress/{aggregationId}', [ManualCsvImportController::class, 'aggregationProgress']);
     });
