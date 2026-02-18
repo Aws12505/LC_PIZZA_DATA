@@ -1,0 +1,2292 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Pizza Data System API",
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "/api"
+        }
+    ],
+    "components": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        },
+        "schemas": {
+            "ErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "error": {
+                        "type": "string"
+                    },
+                    "file": {
+                        "type": "string"
+                    },
+                    "line": {
+                        "type": "integer"
+                    }
+                },
+                "required": ["success", "error"]
+            },
+            "PaginationLinks": {
+                "type": "object",
+                "properties": {
+                    "first": { "type": "string", "nullable": true },
+                    "last": { "type": "string", "nullable": true },
+                    "prev": { "type": "string", "nullable": true },
+                    "next": { "type": "string", "nullable": true }
+                }
+            },
+            "PaginationMeta": {
+                "type": "object",
+                "properties": {
+                    "current_page": { "type": "integer" },
+                    "from": { "type": "integer", "nullable": true },
+                    "last_page": { "type": "integer" },
+                    "path": { "type": "string" },
+                    "per_page": { "type": "integer" },
+                    "to": { "type": "integer", "nullable": true },
+                    "total": { "type": "integer" }
+                }
+            },
+
+            "ExportJsonSuccess": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean", "example": true },
+                    "record_count": { "type": "integer" },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                },
+                "required": ["success", "record_count", "data"]
+            },
+
+            "DsprLiteFiltering": {
+                "type": "object",
+                "properties": {
+                    "store": { "type": "string" },
+                    "date": { "type": "string", "format": "date" },
+                    "iso_week": { "type": "integer" },
+                    "week_start": { "type": "string", "format": "date" },
+                    "week_end": { "type": "string", "format": "date" }
+                },
+                "required": [
+                    "store",
+                    "date",
+                    "iso_week",
+                    "week_start",
+                    "week_end"
+                ]
+            },
+            "DsprLiteSalesByDay": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "description": "Map YYYY-MM-DD -> sales metrics from SummaryQueryService"
+            },
+            "DsprLiteTopItems": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "item_id": { "type": "integer" },
+                        "menu_item_name": { "type": "string" },
+                        "menu_item_account": { "type": "string" },
+                        "gross_sales": { "type": "number" },
+                        "quantity_sold": { "type": "number" },
+                        "avg_item_price": { "type": "number" },
+                        "delivery_quantity": { "type": "number" },
+                        "carryout_quantity": { "type": "number" }
+                    },
+                    "additionalProperties": true
+                }
+            },
+            "DsprLiteTopIngredients": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ingredient_id": { "type": "string" },
+                        "ingredient_description": { "type": "string" },
+                        "actual_usage": { "type": "number" },
+                        "variance_value": { "type": "number" }
+                    },
+                    "required": [
+                        "ingredient_id",
+                        "ingredient_description",
+                        "actual_usage",
+                        "variance_value"
+                    ]
+                }
+            },
+            "DsprLiteHourlySalesByChannelRow": {
+                "type": "object",
+                "properties": {
+                    "hour": { "type": "integer", "minimum": 0, "maximum": 23 },
+                    "royalty_obligation": { "type": "number" },
+                    "phone_sales": { "type": "number" },
+                    "call_center_sales": { "type": "number" },
+                    "drive_thru_sales": { "type": "number" },
+                    "website_sales": { "type": "number" },
+                    "mobile_sales": { "type": "number" },
+                    "doordash_sales": { "type": "number" },
+                    "ubereats_sales": { "type": "number" },
+                    "grubhub_sales": { "type": "number" }
+                },
+                "required": [
+                    "hour",
+                    "royalty_obligation",
+                    "phone_sales",
+                    "call_center_sales",
+                    "drive_thru_sales",
+                    "website_sales",
+                    "mobile_sales",
+                    "doordash_sales",
+                    "ubereats_sales",
+                    "grubhub_sales"
+                ]
+            },
+            "DsprLiteHourlySalesByChannel": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/components/schemas/DsprLiteHourlySalesByChannelRow"
+                }
+            },
+            "DsprLiteDayRefundedOrders": {
+                "type": "object",
+                "properties": {
+                    "count": { "type": "integer" },
+                    "sales": { "type": "number" }
+                },
+                "required": ["count", "sales"]
+            },
+            "DsprLiteDayHnr": {
+                "type": "object",
+                "properties": {
+                    "hnr_transactions": { "type": "integer" },
+                    "hnr_broken_promises": { "type": "integer" },
+                    "hnr_promise_met": { "type": "integer" },
+                    "hnr_promise_met_percent": { "type": "number" }
+                },
+                "required": [
+                    "hnr_transactions",
+                    "hnr_broken_promises",
+                    "hnr_promise_met",
+                    "hnr_promise_met_percent"
+                ]
+            },
+            "DsprLiteDayWaste": {
+                "type": "object",
+                "properties": {
+                    "alta_inventory": { "type": "number" },
+                    "normal": { "type": "number" }
+                },
+                "required": ["alta_inventory", "normal"]
+            },
+            "DsprLiteDayPortal": {
+                "type": "object",
+                "properties": {
+                    "portal_eligible_orders": { "type": "integer" },
+                    "portal_used_orders": { "type": "integer" },
+                    "portal_on_time_orders": { "type": "integer" },
+                    "put_into_portal_percent": { "type": "number" },
+                    "in_portal_on_time_percent": { "type": "number" }
+                },
+                "required": [
+                    "portal_eligible_orders",
+                    "portal_used_orders",
+                    "portal_on_time_orders",
+                    "put_into_portal_percent",
+                    "in_portal_on_time_percent"
+                ]
+            },
+            "DsprLiteDayTotals": {
+                "type": "object",
+                "properties": {
+                    "hourly_sales_and_channels": {
+                        "$ref": "#/components/schemas/DsprLiteHourlySalesByChannel"
+                    },
+                    "total_sales": {
+                        "type": "object",
+                        "properties": {
+                            "royalty_obligation": { "type": "number" },
+                            "phone_sales": { "type": "number" },
+                            "call_center_sales": { "type": "number" },
+                            "drive_thru_sales": { "type": "number" },
+                            "website_sales": { "type": "number" },
+                            "mobile_sales": { "type": "number" },
+                            "doordash_sales": { "type": "number" },
+                            "ubereats_sales": { "type": "number" },
+                            "grubhub_sales": { "type": "number" }
+                        },
+                        "required": [
+                            "royalty_obligation",
+                            "phone_sales",
+                            "call_center_sales",
+                            "drive_thru_sales",
+                            "website_sales",
+                            "mobile_sales",
+                            "doordash_sales",
+                            "ubereats_sales",
+                            "grubhub_sales"
+                        ]
+                    },
+                    "total_royalty_obligation": { "type": "number" },
+                    "total_net_sales": { "type": "number" },
+                    "total_gross_sales": { "type": "number" },
+                    "total_digital_sales": { "type": "number" },
+                    "total_cash_sales": { "type": "number" },
+                    "total_deposit": { "type": "number" },
+                    "over_short": { "type": "number" },
+                    "refunded_orders": {
+                        "$ref": "#/components/schemas/DsprLiteDayRefundedOrders"
+                    },
+                    "customer_count": { "type": "integer" },
+                    "waste": {
+                        "$ref": "#/components/schemas/DsprLiteDayWaste"
+                    },
+                    "total_tips": { "type": "number" },
+                    "hnr": { "$ref": "#/components/schemas/DsprLiteDayHnr" },
+                    "labor": { "type": "number" },
+                    "portal": {
+                        "$ref": "#/components/schemas/DsprLiteDayPortal"
+                    }
+                },
+                "required": [
+                    "hourly_sales_and_channels",
+                    "total_sales",
+                    "total_royalty_obligation",
+                    "total_net_sales",
+                    "total_gross_sales",
+                    "total_digital_sales",
+                    "total_cash_sales",
+                    "total_deposit",
+                    "over_short",
+                    "refunded_orders",
+                    "customer_count",
+                    "waste",
+                    "total_tips",
+                    "hnr",
+                    "labor",
+                    "portal"
+                ]
+            },
+            "DsprLiteResponse": {
+                "type": "object",
+                "properties": {
+                    "filtering": {
+                        "$ref": "#/components/schemas/DsprLiteFiltering"
+                    },
+                    "sales": {
+                        "type": "object",
+                        "properties": {
+                            "this_week_by_day": {
+                                "$ref": "#/components/schemas/DsprLiteSalesByDay"
+                            },
+                            "previous_week_by_day": {
+                                "$ref": "#/components/schemas/DsprLiteSalesByDay"
+                            },
+                            "same_week_last_year_by_day": {
+                                "$ref": "#/components/schemas/DsprLiteSalesByDay"
+                            }
+                        },
+                        "required": [
+                            "this_week_by_day",
+                            "previous_week_by_day",
+                            "same_week_last_year_by_day"
+                        ]
+                    },
+                    "top": {
+                        "type": "object",
+                        "properties": {
+                            "top_5_items_sales_for_day": {
+                                "$ref": "#/components/schemas/DsprLiteTopItems"
+                            },
+                            "top_3_ingredients_used": {
+                                "$ref": "#/components/schemas/DsprLiteTopIngredients"
+                            }
+                        },
+                        "required": [
+                            "top_5_items_sales_for_day",
+                            "top_3_ingredients_used"
+                        ]
+                    },
+                    "day": { "$ref": "#/components/schemas/DsprLiteDayTotals" }
+                },
+                "required": ["filtering", "sales", "top", "day"]
+            },
+
+            "EnteredKeyStoreRule": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "store_id": { "type": "string" },
+                    "frequency_type": {
+                        "type": "string",
+                        "enum": ["daily", "weekly", "monthly", "yearly"]
+                    },
+                    "interval": { "type": "integer", "minimum": 1 },
+                    "week_days": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 7
+                        },
+                        "nullable": true
+                    },
+                    "month_day": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 31,
+                        "nullable": true
+                    },
+                    "week_of_month": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, -1],
+                        "nullable": true
+                    },
+                    "week_day": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 7,
+                        "nullable": true
+                    },
+                    "year_month": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 12,
+                        "nullable": true
+                    },
+                    "starts_at": { "type": "string", "format": "date" },
+                    "ends_at": {
+                        "type": "string",
+                        "format": "date",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "store_id",
+                    "frequency_type",
+                    "interval",
+                    "starts_at"
+                ]
+            },
+            "EnteredKey": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "label": { "type": "string" },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "number", "decimal", "boolean", "json"]
+                    },
+                    "is_active": { "type": "boolean" },
+                    "store_rules": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EnteredKeyStoreRule"
+                        }
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": ["id", "label", "data_type", "is_active"]
+            },
+            "EnteredKeyPagination": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/EnteredKey" }
+                    },
+                    "links": { "$ref": "#/components/schemas/PaginationLinks" },
+                    "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+                },
+                "required": ["data", "links", "meta"]
+            },
+
+            "StoreKeyRuleInput": {
+                "type": "object",
+                "properties": {
+                    "store_id": { "type": "string", "maxLength": 255 },
+                    "frequency_type": {
+                        "type": "string",
+                        "enum": ["daily", "weekly", "monthly", "yearly"]
+                    },
+                    "interval": { "type": "integer", "minimum": 1 },
+                    "week_days": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 7
+                        },
+                        "nullable": true
+                    },
+                    "month_day": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 31,
+                        "nullable": true
+                    },
+                    "week_of_month": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, -1],
+                        "nullable": true
+                    },
+                    "week_day": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 7,
+                        "nullable": true
+                    },
+                    "year_month": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 12,
+                        "nullable": true
+                    },
+                    "starts_at": { "type": "string", "format": "date" },
+                    "ends_at": {
+                        "type": "string",
+                        "format": "date",
+                        "nullable": true
+                    }
+                },
+                "required": [
+                    "store_id",
+                    "frequency_type",
+                    "interval",
+                    "starts_at"
+                ]
+            },
+            "StoreKeyRequest": {
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "maxLength": 255 },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "number", "decimal", "boolean", "json"]
+                    },
+                    "is_active": { "type": "boolean" },
+                    "store_rules": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "$ref": "#/components/schemas/StoreKeyRuleInput"
+                        }
+                    }
+                },
+                "required": ["label", "data_type", "store_rules"]
+            },
+            "UpdateKeyRequest": {
+                "allOf": [{ "$ref": "#/components/schemas/StoreKeyRequest" }]
+            },
+
+            "DueItem": {
+                "type": "object",
+                "description": "Structure returned from DueKeyResolverService::dueForStoreOnDate",
+                "properties": {
+                    "key_id": { "type": "integer" },
+                    "label": { "type": "string" },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "number", "decimal", "boolean", "json"]
+                    },
+                    "filled": { "type": "boolean" },
+                    "value": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "Existing EnteredKeyValue for that key/store/date when filled is true",
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["key_id", "label", "data_type", "filled"]
+            },
+            "DueOnDateResponse": {
+                "type": "object",
+                "properties": {
+                    "store_id": { "type": "string" },
+                    "date": { "type": "string", "format": "date" },
+                    "items": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/DueItem" }
+                    }
+                },
+                "required": ["store_id", "date", "items"]
+            },
+            "DueRangeDay": {
+                "type": "object",
+                "description": "Arbitrary structure produced by DueKeyResolverService::dueRange for a single day",
+                "additionalProperties": true
+            },
+            "DueRangeResponse": {
+                "type": "object",
+                "properties": {
+                    "store_id": { "type": "string" },
+                    "from": { "type": "string", "format": "date" },
+                    "to": { "type": "string", "format": "date" },
+                    "days": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/DueRangeDay" }
+                    }
+                },
+                "required": ["store_id", "from", "to", "days"]
+            },
+
+            "UpsertValuePayload": {
+                "type": "object",
+                "properties": {
+                    "key_id": { "type": "integer" },
+                    "value_text": { "type": "string", "nullable": true },
+                    "value_number": { "type": "number", "nullable": true },
+                    "value_boolean": { "type": "boolean", "nullable": true },
+                    "value_json": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "nullable": true
+                    }
+                },
+                "required": ["key_id"]
+            },
+            "BulkUpsertValueItem": {
+                "allOf": [{ "$ref": "#/components/schemas/UpsertValuePayload" }]
+            },
+            "BulkUpsertValuesRequest": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "$ref": "#/components/schemas/BulkUpsertValueItem"
+                        }
+                    }
+                },
+                "required": ["items"]
+            },
+            "EnteredKeyValue": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "key_id": { "type": "integer" },
+                    "store_id": { "type": "string" },
+                    "entry_date": { "type": "string", "format": "date" },
+                    "value_text": { "type": "string", "nullable": true },
+                    "value_number": { "type": "number", "nullable": true },
+                    "value_boolean": { "type": "boolean", "nullable": true },
+                    "value_json": {
+                        "type": "object",
+                        "nullable": true,
+                        "additionalProperties": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "key": {
+                        "$ref": "#/components/schemas/EnteredKey"
+                    }
+                },
+                "required": ["id", "key_id", "store_id", "entry_date"]
+            },
+            "EnteredKeyValuePagination": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EnteredKeyValue"
+                        }
+                    },
+                    "links": { "$ref": "#/components/schemas/PaginationLinks" },
+                    "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+                },
+                "required": ["data", "links", "meta"]
+            },
+            "FilterValuesQuery": {
+                "type": "object",
+                "properties": {
+                    "key_id": { "type": "integer" },
+                    "label": { "type": "string", "maxLength": 255 },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "number", "decimal", "boolean", "json"]
+                    },
+                    "date": { "type": "string", "format": "date" },
+                    "from": { "type": "string", "format": "date" },
+                    "to": { "type": "string", "format": "date" },
+                    "frequency_type": {
+                        "type": "string",
+                        "enum": ["daily", "weekly", "monthly", "yearly"]
+                    },
+                    "interval": { "type": "integer", "minimum": 1 },
+                    "due_on": { "type": "string", "format": "date" },
+                    "page": { "type": "integer", "minimum": 1 },
+                    "per_page": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200
+                    }
+                }
+            },
+
+            "GridRow": {
+                "type": "object",
+                "properties": {
+                    "key_id": { "type": "integer" },
+                    "label": { "type": "string" },
+                    "data_type": {
+                        "type": "string",
+                        "enum": ["text", "number", "decimal", "boolean", "json"]
+                    },
+                    "filled": { "type": "boolean" },
+                    "value": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "Existing EnteredKeyValue when filled is true",
+                        "additionalProperties": true
+                    }
+                },
+                "required": ["key_id", "label", "data_type", "filled"]
+            },
+            "GridResponse": {
+                "type": "object",
+                "properties": {
+                    "store_id": { "type": "string" },
+                    "date": { "type": "string", "format": "date" },
+                    "grid": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/GridRow" }
+                    }
+                },
+                "required": ["store_id", "date", "grid"]
+            },
+
+            "ManualImportProcessorsResponse": {
+                "type": "object",
+                "properties": {
+                    "processors": {
+                        "type": "object",
+                        "properties": {
+                            "detail_orders": { "type": "string" },
+                            "order_lines": { "type": "string" },
+                            "summary_sales": { "type": "string" },
+                            "summary_items": { "type": "string" },
+                            "summary_transactions": { "type": "string" },
+                            "waste": { "type": "string" },
+                            "cash_management": { "type": "string" },
+                            "financial_views": { "type": "string" },
+                            "inventory_cogs": { "type": "string" },
+                            "inventory_orders": { "type": "string" },
+                            "inventory_usage": { "type": "string" },
+                            "inventory_waste": { "type": "string" }
+                        },
+                        "required": [
+                            "detail_orders",
+                            "order_lines",
+                            "summary_sales",
+                            "summary_items",
+                            "summary_transactions",
+                            "waste",
+                            "cash_management",
+                            "financial_views",
+                            "inventory_cogs",
+                            "inventory_orders",
+                            "inventory_usage",
+                            "inventory_waste"
+                        ]
+                    }
+                },
+                "required": ["processors"]
+            },
+            "CsvFileInfo": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "size": { "type": "integer", "nullable": true },
+                    "size_mb": { "type": "number", "nullable": true }
+                },
+                "required": ["name"]
+            },
+            "InspectZipResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean" },
+                    "temp_id": { "type": "string" },
+                    "csv_files": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/CsvFileInfo" }
+                    }
+                },
+                "required": ["success", "temp_id", "csv_files"]
+            },
+            "UploadResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean" },
+                    "upload_id": { "type": "string" },
+                    "total_files": { "type": "integer" }
+                },
+                "required": ["success", "upload_id", "total_files"]
+            },
+            "ImportProgress": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["queued", "processing", "completed", "failed"]
+                    },
+                    "total_files": { "type": "integer" },
+                    "processed_files": { "type": "integer" },
+                    "total_rows": { "type": "integer" },
+                    "current_file": { "type": "string", "nullable": true },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "storage_path": { "type": "string" },
+                    "started_at": { "type": "string", "format": "date-time" }
+                },
+                "required": [
+                    "status",
+                    "total_files",
+                    "processed_files",
+                    "total_rows",
+                    "results",
+                    "storage_path",
+                    "started_at"
+                ]
+            },
+            "ProgressResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean" },
+                    "progress": {
+                        "$ref": "#/components/schemas/ImportProgress"
+                    }
+                },
+                "required": ["success", "progress"]
+            },
+            "ReaggregateResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean" },
+                    "aggregation_id": { "type": "string" }
+                },
+                "required": ["success", "aggregation_id"]
+            },
+            "AggregationProgress": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["queued", "processing", "completed", "failed"]
+                    },
+                    "processed": { "type": "integer" },
+                    "total": { "type": "integer" },
+                    "started_at": { "type": "string", "format": "date-time" }
+                },
+                "required": ["status", "processed", "total", "started_at"]
+            },
+            "AggregationProgressResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean" },
+                    "progress": {
+                        "$ref": "#/components/schemas/AggregationProgress"
+                    }
+                },
+                "required": ["success", "progress"]
+            },
+            "GenericErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "success": { "type": "boolean", "example": false },
+                    "message": { "type": "string" }
+                },
+                "required": ["success", "message"]
+            }
+        }
+    },
+    "security": [
+        {
+            "BearerAuth": []
+        }
+    ],
+    "paths": {
+        "/export/csv": {
+            "get": {
+                "summary": "Export data as CSV",
+                "description": "Downloads a CSV file for a specific model or a ZIP containing CSVs for all models.",
+                "operationId": "exportCsv",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "start",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "required": false
+                    },
+                    {
+                        "name": "end",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "required": false
+                    },
+                    {
+                        "name": "store",
+                        "in": "query",
+                        "schema": { "type": "string" },
+                        "required": false
+                    },
+                    {
+                        "name": "model",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "detail_orders",
+                                "order_line",
+                                "summary_sales",
+                                "summary_items",
+                                "summary_transactions",
+                                "waste",
+                                "cash_management",
+                                "financial_views",
+                                "alta_inventory_waste",
+                                "alta_inventory_ingredient_usage",
+                                "alta_inventory_ingredient_orders",
+                                "alta_inventory_cogs",
+                                "yearly_store_summary",
+                                "yearly_item_summary",
+                                "weekly_store_summary",
+                                "weekly_item_summary",
+                                "quarterly_store_summary",
+                                "quarterly_item_summary",
+                                "monthly_store_summary",
+                                "monthly_item_summary",
+                                "daily_store_summary",
+                                "daily_item_summary",
+                                "hourly_store_summary",
+                                "hourly_item_summary",
+                                "all"
+                            ]
+                        },
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV or ZIP file download",
+                        "content": {
+                            "text/csv": {},
+                            "application/zip": {}
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error during export",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/export/json": {
+            "get": {
+                "summary": "Export data as JSON",
+                "operationId": "exportJson",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "start",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "required": false
+                    },
+                    {
+                        "name": "end",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "required": false
+                    },
+                    {
+                        "name": "store",
+                        "in": "query",
+                        "schema": { "type": "string" },
+                        "required": false
+                    },
+                    {
+                        "name": "model",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "detail_orders",
+                                "order_line",
+                                "summary_sales",
+                                "summary_items",
+                                "summary_transactions",
+                                "waste",
+                                "cash_management",
+                                "financial_views",
+                                "alta_inventory_waste",
+                                "alta_inventory_ingredient_usage",
+                                "alta_inventory_ingredient_orders",
+                                "alta_inventory_cogs",
+                                "yearly_store_summary",
+                                "yearly_item_summary",
+                                "weekly_store_summary",
+                                "weekly_item_summary",
+                                "quarterly_store_summary",
+                                "quarterly_item_summary",
+                                "monthly_store_summary",
+                                "monthly_item_summary",
+                                "daily_store_summary",
+                                "daily_item_summary",
+                                "hourly_store_summary",
+                                "hourly_item_summary"
+                            ]
+                        },
+                        "required": true
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 50000
+                        },
+                        "required": false
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "JSON export success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ExportJsonSuccess"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error during export",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/reports/dspr/{store}/{date}": {
+            "get": {
+                "summary": "DSPR Lite report",
+                "operationId": "dsprLite",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "DSPR Lite report payload",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DsprLiteResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error for store or date",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/": {
+            "get": {
+                "summary": "List available import processors",
+                "operationId": "manualImportIndex",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Available processors for manual import",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ManualImportProcessorsResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/inspect-zip": {
+            "post": {
+                "summary": "Inspect ZIP file and list CSV files",
+                "operationId": "inspectZip",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "file": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": "ZIP file containing CSV files (max 1GB)"
+                                    }
+                                },
+                                "required": ["file"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "ZIP inspected successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InspectZipResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/upload": {
+            "post": {
+                "summary": "Upload CSV files for import",
+                "description": "Upload CSV files directly or reference previously inspected ZIP using temp_id",
+                "operationId": "uploadCsv",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "files": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "format": "binary"
+                                        },
+                                        "description": "Array of CSV files (max 1GB each)"
+                                    },
+                                    "mappings": {
+                                        "type": "string",
+                                        "description": "JSON string mapping filenames to processor keys (e.g., {\"file1.csv\": \"detail_orders\"})"
+                                    },
+                                    "temp_id": {
+                                        "type": "string",
+                                        "description": "Temporary ID from inspectZip for processing previously uploaded ZIP"
+                                    }
+                                },
+                                "oneOf": [
+                                    {
+                                        "required": ["files", "mappings"]
+                                    },
+                                    {
+                                        "required": ["temp_id", "mappings"]
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Upload initiated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/UploadResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request (no valid files, etc.)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Temporary files expired (when using temp_id)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/progress/{uploadId}": {
+            "get": {
+                "summary": "Get import progress",
+                "operationId": "importProgress",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uploadId",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Import progress",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ProgressResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Upload ID not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/reaggregate": {
+            "post": {
+                "summary": "Trigger re-aggregation",
+                "description": "Re-aggregate data for a specific date range and aggregation type",
+                "operationId": "reaggregate",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "start_date": {
+                                        "type": "string",
+                                        "format": "date"
+                                    },
+                                    "end_date": {
+                                        "type": "string",
+                                        "format": "date"
+                                    },
+                                    "type": {
+                                        "type": "string",
+                                        "enum": [
+                                            "hourly",
+                                            "daily",
+                                            "weekly",
+                                            "monthly",
+                                            "quarterly",
+                                            "yearly",
+                                            "all"
+                                        ]
+                                    }
+                                },
+                                "required": ["start_date", "end_date", "type"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Re-aggregation initiated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReaggregateResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Server error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/manual-import/aggregation-progress/{aggregationId}": {
+            "get": {
+                "summary": "Get aggregation progress",
+                "operationId": "aggregationProgress",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "aggregationId",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Aggregation progress",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AggregationProgressResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Aggregation ID not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/keys": {
+            "get": {
+                "summary": "List keys",
+                "operationId": "listKeys",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "schema": { "type": "integer", "minimum": 1 }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated keys list",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKeyPagination"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Create key",
+                "operationId": "createKey",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StoreKeyRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Key created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKey"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error (e.g. duplicate label)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/keys/{key}": {
+            "get": {
+                "summary": "Show key",
+                "operationId": "showKey",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Key with store rules",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKey"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Update key",
+                "operationId": "updateKey",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpdateKeyRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Updated key",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKey"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "summary": "Deactivate key",
+                "operationId": "deactivateKey",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Key deactivated",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Key deactivated."
+                                        }
+                                    },
+                                    "required": ["message"]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/keys/{key}/rules": {
+            "get": {
+                "summary": "List key store rules",
+                "operationId": "listKeyRules",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Store rules for the key",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EnteredKeyStoreRule"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "summary": "Replace key store rules",
+                "operationId": "replaceKeyRules",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "store_rules": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {
+                                            "$ref": "#/components/schemas/StoreKeyRuleInput"
+                                        }
+                                    }
+                                },
+                                "required": ["store_rules"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Replaced store rules",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EnteredKeyStoreRule"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/values": {
+            "get": {
+                "summary": "Global values listing",
+                "operationId": "valuesIndex",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "key_id",
+                        "in": "query",
+                        "schema": { "type": "integer" }
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "data_type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "text",
+                                "number",
+                                "decimal",
+                                "boolean",
+                                "json"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "date",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": { "type": "integer", "minimum": 1 }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated values for all stores",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKeyValuePagination"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/stores/{store_id}/values": {
+            "get": {
+                "summary": "Store-specific values listing",
+                "operationId": "storeValuesIndex",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "key_id",
+                        "in": "query",
+                        "schema": { "type": "integer" }
+                    },
+                    {
+                        "name": "label",
+                        "in": "query",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "data_type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "text",
+                                "number",
+                                "decimal",
+                                "boolean",
+                                "json"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "date",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "frequency_type",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["daily", "weekly", "monthly", "yearly"]
+                        }
+                    },
+                    {
+                        "name": "interval",
+                        "in": "query",
+                        "schema": { "type": "integer", "minimum": 1 }
+                    },
+                    {
+                        "name": "due_on",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" }
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": { "type": "integer", "minimum": 1 }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated values for store",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKeyValuePagination"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/stores/{store_id}/dates/{date}/values": {
+            "get": {
+                "summary": "Grid of due keys and values for store/date",
+                "operationId": "gridValues",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "format": "date" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Grid of due keys and their current values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GridResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "summary": "Upsert single value",
+                "operationId": "upsertOneValue",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "format": "date" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UpsertValuePayload"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Value upserted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EnteredKeyValue"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation or type mismatch",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/stores/{store_id}/dates/{date}/values/bulk": {
+            "post": {
+                "summary": "Bulk upsert values",
+                "operationId": "upsertBulkValues",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "format": "date" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/BulkUpsertValuesRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Bulk upserted values",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "items": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/components/schemas/EnteredKeyValue"
+                                            }
+                                        }
+                                    },
+                                    "required": ["items"]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "One or more keys not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation or type mismatch for items",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/stores/{store_id}/dates/{date}/due": {
+            "get": {
+                "summary": "Due keys for store on date",
+                "operationId": "dueOnDate",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string", "format": "date" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Due items for store and date",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DueOnDateResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/engine/stores/{store_id}/due-range": {
+            "get": {
+                "summary": "Due keys for store in date range",
+                "operationId": "dueRange",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Due items grouped by day",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DueRangeResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error for date range",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

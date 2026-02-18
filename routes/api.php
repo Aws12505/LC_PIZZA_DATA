@@ -3,8 +3,14 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\API\{
     ExportingController,
-    ReportsController
+    ReportsController,
+    DueController,
+    KeyController,
+    KeyRuleController,
+    ValueController,
+    ManualCsvImportController
 };
+
 
 /**
  * API Routes for Pizza Data System
@@ -25,26 +31,52 @@ Route::prefix('export')->group(function () {
 
 Route::get('/reports/dspr/{store}/{date}', [ReportsController::class, 'dsprLite'])->middleware('auth.token.store');
 
-// ════════════════════════════════════════════════════════════════════════════════════════════
-// EXAMPLE REQUESTS
-// ════════════════════════════════════════════════════════════════════════════════════════════
 
-/**
- * Dashboard Overview:
- * GET /api/dashboard/overview?store=03795
- * 
- * Sales Summary:
- * GET /api/reports/sales-summary?store=03795&start=2025-01-01&end=2025-01-31
- * 
- * Top Items:
- * GET /api/reports/top-items?store=03795&start=2025-01-01&end=2025-01-31&limit=20
- * 
- * Channel Performance:
- * GET /api/reports/channel-performance?store=03795&start=2025-01-01&end=2025-01-31
- * 
- * Export CSV:
- * GET /api/export/csv?model=detail_orders&store=03795&start=2025-01-01&end=2025-01-31
- * 
- * Export JSON:
- * GET /api/export/json?model=detail_orders&store=03795&start=2025-01-01&end=2025-01-31&limit=1000
- */
+
+Route::prefix('engine')->middleware('auth.token.store')->group(function () {
+
+    // Keys CRUD
+    Route::apiResource('keys', KeyController::class);
+
+    // Optional rules convenience
+    Route::get('keys/{key}/rules', [KeyRuleController::class, 'index']);
+    Route::put('keys/{key}/rules', [KeyRuleController::class, 'replace']);
+
+    // Values
+    // Route::get('values', [ValueController::class, 'index']);
+    Route::get('stores/{store_id}/values', [ValueController::class, 'storeIndex']);
+
+    Route::post('stores/{store_id}/dates/{date}/values', [ValueController::class, 'upsertOne']);
+    Route::post('stores/{store_id}/dates/{date}/values/bulk', [ValueController::class, 'upsertBulk']);
+
+    // Due
+    Route::get('stores/{store_id}/dates/{date}/due', [DueController::class, 'dueOnDate']);
+    Route::get('stores/{store_id}/due-range', [DueController::class, 'dueRange']);
+
+    Route::get('stores/{store_id}/dates/{date}/values', [ValueController::class, 'grid']);
+});
+
+
+Route::prefix('manual-import')
+    ->name('manual.import.')
+    ->middleware('auth.token.store')
+    ->group(function () {
+
+        // UI page (NO secret key middleware, accessible for API requests)
+        Route::get('/', [ManualCsvImportController::class, 'index'])
+            ->name('index');
+        Route::post('/inspect-zip', [ManualCsvImportController::class, 'inspectZip'])
+            ->name('inspect.zip');
+
+        Route::post('/upload', [ManualCsvImportController::class, 'upload'])
+            ->name('upload');
+
+        Route::get('/progress/{uploadId}', [ManualCsvImportController::class, 'progress'])
+            ->name('progress');
+
+        Route::post('/reaggregate', [ManualCsvImportController::class, 'reaggregate'])
+            ->name('reaggregate');
+
+        Route::get('/aggregation-progress/{aggregationId}', [ManualCsvImportController::class, 'aggregationProgress'])
+            ->name('aggregation.progress');
+    });
