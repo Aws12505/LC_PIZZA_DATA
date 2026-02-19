@@ -7,11 +7,7 @@ use Carbon\Carbon;
 
 class ScheduleEvaluationService
 {
-    public function __construct()
-    {
-        Carbon::setWeekStartsAt(Carbon::TUESDAY);
-        Carbon::setWeekEndsAt(Carbon::MONDAY);
-    }
+
 
     public function inWindow(KeyStoreRule $rule, Carbon $date): bool
     {
@@ -71,10 +67,11 @@ class ScheduleEvaluationService
         $weekDays = $rule->week_days ?? [];
         if (empty($weekDays)) return false;
 
-        $isoDow = (int)$date->dayOfWeekIso; // 1..7
+        // Manually adjusting the start of the week to Tuesday (ISO Week starts on Monday, so 2 = Tuesday)
+        $isoDow = (int)$date->dayOfWeekIso; // 1..7, starting from Monday
         if (!in_array($isoDow, $weekDays, true)) return false;
 
-        // interval weeks measured using YOUR week (Tue..Mon)
+        // Custom start of week logic for Tuesday
         $startWeek = $rule->starts_at->copy()->startOfWeek(Carbon::TUESDAY);
         $curWeek = $date->copy()->startOfWeek(Carbon::TUESDAY);
         $weeks = $startWeek->diffInWeeks($curWeek);
