@@ -110,7 +110,14 @@ class ReportsController extends Controller
 
             'top' => [
                 'top_5_items_sales_for_day' => $this->topItemsForDay($store, $day, 5),
-                'top_3_ingredients_used' => $this->topIngredientsForDay($store, $day),
+
+                'ingredients' => [
+                    'top_3_ingredients_used' => $this->topIngredientsForDay($store, $day),
+
+                    'main_5_ingredients_usage' => $this->mainFiveIngredientsUsage($store, $day),
+
+                    'top_paper_5_ingredients_usage' => $this->topPaperFiveIngredientsUsage($store, $day),
+                ],
             ],
 
             'day' => [
@@ -285,6 +292,97 @@ class ReportsController extends Controller
             ->toArray();
     }
 
+    private function mainFiveIngredientsUsage(string $store, CarbonImmutable $day): array
+    {
+        $ids = [1515, 1103, 3813, 1042, 404, 406];
+
+        $results = $this->fetchIngredientSet($store, $day, $ids);
+
+        // 🔥 Merge 404 + 406
+        $merged = [];
+        $totalUsage = 0;
+        $variance = 0;
+
+        foreach ($results as $row) {
+            if (in_array($row['ingredient_id'], [404, 406])) {
+                $totalUsage += $row['actual_usage'];
+                $variance += $row['variance_value'];
+            } else {
+                $merged[] = $row;
+            }
+        }
+
+        if ($totalUsage > 0) {
+            $merged[] = [
+                'ingredient_id' => 404,
+                'ingredient_description' => $this->getIngredientName($results, 404),
+                'actual_usage' => round($totalUsage, 2),
+                'variance_value' => round($variance, 2),
+            ];
+        }
+
+        // Sort descending by usage
+        usort($merged, fn($a, $b) => $b['actual_usage'] <=> $a['actual_usage']);
+
+        return $merged;
+    }
+
+    private function topPaperFiveIngredientsUsage(string $store, CarbonImmutable $day): array
+    {
+        $ids = [4659, '4660/4621', 5858, 4540, 4342];
+
+        $results = $this->fetchIngredientSet($store, $day, $ids);
+
+        usort($results, fn($a, $b) => $b['actual_usage'] <=> $a['actual_usage']);
+
+        return $results;
+    }
+
+    private function getIngredientName(array $results, int $id): string
+    {
+        foreach ($results as $row) {
+            if ((int)$row['ingredient_id'] === $id) {
+                return $row['ingredient_description'];
+            }
+        }
+
+        return 'Ingredient 404';
+    }
+
+    private function fetchIngredientSet(string $store, CarbonImmutable $day, array $ids): array
+    {
+        $queries = DatabaseRouter::routedQueries(
+            'alta_inventory_ingredient_usage',
+            $day->toMutable(),
+            $day->toMutable()
+        );
+
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
+            $union->unionAll($q);
+        }
+
+        return DB::query()
+            ->fromSub($union, 'u')
+            ->where('franchise_store', $store)
+            ->whereIn('ingredient_id', $ids)
+            ->groupBy('ingredient_id', 'ingredient_description')
+            ->get([
+                'ingredient_id',
+                'ingredient_description',
+                DB::raw('SUM(actual_usage) as total_actual_usage'),
+                DB::raw('SUM(variance_qty * ingredient_unit_cost) as total_variance_value'),
+            ])
+            ->map(static function ($row) {
+                return [
+                    'ingredient_id' => $row->ingredient_id,
+                    'ingredient_description' => $row->ingredient_description,
+                    'actual_usage' => round((float) $row->total_actual_usage, 2),
+                    'variance_value' => round((float) $row->total_variance_value, 2),
+                ];
+            })
+            ->toArray();
+    }
     // ---------------------------------------------------------------------
     // Hourly
     // ---------------------------------------------------------------------
