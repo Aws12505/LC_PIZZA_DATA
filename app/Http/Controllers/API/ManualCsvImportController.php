@@ -114,38 +114,44 @@ class ManualCsvImportController extends Controller
 
     public function upload(Request $request)
     {
+        // Validate the request
         $validator = Validator::make($request->all(), [
-            'files' => 'required|array|min:1',
-            'files.*' => 'required|file|mimes:csv,txt|max:1048576',
-            'mappings' => 'required|array|min:1',
-            'mappings.*' => 'required|string'
+            'files' => 'required|array|min:1',  // Ensure there is at least one file
+            'files.*' => 'required|file|mimes:csv,txt|max:1048576',  // Validate each file
+            'mappings' => 'required|array|min:1',  // Ensure mappings are provided as an array
+            'mappings.*' => 'required|string',  // Ensure each mapping is a string (processor key)
         ]);
 
+        // Check if there's a temp_id and handle the temporary file upload case
         if ($request->has('temp_id')) {
             return $this->uploadFromTemp($request);
         }
 
+        // If validation fails, return error response
         if ($validator->fails()) {
             return response()->json(['success' => false, 'message' => $validator->errors()->first()], 422);
         }
 
         try {
+            // Get the files and mappings from the request
             $files = $request->file('files');
-            $mappings = json_decode($request->input('mappings'), true);
+            $mappings = $request->input('mappings');  // Directly use the mappings array
 
+            // Create a unique upload ID for this import session
             $uploadId = uniqid('import_', true);
             $storagePath = storage_path("app/uploads/{$uploadId}");
+            // Create the upload directory if it doesn't exist
             mkdir($storagePath, 0755, true);
 
-            // Move all CSV files
+            // Move each uploaded file to the storage path
             $csvFiles = [];
             foreach ($files as $file) {
                 $filename = $file->getClientOriginalName();
                 $file->move($storagePath, $filename);
-                $csvFiles[$filename] = $storagePath . '/' . $filename;
+                $csvFiles[$filename] = $storagePath . '/' . $filename;  // Store the full path of the file
             }
 
-            // Initialize progress
+            // Initialize import progress in the cache
             Cache::put("import_progress_{$uploadId}", [
                 'status' => 'queued',
                 'total_files' => count($csvFiles),
@@ -155,34 +161,39 @@ class ManualCsvImportController extends Controller
                 'results' => [],
                 'storage_path' => $storagePath,
                 'started_at' => now()->toISOString()
-            ], 3600);
+            ], 3600);  // Store progress for 1 hour
 
-            // Dispatch jobs
+            // Dispatch jobs for processing each CSV file
             foreach ($csvFiles as $filename => $csvPath) {
+                // Check if a valid mapping exists for the current file
                 if (!isset($mappings[$filename]) || !isset($this->processorMap[$mappings[$filename]])) {
-                    continue;
+                    continue;  // Skip files that don't have a valid mapping
                 }
 
+                // Dispatch job to process the CSV file
                 ProcessCsvImportJob::dispatch(
-                    $uploadId,
-                    $csvPath,
-                    $filename,
-                    $this->processorMap[$mappings[$filename]],
-                    count($csvFiles)
+                    $uploadId,  // Unique upload ID
+                    $csvPath,   // Path to the CSV file
+                    $filename,  // Filename of the CSV
+                    $this->processorMap[$mappings[$filename]],  // Processor class for this file
+                    count($csvFiles)  // Total number of files to track progress
                 );
             }
 
+            // Return success response with upload details
             return response()->json([
                 'success' => true,
                 'upload_id' => $uploadId,
                 'total_files' => count($csvFiles)
             ]);
         } catch (\Exception $e) {
+            // Log any errors that occur during the upload process
             Log::error("Upload failed", [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
+            // Return error response if something goes wrong
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }

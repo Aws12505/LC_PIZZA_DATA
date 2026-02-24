@@ -1220,8 +1220,12 @@
                                         "description": "Array of CSV files (max 1GB each)"
                                     },
                                     "mappings": {
-                                        "type": "string",
-                                        "description": "JSON string mapping filenames to processor keys (e.g., {\"file1.csv\": \"detail_orders\"})"
+                                        "type": "object",
+                                        "description": "Object mapping filenames to processor keys (e.g., {\"file1.csv\": \"detail_orders\"})",
+                                        "additionalProperties": {
+                                            "type": "string",
+                                            "description": "Processor key for the CSV file"
+                                        }
                                     },
                                     "temp_id": {
                                         "type": "string",
