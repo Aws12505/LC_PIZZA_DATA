@@ -33,6 +33,10 @@
         {
             "name": "Key Engine - Due",
             "description": "Resolve which keys are due"
+        },
+        {
+            "name": "Employee Debriefs",
+            "description": "Employee debrief notes per store"
         }
     ],
     "components": {
@@ -158,6 +162,106 @@
                         "actual_usage",
                         "variance_value"
                     ]
+                }
+            },
+            "EmployeeDebrief": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "store_id": {
+                        "type": "string"
+                    },
+                    "user_id": {
+                        "type": "integer",
+                        "description": "User who created the note"
+                    },
+                    "employee_name": {
+                        "type": "string"
+                    },
+                    "note": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "author": {
+                        "$ref": "#/components/schemas/UserSimple"
+                    }
+                },
+                "required": [
+                    "id",
+                    "store_id",
+                    "user_id",
+                    "employee_name",
+                    "note",
+                    "date"
+                ]
+            },
+
+            "EmployeeDebriefCreate": {
+                "type": "object",
+                "properties": {
+                    "employee_name": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+                    "note": {
+                        "type": "string",
+                        "maxLength": 5000
+                    },
+                    "date": {
+                        "type": "string",
+                        "format": "date"
+                    }
+                },
+                "required": ["employee_name", "note", "date"]
+            },
+
+            "EmployeeDebriefPagination": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EmployeeDebrief"
+                        }
+                    },
+                    "links": {
+                        "$ref": "#/components/schemas/PaginationLinks"
+                    },
+                    "meta": {
+                        "$ref": "#/components/schemas/PaginationMeta"
+                    }
+                },
+                "required": ["data", "links", "meta"]
+            },
+
+            "UserSimple": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "email": {
+                        "type": "string"
+                    }
                 }
             },
             "DsprLiteHourlySalesByChannelRow": {
@@ -2601,6 +2705,223 @@
                     },
                     "422": {
                         "description": "Validation error for date range",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/stores/{store_id}/employee-debriefs": {
+            "get": {
+                "tags": ["Employee Debriefs"],
+                "summary": "List employee debrief notes",
+                "operationId": "listEmployeeDebriefs",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "employee_name",
+                        "in": "query",
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "date",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated employee debrief notes",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeeDebriefPagination"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+
+            "post": {
+                "tags": ["Employee Debriefs"],
+                "summary": "Create employee debrief note",
+                "operationId": "createEmployeeDebrief",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeDebriefCreate"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Debrief created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeeDebrief"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/stores/{store_id}/employee-debriefs/{debrief}": {
+            "get": {
+                "tags": ["Employee Debriefs"],
+                "summary": "Show employee debrief",
+                "operationId": "showEmployeeDebrief",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "debrief",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Debrief details",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeeDebrief"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Debrief not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+
+            "delete": {
+                "tags": ["Employee Debriefs"],
+                "summary": "Delete employee debrief",
+                "operationId": "deleteEmployeeDebrief",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "debrief",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Debrief deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Debrief deleted."
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Debrief not found",
                         "content": {
                             "application/json": {
                                 "schema": {

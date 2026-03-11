@@ -8,7 +8,8 @@ use App\Http\Controllers\API\{
     KeyController,
     KeyRuleController,
     ValueController,
-    ManualCsvImportController
+    ManualCsvImportController,
+    EmployeeDebriefController
 };
 
 
@@ -76,3 +77,16 @@ Route::prefix('manual-import')
 
         Route::get('/aggregation-progress/{aggregationId}', [ManualCsvImportController::class, 'aggregationProgress']);
     });
+
+
+Route::prefix('stores/{store_id}/employee-debriefs')->middleware('auth.token.store')->group(function () {
+
+    Route::get('/', [EmployeeDebriefController::class, 'index']);
+
+    Route::post('/', [EmployeeDebriefController::class, 'store']);
+
+    Route::get('{debrief}', [EmployeeDebriefController::class, 'show']);
+
+    Route::delete('{debrief}', [EmployeeDebriefController::class, 'destroy']);
+
+});
