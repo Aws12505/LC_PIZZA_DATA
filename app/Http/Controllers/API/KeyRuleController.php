@@ -15,19 +15,33 @@ class KeyRuleController extends Controller
         return response()->json($key->storeRules()->orderBy('store_id')->get());
     }
 
-    /**
-     * Replace rules only (expects same payload format as update key, but we only use store_rules).
-     */
     public function replace(UpdateKeyRequest $request, EnteredKey $key): JsonResponse
     {
         $payload = $request->validated();
+        $storeRules = $this->normalizeStoreRules($payload['store_rules'] ?? []);
 
-        $key = DB::transaction(function () use ($payload, $key) {
+        $key = DB::transaction(function () use ($storeRules, $key) {
             $key->storeRules()->delete();
-            $key->storeRules()->createMany($payload['store_rules']);
+            $key->storeRules()->createMany($storeRules);
+
             return $key->load('storeRules');
         });
 
         return response()->json($key->storeRules);
+    }
+
+    private function normalizeStoreRules(array $rules): array
+    {
+        return array_map(function (array $rule) {
+            $fillMode = $rule['fill_mode'] ?? 'store_once';
+
+            return [
+                ...$rule,
+                'fill_mode' => $fillMode,
+                'role_names' => $fillMode === 'role_each'
+                    ? array_values(array_unique(array_filter($rule['role_names'] ?? [], fn($v) => filled($v))))
+                    : null,
+            ];
+        }, $rules);
     }
 }

@@ -11,18 +11,19 @@ return new class extends Migration {
     public function up(): void
     {
         Schema::table('key_store_rules', function (Blueprint $table) {
-            $table->enum('fill_mode', ['store_once', 'role_each'])->default('store_once');
+            $table->enum('fill_mode', ['store_once', 'role_each'])->default('store_once')->after('store_id');
 
             // required only if role_each
-            $table->string('role_name')->nullable()->index();
+            $table->json('role_names')->nullable()->after('fill_mode');
         });
         Schema::table('entered_key_values', function (Blueprint $table) {
 
             $table->unsignedBigInteger('user_id')->nullable()->after('store_id');
 
             $table->text('note')->nullable();
-
+            $table->index(['key_id', 'store_id', 'entry_date', 'user_id']);
         });
+
     }
 
     /**

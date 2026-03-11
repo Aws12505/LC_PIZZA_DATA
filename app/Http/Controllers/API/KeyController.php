@@ -20,6 +20,7 @@ class KeyController extends Controller
     public function store(StoreKeyRequest $request): JsonResponse
     {
         $payload = $request->validated();
+        $payload['store_rules'] = $this->normalizeStoreRules($payload['store_rules'] ?? []);
 
         $key = DB::transaction(function () use ($payload) {
             $key = EnteredKey::create([
@@ -44,6 +45,7 @@ class KeyController extends Controller
     public function update(UpdateKeyRequest $request, EnteredKey $key): JsonResponse
     {
         $payload = $request->validated();
+        $payload['store_rules'] = $this->normalizeStoreRules($payload['store_rules'] ?? []);
 
         $key = DB::transaction(function () use ($payload, $key) {
             $key->update([
@@ -52,7 +54,6 @@ class KeyController extends Controller
                 'is_active' => $payload['is_active'] ?? $key->is_active,
             ]);
 
-            // replace rules for clean UX
             $key->storeRules()->delete();
             $key->storeRules()->createMany($payload['store_rules']);
 
@@ -78,5 +79,22 @@ class KeyController extends Controller
     {
         $key->delete();
         return response()->json(['message' => 'Key permanently deleted.']);
+    }
+
+    private function normalizeStoreRules(array $rules): array
+    {
+        return array_map(function (array $rule) {
+            $fillMode = $rule['fill_mode'] ?? 'store_once';
+
+            $normalized = [
+                ...$rule,
+                'fill_mode' => $fillMode,
+                'role_names' => $fillMode === 'role_each'
+                    ? array_values(array_unique(array_filter($rule['role_names'] ?? [], fn($v) => filled($v))))
+                    : null,
+            ];
+
+            return $normalized;
+        }, $rules);
     }
 }

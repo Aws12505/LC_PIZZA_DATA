@@ -211,34 +211,50 @@ class ValueController extends Controller
 
     public function grid(string $store_id, string $date): JsonResponse
     {
-        // Parse the given date string to Carbon object
-        $date = Carbon::parse($date)->startOfDay(); // Start of day ensures consistency for daily values
+        $date = Carbon::parse($date)->startOfDay();
 
-        // Fetch all the due keys for the given store and date (from the DueKeyResolverService)
-        $dueKeys = app(DueKeyResolverService::class)->dueForStoreOnDate($store_id, $date);
+        $dueItems = app(DueKeyResolverService::class)
+            ->dueForStoreOnDate($store_id, $date);
 
-        // Prepare the grid: Collect due keys and match them with existing values
-        $grid = $dueKeys->map(function ($item) use ($store_id, $date) {
+        $userIds = $dueItems
+            ->pluck('user_id')
+            ->filter()
+            ->unique()
+            ->values();
 
-            // For each due key, check if there's an existing value for that store and date
-            $existingValue = $item['filled']
-                ? $item['value']
-                : null;  // If not filled, it will be null
+        $users = \App\Models\User::query()
+            ->whereIn('id', $userIds)
+            ->get()
+            ->keyBy('id');
+
+        $grid = $dueItems->map(function ($item) use ($users) {
+
+            $user = null;
+
+            if (!empty($item['user_id'])) {
+                $user = $users->get($item['user_id']);
+            }
 
             return [
                 'key_id' => $item['key_id'],
                 'label' => $item['label'],
                 'data_type' => $item['data_type'],
+
+                'fill_mode' => $item['fill_mode'] ?? 'store_once',
+
+                'user_id' => $item['user_id'] ?? null,
+                'user_name' => $user?->name,
+
                 'filled' => $item['filled'],
-                'value' => $existingValue, // Will return null if not filled
+
+                'value' => $item['value'],
             ];
         });
 
-        // Return the response as JSON with the grid of due keys + existing values
         return response()->json([
             'store_id' => $store_id,
             'date' => $date->toDateString(),
-            'grid' => $grid,
+            'grid' => $grid->values(),
         ]);
     }
 }

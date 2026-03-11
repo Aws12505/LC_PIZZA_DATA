@@ -361,6 +361,7 @@
                 "type": "object",
                 "properties": {
                     "id": { "type": "integer", "readOnly": true },
+
                     "store_id": { "type": "string" },
 
                     "fill_mode": {
@@ -369,10 +370,11 @@
                         "description": "Defines whether the key must be filled once per store or once per user role"
                     },
 
-                    "role_name": {
-                        "type": "string",
+                    "role_names": {
+                        "type": "array",
+                        "items": { "type": "string" },
                         "nullable": true,
-                        "description": "Required when fill_mode = role_each"
+                        "description": "List of roles required when fill_mode = role_each"
                     },
 
                     "frequency_type": {
@@ -380,7 +382,10 @@
                         "enum": ["daily", "weekly", "monthly", "yearly"]
                     },
 
-                    "interval": { "type": "integer", "minimum": 1 },
+                    "interval": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
 
                     "week_days": {
                         "type": "array",
@@ -419,7 +424,10 @@
                         "nullable": true
                     },
 
-                    "starts_at": { "type": "string", "format": "date" },
+                    "starts_at": {
+                        "type": "string",
+                        "format": "date"
+                    },
 
                     "ends_at": {
                         "type": "string",
@@ -480,13 +488,36 @@
 
             "StoreKeyRuleInput": {
                 "type": "object",
+
                 "properties": {
-                    "store_id": { "type": "string", "maxLength": 255 },
+                    "store_id": {
+                        "type": "string",
+                        "maxLength": 255
+                    },
+
+                    "fill_mode": {
+                        "type": "string",
+                        "enum": ["store_once", "role_each"],
+                        "default": "store_once"
+                    },
+
+                    "role_names": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "nullable": true,
+                        "description": "Required when fill_mode = role_each"
+                    },
+
                     "frequency_type": {
                         "type": "string",
                         "enum": ["daily", "weekly", "monthly", "yearly"]
                     },
-                    "interval": { "type": "integer", "minimum": 1 },
+
+                    "interval": {
+                        "type": "integer",
+                        "minimum": 1
+                    },
+
                     "week_days": {
                         "type": "array",
                         "items": {
@@ -496,47 +527,46 @@
                         },
                         "nullable": true
                     },
+
                     "month_day": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 31,
                         "nullable": true
                     },
+
                     "week_of_month": {
                         "type": "integer",
                         "enum": [1, 2, 3, 4, -1],
                         "nullable": true
                     },
+
                     "week_day": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 7,
                         "nullable": true
                     },
+
                     "year_month": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 12,
                         "nullable": true
                     },
-                    "starts_at": { "type": "string", "format": "date" },
+
+                    "starts_at": {
+                        "type": "string",
+                        "format": "date"
+                    },
+
                     "ends_at": {
                         "type": "string",
                         "format": "date",
                         "nullable": true
-                    },
-                    "fill_mode": {
-                        "type": "string",
-                        "enum": ["store_once", "role_each"],
-                        "default": "store_once"
-                    },
-
-                    "role_name": {
-                        "type": "string",
-                        "nullable": true,
-                        "description": "Required when fill_mode = role_each"
                     }
                 },
+
                 "required": [
                     "store_id",
                     "frequency_type",
@@ -568,23 +598,69 @@
             },
             "DueItem": {
                 "type": "object",
-                "description": "Structure returned from DueKeyResolverService::dueForStoreOnDate",
+
                 "properties": {
                     "key_id": { "type": "integer" },
+
                     "label": { "type": "string" },
+
                     "data_type": {
                         "type": "string",
                         "enum": ["text", "number", "decimal", "boolean", "json"]
                     },
-                    "filled": { "type": "boolean" },
+
+                    "frequency_type": {
+                        "type": "string",
+                        "enum": ["daily", "weekly", "monthly", "yearly"]
+                    },
+
+                    "interval": {
+                        "type": "integer"
+                    },
+
+                    "mode": {
+                        "type": "string",
+                        "enum": ["date_specific", "monthly_any_day"]
+                    },
+
+                    "fill_mode": {
+                        "type": "string",
+                        "enum": ["store_once", "role_each"]
+                    },
+
+                    "user_id": {
+                        "type": "integer",
+                        "nullable": true
+                    },
+
+                    "user_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+
+                    "role_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+
+                    "filled": {
+                        "type": "boolean"
+                    },
+
                     "value": {
                         "type": "object",
                         "nullable": true,
-                        "description": "Existing EnteredKeyValue for that key/store/date when filled is true",
                         "additionalProperties": true
                     }
                 },
-                "required": ["key_id", "label", "data_type", "filled"]
+
+                "required": [
+                    "key_id",
+                    "label",
+                    "data_type",
+                    "fill_mode",
+                    "filled"
+                ]
             },
             "DueOnDateResponse": {
                 "type": "object",
@@ -599,9 +675,11 @@
                 "required": ["store_id", "date", "items"]
             },
             "DueRangeDay": {
-                "type": "object",
-                "description": "Arbitrary structure produced by DueKeyResolverService::dueRange for a single day",
-                "additionalProperties": true
+                "type": "array",
+                "items": {
+                    "$ref": "#/components/schemas/DueItem"
+                },
+                "description": "Array of due items for a specific date"
             },
             "DueRangeResponse": {
                 "type": "object",
@@ -610,8 +688,10 @@
                     "from": { "type": "string", "format": "date" },
                     "to": { "type": "string", "format": "date" },
                     "days": {
-                        "type": "array",
-                        "items": { "$ref": "#/components/schemas/DueRangeDay" }
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/DueRangeDay"
+                        }
                     }
                 },
                 "required": ["store_id", "from", "to", "days"]
@@ -759,14 +839,37 @@
 
             "GridRow": {
                 "type": "object",
+
                 "properties": {
                     "key_id": { "type": "integer" },
+
                     "label": { "type": "string" },
+
                     "data_type": {
                         "type": "string",
                         "enum": ["text", "number", "decimal", "boolean", "json"]
                     },
-                    "filled": { "type": "boolean" },
+
+                    "fill_mode": {
+                        "type": "string",
+                        "enum": ["store_once", "role_each"]
+                    },
+
+                    "user_id": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "User responsible for filling when fill_mode = role_each"
+                    },
+
+                    "user_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+
+                    "filled": {
+                        "type": "boolean"
+                    },
+
                     "value": {
                         "type": "object",
                         "nullable": true,
@@ -774,7 +877,14 @@
                         "additionalProperties": true
                     }
                 },
-                "required": ["key_id", "label", "data_type", "filled"]
+
+                "required": [
+                    "key_id",
+                    "label",
+                    "data_type",
+                    "fill_mode",
+                    "filled"
+                ]
             },
             "GridResponse": {
                 "type": "object",

@@ -12,7 +12,7 @@ class KeyStoreRule extends Model
         'store_id',
 
         'fill_mode',
-        'role_name',
+        'role_names',
 
         'frequency_type',
         'interval',
@@ -28,6 +28,7 @@ class KeyStoreRule extends Model
     ];
 
     protected $casts = [
+        'role_names' => 'array',
         'week_days' => 'array',
         'starts_at' => 'date',
         'ends_at' => 'date',
