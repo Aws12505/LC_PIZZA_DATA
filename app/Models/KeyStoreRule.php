@@ -10,13 +10,19 @@ class KeyStoreRule extends Model
     protected $fillable = [
         'key_id',
         'store_id',
+
+        'fill_mode',
+        'role_name',
+
         'frequency_type',
         'interval',
+
         'week_days',
         'month_day',
         'week_of_month',
         'week_day',
         'year_month',
+
         'starts_at',
         'ends_at',
     ];

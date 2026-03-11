@@ -38,6 +38,8 @@ Route::prefix('engine')->middleware('auth.token.store')->group(function () {
 
     // Keys CRUD
     Route::apiResource('keys', KeyController::class);
+    Route::patch('keys/{key}/restore', [KeyController::class, 'restore']);
+    Route::delete('keys/{key}/force-delete', [KeyController::class, 'forceDelete']);
 
     // Optional rules convenience
     Route::get('keys/{key}/rules', [KeyRuleController::class, 'index']);

@@ -21,6 +21,8 @@ class BulkUpsertValuesRequest extends FormRequest
             'items.*.value_number' => 'nullable|numeric',
             'items.*.value_boolean' => 'nullable|boolean',
             'items.*.value_json' => 'nullable|array',
+
+            'items.*.note' => 'nullable|string|max:2000'
         ];
     }
 

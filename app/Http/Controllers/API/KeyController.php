@@ -67,4 +67,16 @@ class KeyController extends Controller
         $key->update(['is_active' => false]);
         return response()->json(['message' => 'Key deactivated.']);
     }
+
+    public function restore(EnteredKey $key): JsonResponse
+    {
+        $key->update(['is_active' => true]);
+        return response()->json(['message' => 'Key reactivated.']);
+    }
+
+    public function forceDelete(EnteredKey $key): JsonResponse
+    {
+        $key->delete();
+        return response()->json(['message' => 'Key permanently deleted.']);
+    }
 }

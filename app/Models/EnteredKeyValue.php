@@ -10,11 +10,13 @@ class EnteredKeyValue extends Model
     protected $fillable = [
         'key_id',
         'store_id',
+        'user_id',
         'entry_date',
         'value_text',
         'value_number',
         'value_boolean',
         'value_json',
+        'note',
     ];
 
     protected $casts = [
@@ -27,5 +29,10 @@ class EnteredKeyValue extends Model
     public function key(): BelongsTo
     {
         return $this->belongsTo(EnteredKey::class, 'key_id');
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
     }
 }

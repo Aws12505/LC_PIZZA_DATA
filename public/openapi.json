@@ -9,6 +9,32 @@
             "url": "/api"
         }
     ],
+    "tags": [
+        {
+            "name": "Exports",
+            "description": "CSV and JSON export endpoints"
+        },
+        {
+            "name": "Reports",
+            "description": "Business reporting endpoints"
+        },
+        {
+            "name": "Manual Import",
+            "description": "Manual CSV and ZIP data imports"
+        },
+        {
+            "name": "Key Engine - Keys",
+            "description": "Manage data keys and store rules"
+        },
+        {
+            "name": "Key Engine - Values",
+            "description": "Store and query entered key values"
+        },
+        {
+            "name": "Key Engine - Due",
+            "description": "Resolve which keys are due"
+        }
+    ],
     "components": {
         "securitySchemes": {
             "BearerAuth": {
@@ -336,11 +362,26 @@
                 "properties": {
                     "id": { "type": "integer", "readOnly": true },
                     "store_id": { "type": "string" },
+
+                    "fill_mode": {
+                        "type": "string",
+                        "enum": ["store_once", "role_each"],
+                        "description": "Defines whether the key must be filled once per store or once per user role"
+                    },
+
+                    "role_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Required when fill_mode = role_each"
+                    },
+
                     "frequency_type": {
                         "type": "string",
                         "enum": ["daily", "weekly", "monthly", "yearly"]
                     },
+
                     "interval": { "type": "integer", "minimum": 1 },
+
                     "week_days": {
                         "type": "array",
                         "items": {
@@ -350,38 +391,46 @@
                         },
                         "nullable": true
                     },
+
                     "month_day": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 31,
                         "nullable": true
                     },
+
                     "week_of_month": {
                         "type": "integer",
                         "enum": [1, 2, 3, 4, -1],
                         "nullable": true
                     },
+
                     "week_day": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 7,
                         "nullable": true
                     },
+
                     "year_month": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 12,
                         "nullable": true
                     },
+
                     "starts_at": { "type": "string", "format": "date" },
+
                     "ends_at": {
                         "type": "string",
                         "format": "date",
                         "nullable": true
                     }
                 },
+
                 "required": [
                     "store_id",
+                    "fill_mode",
                     "frequency_type",
                     "interval",
                     "starts_at"
@@ -475,6 +524,17 @@
                         "type": "string",
                         "format": "date",
                         "nullable": true
+                    },
+                    "fill_mode": {
+                        "type": "string",
+                        "enum": ["store_once", "role_each"],
+                        "default": "store_once"
+                    },
+
+                    "role_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Required when fill_mode = role_each"
                     }
                 },
                 "required": [
@@ -506,7 +566,6 @@
             "UpdateKeyRequest": {
                 "allOf": [{ "$ref": "#/components/schemas/StoreKeyRequest" }]
             },
-
             "DueItem": {
                 "type": "object",
                 "description": "Structure returned from DueKeyResolverService::dueForStoreOnDate",
@@ -562,15 +621,26 @@
                 "type": "object",
                 "properties": {
                     "key_id": { "type": "integer" },
+
                     "value_text": { "type": "string", "nullable": true },
+
                     "value_number": { "type": "number", "nullable": true },
+
                     "value_boolean": { "type": "boolean", "nullable": true },
+
                     "value_json": {
                         "type": "object",
                         "additionalProperties": true,
                         "nullable": true
+                    },
+
+                    "note": {
+                        "type": "string",
+                        "nullable": true,
+                        "maxLength": 2000
                     }
                 },
+
                 "required": ["key_id"]
             },
             "BulkUpsertValueItem": {
@@ -593,31 +663,57 @@
                 "type": "object",
                 "properties": {
                     "id": { "type": "integer", "readOnly": true },
+
                     "key_id": { "type": "integer" },
+
                     "store_id": { "type": "string" },
-                    "entry_date": { "type": "string", "format": "date" },
+
+                    "user_id": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "User that filled the entry"
+                    },
+
+                    "entry_date": {
+                        "type": "string",
+                        "format": "date"
+                    },
+
                     "value_text": { "type": "string", "nullable": true },
+
                     "value_number": { "type": "number", "nullable": true },
+
                     "value_boolean": { "type": "boolean", "nullable": true },
+
                     "value_json": {
                         "type": "object",
                         "nullable": true,
                         "additionalProperties": true
                     },
+
+                    "note": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Optional note even if value is empty"
+                    },
+
                     "created_at": {
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
                     },
+
                     "updated_at": {
                         "type": "string",
                         "format": "date-time",
                         "nullable": true
                     },
+
                     "key": {
                         "$ref": "#/components/schemas/EnteredKey"
                     }
                 },
+
                 "required": ["id", "key_id", "store_id", "entry_date"]
             },
             "EnteredKeyValuePagination": {
@@ -850,6 +946,7 @@
     "paths": {
         "/export/csv": {
             "get": {
+                "tags": ["Export"],
                 "summary": "Export data as CSV",
                 "description": "Downloads a CSV file for a specific model or a ZIP containing CSVs for all models.",
                 "operationId": "exportCsv",
@@ -948,6 +1045,7 @@
 
         "/export/json": {
             "get": {
+                "tags": ["Export"],
                 "summary": "Export data as JSON",
                 "operationId": "exportJson",
                 "security": [
@@ -1057,6 +1155,7 @@
 
         "/reports/dspr/{store}/{date}": {
             "get": {
+                "tags": ["Reports"],
                 "summary": "DSPR Lite report",
                 "operationId": "dsprLite",
                 "security": [
@@ -1110,6 +1209,7 @@
 
         "/manual-import/": {
             "get": {
+                "tags": ["Manual Import"],
                 "summary": "List available import processors",
                 "operationId": "manualImportIndex",
                 "security": [
@@ -1134,6 +1234,7 @@
 
         "/manual-import/inspect-zip": {
             "post": {
+                "tags": ["Manual Import"],
                 "summary": "Inspect ZIP file and list CSV files",
                 "operationId": "inspectZip",
                 "security": [
@@ -1196,6 +1297,7 @@
 
         "/manual-import/upload": {
             "post": {
+                "tags": ["Manual Import"],
                 "summary": "Upload CSV files for import",
                 "description": "Upload CSV files directly or reference previously inspected ZIP using temp_id",
                 "operationId": "uploadCsv",
@@ -1301,6 +1403,7 @@
 
         "/manual-import/progress/{uploadId}": {
             "get": {
+                "tags": ["Manual Import"],
                 "summary": "Get import progress",
                 "operationId": "importProgress",
                 "security": [
@@ -1343,6 +1446,7 @@
 
         "/manual-import/reaggregate": {
             "post": {
+                "tags": ["Manual Import"],
                 "summary": "Trigger re-aggregation",
                 "description": "Re-aggregate data for a specific date range and aggregation type",
                 "operationId": "reaggregate",
@@ -1421,6 +1525,7 @@
 
         "/manual-import/aggregation-progress/{aggregationId}": {
             "get": {
+                "tags": ["Manual Import"],
                 "summary": "Get aggregation progress",
                 "operationId": "aggregationProgress",
                 "security": [
@@ -1463,6 +1568,7 @@
 
         "/engine/keys": {
             "get": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "List keys",
                 "operationId": "listKeys",
                 "security": [
@@ -1492,6 +1598,7 @@
                 }
             },
             "post": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "Create key",
                 "operationId": "createKey",
                 "security": [
@@ -1537,6 +1644,7 @@
 
         "/engine/keys/{key}": {
             "get": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "Show key",
                 "operationId": "showKey",
                 "security": [
@@ -1577,6 +1685,7 @@
                 }
             },
             "put": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "Update key",
                 "operationId": "updateKey",
                 "security": [
@@ -1638,6 +1747,7 @@
                 }
             },
             "delete": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "Deactivate key",
                 "operationId": "deactivateKey",
                 "security": [
@@ -1685,9 +1795,102 @@
                 }
             }
         },
+        "/engine/keys/{key}/restore": {
+            "patch": {
+                "tags": ["Key Engine - Keys"],
+                "summary": "Restore key",
+                "operationId": "restoreKey",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Key restored",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Key reactivated."
+                                        }
+                                    },
+                                    "required": ["message"]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
 
+        "/engine/keys/{key}/force-delete": {
+            "delete": {
+                "tags": ["Key Engine - Keys"],
+                "summary": "Permanently delete key",
+                "operationId": "forceDeleteKey",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Key permanently deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Key permanently deleted."
+                                        }
+                                    },
+                                    "required": ["message"]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Key not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/engine/keys/{key}/rules": {
             "get": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "List key store rules",
                 "operationId": "listKeyRules",
                 "security": [
@@ -1731,6 +1934,7 @@
                 }
             },
             "put": {
+                "tags": ["Key Engine - Keys"],
                 "summary": "Replace key store rules",
                 "operationId": "replaceKeyRules",
                 "security": [
@@ -1808,6 +2012,7 @@
 
         "/engine/values": {
             "get": {
+                "tags": ["Key Engine - Values"],
                 "summary": "Global values listing",
                 "operationId": "valuesIndex",
                 "security": [
@@ -1898,6 +2103,7 @@
 
         "/engine/stores/{store_id}/values": {
             "get": {
+                "tags": ["Key Engine - Values"],
                 "summary": "Store-specific values listing",
                 "operationId": "storeValuesIndex",
                 "security": [
@@ -2012,6 +2218,7 @@
 
         "/engine/stores/{store_id}/dates/{date}/values": {
             "get": {
+                "tags": ["Key Engine - Values"],
                 "summary": "Grid of due keys and values for store/date",
                 "operationId": "gridValues",
                 "security": [
@@ -2047,6 +2254,7 @@
                 }
             },
             "post": {
+                "tags": ["Key Engine - Values"],
                 "summary": "Upsert single value",
                 "operationId": "upsertOneValue",
                 "security": [
@@ -2117,6 +2325,7 @@
 
         "/engine/stores/{store_id}/dates/{date}/values/bulk": {
             "post": {
+                "tags": ["Key Engine - Values"],
                 "summary": "Bulk upsert values",
                 "operationId": "upsertBulkValues",
                 "security": [
@@ -2196,6 +2405,7 @@
 
         "/engine/stores/{store_id}/dates/{date}/due": {
             "get": {
+                "tags": ["Key Engine - Due"],
                 "summary": "Due keys for store on date",
                 "operationId": "dueOnDate",
                 "security": [
@@ -2234,6 +2444,7 @@
 
         "/engine/stores/{store_id}/due-range": {
             "get": {
+                "tags": ["Key Engine - Due"],
                 "summary": "Due keys for store in date range",
                 "operationId": "dueRange",
                 "security": [

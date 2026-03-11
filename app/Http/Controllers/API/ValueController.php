@@ -19,7 +19,8 @@ class ValueController extends Controller
     public function __construct(
         private readonly ValueTypeService $typeService,
         private readonly DueKeyResolverService $dueService,
-    ) {}
+    ) {
+    }
 
     /**
      * POST /engine/stores/{store_id}/dates/{date}/values
@@ -27,23 +28,40 @@ class ValueController extends Controller
     public function upsertOne(UpsertValueRequest $request, string $store_id, string $date): JsonResponse
     {
         $payload = $request->validated();
+
         $key = EnteredKey::findOrFail($payload['key_id']);
 
-        // type check: exactly one correct value field
         $this->typeService->assertMatchesKeyType($key, $payload);
 
-        // store_id and date come from path
+        $rule = $key->storeRules()
+            ->where('store_id', $store_id)
+            ->first();
+
+        if (!$rule) {
+            return response()->json([
+                'message' => 'This key is not configured for this store.'
+            ], 422);
+        }
+
+        $identity = [
+            'key_id' => $key->id,
+            'store_id' => $store_id,
+            'entry_date' => $date,
+        ];
+
+        if ($rule->fill_mode === 'role_each') {
+            $identity['user_id'] = auth()->id();
+        }
+
         $value = EnteredKeyValue::updateOrCreate(
+            $identity,
             [
-                'key_id' => $key->id,
-                'store_id' => $store_id,
-                'entry_date' => $date,
-            ],
-            [
+                'user_id' => auth()->id(),
                 'value_text' => $payload['value_text'] ?? null,
                 'value_number' => $payload['value_number'] ?? null,
                 'value_boolean' => $payload['value_boolean'] ?? null,
                 'value_json' => $payload['value_json'] ?? null,
+                'note' => $payload['note'] ?? null,
             ]
         );
 
@@ -58,29 +76,52 @@ class ValueController extends Controller
         $payload = $request->validated();
 
         $saved = DB::transaction(function () use ($payload, $store_id, $date) {
+
             $out = [];
+
             foreach ($payload['items'] as $item) {
+
                 $key = EnteredKey::findOrFail($item['key_id']);
+
                 $this->typeService->assertMatchesKeyType($key, $item);
 
+                $rule = $key->storeRules()
+                    ->where('store_id', $store_id)
+                    ->first();
+
+                if (!$rule) {
+                    continue;
+                }
+
+                $identity = [
+                    'key_id' => $key->id,
+                    'store_id' => $store_id,
+                    'entry_date' => $date,
+                ];
+
+                if ($rule->fill_mode === 'role_each') {
+                    $identity['user_id'] = auth()->id();
+                }
+
                 $out[] = EnteredKeyValue::updateOrCreate(
+                    $identity,
                     [
-                        'key_id' => $key->id,
-                        'store_id' => $store_id,
-                        'entry_date' => $date,
-                    ],
-                    [
+                        'user_id' => auth()->id(),
                         'value_text' => $item['value_text'] ?? null,
                         'value_number' => $item['value_number'] ?? null,
                         'value_boolean' => $item['value_boolean'] ?? null,
                         'value_json' => $item['value_json'] ?? null,
+                        'note' => $item['note'] ?? null,
                     ]
                 );
             }
+
             return $out;
         });
 
-        return response()->json(['items' => $saved]);
+        return response()->json([
+            'items' => $saved
+        ]);
     }
 
     /**
@@ -93,19 +134,25 @@ class ValueController extends Controller
         $q = EnteredKeyValue::query()
             ->with('key');
 
-        if (!empty($v['key_id'])) $q->where('key_id', $v['key_id']);
-        if (!empty($v['date'])) $q->whereDate('entry_date', $v['date']);
-        if (!empty($v['from'])) $q->whereDate('entry_date', '>=', $v['from']);
-        if (!empty($v['to'])) $q->whereDate('entry_date', '<=', $v['to']);
+        if (!empty($v['key_id']))
+            $q->where('key_id', $v['key_id']);
+        if (!empty($v['date']))
+            $q->whereDate('entry_date', $v['date']);
+        if (!empty($v['from']))
+            $q->whereDate('entry_date', '>=', $v['from']);
+        if (!empty($v['to']))
+            $q->whereDate('entry_date', '<=', $v['to']);
 
         if (!empty($v['label']) || !empty($v['data_type'])) {
             $q->whereHas('key', function ($k) use ($v) {
-                if (!empty($v['label'])) $k->where('label', 'like', '%' . $v['label'] . '%');
-                if (!empty($v['data_type'])) $k->where('data_type', $v['data_type']);
+                if (!empty($v['label']))
+                    $k->where('label', 'like', '%' . $v['label'] . '%');
+                if (!empty($v['data_type']))
+                    $k->where('data_type', $v['data_type']);
             });
         }
 
-        $perPage = (int)($v['per_page'] ?? 50);
+        $perPage = (int) ($v['per_page'] ?? 50);
 
         return response()->json($q->orderByDesc('entry_date')->paginate($perPage));
     }
@@ -121,15 +168,21 @@ class ValueController extends Controller
             ->with('key')
             ->where('store_id', $store_id);
 
-        if (!empty($v['key_id'])) $q->where('key_id', $v['key_id']);
-        if (!empty($v['date'])) $q->whereDate('entry_date', $v['date']);
-        if (!empty($v['from'])) $q->whereDate('entry_date', '>=', $v['from']);
-        if (!empty($v['to'])) $q->whereDate('entry_date', '<=', $v['to']);
+        if (!empty($v['key_id']))
+            $q->where('key_id', $v['key_id']);
+        if (!empty($v['date']))
+            $q->whereDate('entry_date', $v['date']);
+        if (!empty($v['from']))
+            $q->whereDate('entry_date', '>=', $v['from']);
+        if (!empty($v['to']))
+            $q->whereDate('entry_date', '<=', $v['to']);
 
         if (!empty($v['label']) || !empty($v['data_type'])) {
             $q->whereHas('key', function ($k) use ($v) {
-                if (!empty($v['label'])) $k->where('label', 'like', '%' . $v['label'] . '%');
-                if (!empty($v['data_type'])) $k->where('data_type', $v['data_type']);
+                if (!empty($v['label']))
+                    $k->where('label', 'like', '%' . $v['label'] . '%');
+                if (!empty($v['data_type']))
+                    $k->where('data_type', $v['data_type']);
             });
         }
 
@@ -137,8 +190,10 @@ class ValueController extends Controller
         if (!empty($v['frequency_type']) || !empty($v['interval'])) {
             $q->whereHas('key.storeRules', function ($r) use ($v, $store_id) {
                 $r->where('store_id', $store_id);
-                if (!empty($v['frequency_type'])) $r->where('frequency_type', $v['frequency_type']);
-                if (!empty($v['interval'])) $r->where('interval', (int)$v['interval']);
+                if (!empty($v['frequency_type']))
+                    $r->where('frequency_type', $v['frequency_type']);
+                if (!empty($v['interval']))
+                    $r->where('interval', (int) $v['interval']);
             });
         }
 
@@ -149,7 +204,7 @@ class ValueController extends Controller
             $q->whereIn('key_id', $dueKeyIds);
         }
 
-        $perPage = (int)($v['per_page'] ?? 50);
+        $perPage = (int) ($v['per_page'] ?? 50);
 
         return response()->json($q->orderByDesc('entry_date')->paginate($perPage));
     }

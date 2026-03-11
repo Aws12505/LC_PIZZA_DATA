@@ -16,10 +16,17 @@ class ValueTypeService
             'value_json' => array_key_exists('value_json', $payload) && !is_null($payload['value_json']),
         ]);
 
-        if (count($present) !== 1) {
+        $hasValue = count($present) === 1;
+        $hasNote = !empty($payload['note']);
+
+        if (!$hasValue && !$hasNote) {
             throw ValidationException::withMessages([
-                'value' => 'Provide exactly one value field: value_text OR value_number OR value_boolean OR value_json.',
+                'value' => 'You must provide a value or a note.',
             ]);
+        }
+
+        if (!$hasValue) {
+            return; // note-only allowed
         }
 
         $map = [
