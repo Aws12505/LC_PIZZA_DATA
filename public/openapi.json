@@ -946,7 +946,7 @@
     "paths": {
         "/export/csv": {
             "get": {
-                "tags": ["Export"],
+                "tags": ["Exports"],
                 "summary": "Export data as CSV",
                 "description": "Downloads a CSV file for a specific model or a ZIP containing CSVs for all models.",
                 "operationId": "exportCsv",
@@ -1045,7 +1045,7 @@
 
         "/export/json": {
             "get": {
-                "tags": ["Export"],
+                "tags": ["Exports"],
                 "summary": "Export data as JSON",
                 "operationId": "exportJson",
                 "security": [
