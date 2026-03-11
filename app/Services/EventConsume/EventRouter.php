@@ -13,6 +13,11 @@ class EventRouter
         'auth.v1.user.updated' => \App\Services\EventConsume\Handlers\UserUpdatedHandler::class,
         'auth.v1.user.deleted' => \App\Services\EventConsume\Handlers\UserDeletedHandler::class,
 
+        // ASSIGNMENTS => replicate qa_auditor into user_store_roles
+        'auth.v1.assignment.user_role_store.assigned' => \App\Services\EventConsume\Handlers\UserStoreRoleAssignedHandler::class,
+        'auth.v1.assignment.user_role_store.removed' => \App\Services\EventConsume\Handlers\UserStoreRoleRemovedHandler::class,
+        'auth.v1.assignment.user_role_store.toggled' => \App\Services\EventConsume\Handlers\UserStoreRoleToggledHandler::class,
+        'auth.v1.assignment.user_role_store.bulk_assigned' => \App\Services\EventConsume\Handlers\UserStoreRoleBulkAssignedHandler::class,
     ];
 
     public function resolve(string $subject): string
