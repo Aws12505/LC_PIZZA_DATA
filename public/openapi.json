@@ -231,6 +231,20 @@
                 "required": ["employee_name", "note", "date"]
             },
 
+            "EmployeeDebriefBulkCreate": {
+                "type": "object",
+                "properties": {
+                    "debriefs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "$ref": "#/components/schemas/EmployeeDebriefCreate"
+                        }
+                    }
+                },
+                "required": ["debriefs"]
+            },
+
             "EmployeeDebriefPagination": {
                 "type": "object",
                 "properties": {
@@ -2813,6 +2827,72 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/EmployeeDebrief"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/stores/{store_id}/employee-debriefs/bulk": {
+            "post": {
+                "tags": ["Employee Debriefs"],
+                "summary": "Create multiple employee debrief notes",
+                "operationId": "createEmployeeDebriefsBulk",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EmployeeDebriefBulkCreate"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Debriefs created successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Debriefs created successfully."
+                                        },
+                                        "count": {
+                                            "type": "integer",
+                                            "example": 3
+                                        }
+                                    },
+                                    "required": ["message", "count"]
                                 }
                             }
                         }

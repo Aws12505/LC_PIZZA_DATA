@@ -106,4 +106,40 @@ class EmployeeDebriefController extends Controller
         ]);
     }
 
+    /**
+     * Create multiple notes
+     */
+    public function storeMultiple(Request $request, string $store_id): JsonResponse
+    {
+        $data = $request->validate([
+            'debriefs' => 'required|array|min:1',
+            'debriefs.*.employee_name' => 'required|string|max:255',
+            'debriefs.*.note' => 'required|string|max:5000',
+            'debriefs.*.date' => 'required|date_format:Y-m-d',
+        ]);
+
+        $user = $request->user();
+
+        $records = [];
+
+        foreach ($data['debriefs'] as $item) {
+
+            $records[] = [
+                'store_id' => $store_id,
+                'user_id' => $user->id,
+                'employee_name' => $item['employee_name'],
+                'note' => $item['note'],
+                'date' => $item['date'],
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+        }
+
+        EmployeeDebrief::insert($records);
+
+        return response()->json([
+            'message' => 'Debriefs created successfully.',
+            'count' => count($records)
+        ], 201);
+    }
 }

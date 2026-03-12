@@ -85,6 +85,8 @@ Route::prefix('stores/{store_id}/employee-debriefs')->middleware('auth.token.sto
 
     Route::post('/', [EmployeeDebriefController::class, 'store']);
 
+    Route::post('bulk', [EmployeeDebriefController::class, 'storeMultiple']);
+
     Route::get('{debrief}', [EmployeeDebriefController::class, 'show']);
 
     Route::delete('{debrief}', [EmployeeDebriefController::class, 'destroy']);
