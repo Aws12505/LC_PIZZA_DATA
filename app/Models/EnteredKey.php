@@ -26,4 +26,9 @@ class EnteredKey extends Model
     {
         return $this->hasMany(EnteredKeyValue::class, 'key_id');
     }
+
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class);
+    }
 }

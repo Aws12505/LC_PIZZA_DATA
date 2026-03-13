@@ -18,13 +18,24 @@ class DueKeyResolverService
     /**
      * Return list of keys needed for store on date with filled status.
      */
-    public function dueForStoreOnDate(string $storeId, Carbon $date): Collection
-    {
+    public function dueForStoreOnDate(
+        string $storeId,
+        Carbon $date,
+        array $tagIds = []
+    ): Collection {
         $date = $date->copy()->startOfDay();
 
         $keys = EnteredKey::query()
             ->where('is_active', true)
-            ->with(['storeRules' => fn($q) => $q->where('store_id', $storeId)])
+            ->when(!empty($tagIds), function ($q) use ($tagIds) {
+                $q->whereHas('tags', function ($t) use ($tagIds) {
+                    $t->whereIn('tags.id', $tagIds);
+                });
+            })
+            ->with([
+                'storeRules' => fn($q) => $q->where('store_id', $storeId),
+                'tags'
+            ])
             ->get();
 
         $valuesToday = EnteredKeyValue::query()
@@ -200,8 +211,12 @@ class DueKeyResolverService
     /**
      * Due range for dashboards
      */
-    public function dueRange(string $storeId, Carbon $from, Carbon $to): array
-    {
+    public function dueRange(
+        string $storeId,
+        Carbon $from,
+        Carbon $to,
+        array $tagIds = []
+    ): array {
         $from = $from->copy()->startOfDay();
         $to = $to->copy()->startOfDay();
 
@@ -211,7 +226,7 @@ class DueKeyResolverService
         while ($cursor->lte($to)) {
 
             $result[$cursor->toDateString()] = $this
-                ->dueForStoreOnDate($storeId, $cursor)
+                ->dueForStoreOnDate($storeId, $cursor, $tagIds)
                 ->all();
 
             $cursor->addDay();

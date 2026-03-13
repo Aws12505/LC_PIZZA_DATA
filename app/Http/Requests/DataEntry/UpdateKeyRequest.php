@@ -46,6 +46,9 @@ class UpdateKeyRequest extends FormRequest
 
             'store_rules.*.starts_at' => 'required|date_format:Y-m-d',
             'store_rules.*.ends_at' => 'nullable|date_format:Y-m-d',
+
+            'tags' => 'nullable|array',
+            'tags.*' => 'exists:tags,id',
         ];
     }
 

@@ -9,7 +9,8 @@ use App\Http\Controllers\API\{
     KeyRuleController,
     ValueController,
     ManualCsvImportController,
-    EmployeeDebriefController
+    EmployeeDebriefController,
+    TagController,
 };
 
 
@@ -91,4 +92,11 @@ Route::prefix('stores/{store_id}/employee-debriefs')->middleware('auth.token.sto
 
     Route::delete('{debrief}', [EmployeeDebriefController::class, 'destroy']);
 
+});
+
+Route::prefix('tags')->middleware('auth.token.store')->group(function () {
+    Route::get('/', [TagController::class, 'index']);
+    Route::post('/', [TagController::class, 'store']);
+    Route::delete('/bulk', [TagController::class, 'bulkDelete']);
+    Route::delete('/{tag}', [TagController::class, 'destroy']);
 });

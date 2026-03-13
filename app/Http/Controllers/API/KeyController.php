@@ -13,7 +13,22 @@ class KeyController extends Controller
 {
     public function index(): JsonResponse
     {
-        $keys = EnteredKey::with('storeRules')->orderBy('id', 'desc')->paginate();
+        $tags = request()->query('tags');
+
+        $query = EnteredKey::with(['storeRules', 'tags'])
+            ->orderBy('id', 'desc');
+
+        if ($tags) {
+
+            $tagIds = explode(',', $tags);
+
+            $query->whereHas('tags', function ($q) use ($tagIds) {
+                $q->whereIn('tags.id', $tagIds);
+            });
+        }
+
+        $keys = $query->paginate();
+
         return response()->json($keys);
     }
 
@@ -23,6 +38,7 @@ class KeyController extends Controller
         $payload['store_rules'] = $this->normalizeStoreRules($payload['store_rules'] ?? []);
 
         $key = DB::transaction(function () use ($payload) {
+
             $key = EnteredKey::create([
                 'label' => $payload['label'],
                 'data_type' => $payload['data_type'],
@@ -31,7 +47,11 @@ class KeyController extends Controller
 
             $key->storeRules()->createMany($payload['store_rules']);
 
-            return $key->load('storeRules');
+            if (!empty($payload['tags'])) {
+                $key->tags()->sync($payload['tags']);
+            }
+
+            return $key->load(['storeRules', 'tags']);
         });
 
         return response()->json($key, 201);
@@ -39,7 +59,7 @@ class KeyController extends Controller
 
     public function show(EnteredKey $key): JsonResponse
     {
-        return response()->json($key->load('storeRules'));
+        return response()->json($key->load(['storeRules', 'tags']));
     }
 
     public function update(UpdateKeyRequest $request, EnteredKey $key): JsonResponse
@@ -48,6 +68,7 @@ class KeyController extends Controller
         $payload['store_rules'] = $this->normalizeStoreRules($payload['store_rules'] ?? []);
 
         $key = DB::transaction(function () use ($payload, $key) {
+
             $key->update([
                 'label' => $payload['label'],
                 'data_type' => $payload['data_type'],
@@ -57,7 +78,11 @@ class KeyController extends Controller
             $key->storeRules()->delete();
             $key->storeRules()->createMany($payload['store_rules']);
 
-            return $key->load('storeRules');
+            if (array_key_exists('tags', $payload)) {
+                $key->tags()->sync($payload['tags'] ?? []);
+            }
+
+            return $key->load(['storeRules', 'tags']);
         });
 
         return response()->json($key);

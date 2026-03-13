@@ -131,8 +131,11 @@ class ValueController extends Controller
     {
         $v = $request->validated();
 
+        $tags = $request->query('tags');
+        $tagIds = $tags ? explode(',', $tags) : [];
+
         $q = EnteredKeyValue::query()
-            ->with('key');
+            ->with(['key.tags']);
 
         if (!empty($v['key_id']))
             $q->where('key_id', $v['key_id']);
@@ -143,12 +146,20 @@ class ValueController extends Controller
         if (!empty($v['to']))
             $q->whereDate('entry_date', '<=', $v['to']);
 
-        if (!empty($v['label']) || !empty($v['data_type'])) {
-            $q->whereHas('key', function ($k) use ($v) {
+        if (!empty($v['label']) || !empty($v['data_type']) || !empty($tagIds)) {
+            $q->whereHas('key', function ($k) use ($v, $tagIds) {
+
                 if (!empty($v['label']))
                     $k->where('label', 'like', '%' . $v['label'] . '%');
+
                 if (!empty($v['data_type']))
                     $k->where('data_type', $v['data_type']);
+
+                if (!empty($tagIds)) {
+                    $k->whereHas('tags', function ($t) use ($tagIds) {
+                        $t->whereIn('tags.id', $tagIds);
+                    });
+                }
             });
         }
 
@@ -164,8 +175,11 @@ class ValueController extends Controller
     {
         $v = $request->validated();
 
+        $tags = $request->query('tags');
+        $tagIds = $tags ? explode(',', $tags) : [];
+
         $q = EnteredKeyValue::query()
-            ->with('key')
+            ->with(['key.tags'])
             ->where('store_id', $store_id);
 
         if (!empty($v['key_id']))
@@ -177,30 +191,46 @@ class ValueController extends Controller
         if (!empty($v['to']))
             $q->whereDate('entry_date', '<=', $v['to']);
 
-        if (!empty($v['label']) || !empty($v['data_type'])) {
-            $q->whereHas('key', function ($k) use ($v) {
+        if (!empty($v['label']) || !empty($v['data_type']) || !empty($tagIds)) {
+
+            $q->whereHas('key', function ($k) use ($v, $tagIds) {
+
                 if (!empty($v['label']))
                     $k->where('label', 'like', '%' . $v['label'] . '%');
+
                 if (!empty($v['data_type']))
                     $k->where('data_type', $v['data_type']);
+
+                if (!empty($tagIds)) {
+                    $k->whereHas('tags', function ($t) use ($tagIds) {
+                        $t->whereIn('tags.id', $tagIds);
+                    });
+                }
             });
         }
 
-        // Filter values by rules (frequency/interval) for THIS store
         if (!empty($v['frequency_type']) || !empty($v['interval'])) {
             $q->whereHas('key.storeRules', function ($r) use ($v, $store_id) {
                 $r->where('store_id', $store_id);
+
                 if (!empty($v['frequency_type']))
                     $r->where('frequency_type', $v['frequency_type']);
+
                 if (!empty($v['interval']))
                     $r->where('interval', (int) $v['interval']);
             });
         }
 
-        // due_on: only return values whose KEYS are due that day for store (handy)
         if (!empty($v['due_on'])) {
-            $due = $this->dueService->dueForStoreOnDate($store_id, Carbon::parse($v['due_on']));
+
+            $due = $this->dueService->dueForStoreOnDate(
+                $store_id,
+                Carbon::parse($v['due_on']),
+                $tagIds
+            );
+
             $dueKeyIds = $due->pluck('key_id')->all();
+
             $q->whereIn('key_id', $dueKeyIds);
         }
 
@@ -213,8 +243,11 @@ class ValueController extends Controller
     {
         $date = Carbon::parse($date)->startOfDay();
 
+        $tags = request()->query('tags');
+        $tagIds = $tags ? explode(',', $tags) : [];
+
         $dueItems = app(DueKeyResolverService::class)
-            ->dueForStoreOnDate($store_id, $date);
+            ->dueForStoreOnDate($store_id, $date, $tagIds);
 
         $userIds = $dueItems
             ->pluck('user_id')
