@@ -24,6 +24,7 @@ class DueKeyResolverService
         array $tagIds = []
     ): Collection {
         $date = $date->copy()->startOfDay();
+        $authUserId = auth()->id();
 
         $keys = EnteredKey::query()
             ->where('is_active', true)
@@ -57,10 +58,10 @@ class DueKeyResolverService
         $out = collect();
 
         foreach ($keys as $key) {
-
             $rule = $key->storeRules->first();
-            if (!$rule)
+            if (!$rule) {
                 continue;
+            }
 
             /*
             |--------------------------------------------------------------------------
@@ -97,10 +98,18 @@ class DueKeyResolverService
                     $roles = $rule->role_names ?? [];
 
                     $users = UserStoreRole::query()
-                        ->where('store_id', $storeId)
-                        ->where('active', true)
-                        ->whereIn('role_name', $roles)
-                        ->get(['user_id', 'role_name']);
+                        ->join('users', 'users.id', '=', 'user_store_roles.user_id')
+                        ->where('user_store_roles.store_id', $storeId)
+                        ->where('user_store_roles.active', true)
+                        ->where('user_store_roles.user_id', $authUserId)
+                        ->whereIn('user_store_roles.role_name', $roles)
+                        ->select([
+                            'user_store_roles.user_id',
+                            'user_store_roles.role_name',
+                            'users.name as user_name',
+                        ])
+                        ->distinct()
+                        ->get();
 
                     foreach ($users as $userRole) {
 
@@ -110,8 +119,6 @@ class DueKeyResolverService
                             })
                             ->sortByDesc('entry_date')
                             ->first();
-
-                        $user = \App\Models\User::find($userRole->user_id);
 
                         $out->push([
                             'key_id' => $key->id,
@@ -125,7 +132,7 @@ class DueKeyResolverService
                             'fill_mode' => $rule->fill_mode,
 
                             'user_id' => $userRole->user_id,
-                            'user_name' => $user?->name,
+                            'user_name' => $userRole->user_name,
                             'role_name' => $userRole->role_name,
 
                             'filled' => $value !== null,
@@ -171,19 +178,24 @@ class DueKeyResolverService
                 $roles = $rule->role_names ?? [];
 
                 $users = UserStoreRole::query()
-                    ->where('store_id', $storeId)
-                    ->where('active', true)
-                    ->whereIn('role_name', $roles)
-                    ->get(['user_id', 'role_name']);
+                    ->join('users', 'users.id', '=', 'user_store_roles.user_id')
+                    ->where('user_store_roles.store_id', $storeId)
+                    ->where('user_store_roles.active', true)
+                    ->where('user_store_roles.user_id', $authUserId)
+                    ->whereIn('user_store_roles.role_name', $roles)
+                    ->select([
+                        'user_store_roles.user_id',
+                        'user_store_roles.role_name',
+                        'users.name as user_name',
+                    ])
+                    ->distinct()
+                    ->get();
 
                 foreach ($users as $userRole) {
 
-                    $value = $existingValues
-                        ->first(function ($v) use ($userRole) {
-                            return (int) $v->user_id === (int) $userRole->user_id;
-                        });
-
-                    $user = \App\Models\User::find($userRole->user_id);
+                    $value = $existingValues->first(function ($v) use ($userRole) {
+                        return (int) $v->user_id === (int) $userRole->user_id;
+                    });
 
                     $out->push([
                         'key_id' => $key->id,
@@ -197,7 +209,7 @@ class DueKeyResolverService
                         'fill_mode' => $rule->fill_mode,
 
                         'user_id' => $userRole->user_id,
-                        'user_name' => $user?->name,
+                        'user_name' => $userRole->user_name,
                         'role_name' => $userRole->role_name,
 
                         'filled' => $value !== null,
