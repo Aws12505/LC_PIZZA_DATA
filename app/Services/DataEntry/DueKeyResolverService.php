@@ -105,7 +105,9 @@ class DueKeyResolverService
                     foreach ($users as $userRole) {
 
                         $value = $existingValues
-                            ->where('user_id', $userRole->user_id)
+                            ->filter(function ($v) use ($userRole) {
+                                return (int) $v->user_id === (int) $userRole->user_id;
+                            })
                             ->sortByDesc('entry_date')
                             ->first();
 
@@ -177,8 +179,9 @@ class DueKeyResolverService
                 foreach ($users as $userRole) {
 
                     $value = $existingValues
-                        ->where('user_id', $userRole->user_id)
-                        ->first();
+                        ->first(function ($v) use ($userRole) {
+                            return (int) $v->user_id === (int) $userRole->user_id;
+                        });
 
                     $user = \App\Models\User::find($userRole->user_id);
 
