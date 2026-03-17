@@ -226,40 +226,40 @@ class AggregationService
 
         // CHANNELS
         $phoneOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Phone')->distinct()->count('order_id');
-        $phoneSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
+        $phoneSales = (float) (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
 
         $websiteOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Website')->distinct()->count('order_id');
-        $websiteSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Website')->sum('royalty_obligation');
+        $websiteSales = (float) (clone $baseOrders)->where('order_placed_method', 'Website')->sum('royalty_obligation');
 
         $mobileOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
-        $mobileSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
+        $mobileSales = (float) (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
 
         $callCenterOrders = (int) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->distinct()->count('order_id');
-        $callCenterSales  = (float) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->sum('royalty_obligation');
+        $callCenterSales = (float) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->sum('royalty_obligation');
 
         $driveThruOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->distinct()->count('order_id');
-        $driveThruSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
+        $driveThruSales = (float) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
 
         // MARKETPLACE
         $doordashOrders = (int) (clone $baseOrders)->where('order_placed_method', 'DoorDash')->distinct()->count('order_id');
-        $doordashSales  = (float) (clone $baseOrders)->where('order_placed_method', 'DoorDash')->sum('royalty_obligation');
+        $doordashSales = (float) (clone $baseOrders)->where('order_placed_method', 'DoorDash')->sum('royalty_obligation');
 
         $ubereatsOrders = (int) (clone $baseOrders)->where('order_placed_method', 'UberEats')->distinct()->count('order_id');
-        $ubereatsSales  = (float) (clone $baseOrders)->where('order_placed_method', 'UberEats')->sum('royalty_obligation');
+        $ubereatsSales = (float) (clone $baseOrders)->where('order_placed_method', 'UberEats')->sum('royalty_obligation');
 
         $grubhubOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Grubhub')->distinct()->count('order_id');
-        $grubhubSales  = (float) (clone $baseOrders)->where('order_placed_method', 'Grubhub')->sum('royalty_obligation');
+        $grubhubSales = (float) (clone $baseOrders)->where('order_placed_method', 'Grubhub')->sum('royalty_obligation');
 
         // FINANCIAL (from orders detail)
-        $salesTax     = (float) (clone $baseOrders)->sum('sales_tax');
+        $salesTax = (float) (clone $baseOrders)->sum('sales_tax');
         $deliveryFees = (float) (clone $baseOrders)->sum('delivery_fee');
         $deliveryTips = (float) (clone $baseOrders)->sum('delivery_tip');
-        $storeTips    = (float) (clone $baseOrders)->sum('store_tip_amount');
+        $storeTips = (float) (clone $baseOrders)->sum('store_tip_amount');
 
         // PORTAL
         $portalEligible = (int) (clone $baseOrders)->where('portal_eligible', 'Yes')->distinct()->count('order_id');
-        $portalUsed     = (int) (clone $baseOrders)->where('portal_used', 'Yes')->distinct()->count('order_id');
-        $portalOnTime   = (int) (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
+        $portalUsed = (int) (clone $baseOrders)->where('portal_used', 'Yes')->distinct()->count('order_id');
+        $portalOnTime = (int) (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
 
         // ✅ CATEGORY SPLITS from order_line (hot + archive)
         $baseLines = $this->routedSource('order_line', $day, $day)
@@ -274,13 +274,13 @@ class AggregationService
         });
 
         $cats = [
-            'pizza'       => 'Pizza',
-            'hnr'         => 'HNR',
-            'bread'       => 'Bread',
-            'wings'       => 'Wings',
-            'beverages'   => 'Beverages',
+            'pizza' => 'Pizza',
+            'hnr' => 'HNR',
+            'bread' => 'Bread',
+            'wings' => 'Wings',
+            'beverages' => 'Beverages',
             'other_foods' => 'Other Foods',
-            'side_items'  => 'Side Items',
+            'side_items' => 'Side Items',
         ];
 
         $split = [];
@@ -290,10 +290,10 @@ class AggregationService
         $carryoutSalesTotal = 0.0;
 
         foreach ($cats as $key => $account) {
-            $dQty   = (int) (clone $deliveryLines)->where('menu_item_account', $account)->sum('quantity');
+            $dQty = (int) (clone $deliveryLines)->where('menu_item_account', $account)->sum('quantity');
             $dSales = (float) (clone $deliveryLines)->where('menu_item_account', $account)->sum('net_amount');
 
-            $cQty   = (int) (clone $carryoutLines)->where('menu_item_account', $account)->sum('quantity');
+            $cQty = (int) (clone $carryoutLines)->where('menu_item_account', $account)->sum('quantity');
             $cSales = (float) (clone $carryoutLines)->where('menu_item_account', $account)->sum('net_amount');
 
             $split[$key] = [
@@ -303,9 +303,9 @@ class AggregationService
                 'cSales' => $cSales,
             ];
 
-            $deliveryQtyTotal   += $dQty;
+            $deliveryQtyTotal += $dQty;
             $deliverySalesTotal += $dSales;
-            $carryoutQtyTotal   += $cQty;
+            $carryoutQtyTotal += $cQty;
             $carryoutSalesTotal += $cSales;
         }
 
@@ -327,96 +327,96 @@ class AggregationService
 
         // DIGITAL
         $digitalOrders = $websiteOrders + $mobileOrders;
-        $digitalSales  = $websiteSales + $mobileSales;
+        $digitalSales = $websiteSales + $mobileSales;
 
         $data = [
             'franchise_store' => $store,
-            'business_date'   => $date,
-            'hour'            => $hour,
+            'business_date' => $date,
+            'hour' => $hour,
 
             // Sales
             'royalty_obligation' => round($totalSales, 2),
-            'gross_sales'        => round($grossSales, 2),
-            'net_sales'          => round((float) $netSales, 2),
-            'refund_amount'      => round($refundAmount, 2),
+            'gross_sales' => round($grossSales, 2),
+            'net_sales' => round((float) $netSales, 2),
+            'refund_amount' => round($refundAmount, 2),
 
             // Orders
-            'total_orders'     => $totalOrders,
+            'total_orders' => $totalOrders,
             'completed_orders' => max(0, $totalOrders - $refundedOrders - $cancelledOrders),
             'cancelled_orders' => $cancelledOrders,
-            'modified_orders'  => $modifiedOrders,
-            'refunded_orders'  => $refundedOrders,
-            'avg_order_value'  => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
-            'customer_count'   => $customerCount,
+            'modified_orders' => $modifiedOrders,
+            'refunded_orders' => $refundedOrders,
+            'avg_order_value' => $totalOrders > 0 ? round($totalSales / $totalOrders, 2) : 0,
+            'customer_count' => $customerCount,
 
             // Channels
-            'phone_orders'       => $phoneOrders,
-            'phone_sales'        => round($phoneSales, 2),
-            'website_orders'     => $websiteOrders,
-            'website_sales'      => round($websiteSales, 2),
-            'mobile_orders'      => $mobileOrders,
-            'mobile_sales'       => round($mobileSales, 2),
+            'phone_orders' => $phoneOrders,
+            'phone_sales' => round($phoneSales, 2),
+            'website_orders' => $websiteOrders,
+            'website_sales' => round($websiteSales, 2),
+            'mobile_orders' => $mobileOrders,
+            'mobile_sales' => round($mobileSales, 2),
             'call_center_orders' => $callCenterOrders,
-            'call_center_sales'  => round($callCenterSales, 2),
-            'drive_thru_orders'  => $driveThruOrders,
-            'drive_thru_sales'   => round($driveThruSales, 2),
+            'call_center_sales' => round($callCenterSales, 2),
+            'drive_thru_orders' => $driveThruOrders,
+            'drive_thru_sales' => round($driveThruSales, 2),
 
             // Marketplace
             'doordash_orders' => $doordashOrders,
-            'doordash_sales'  => round($doordashSales, 2),
+            'doordash_sales' => round($doordashSales, 2),
             'ubereats_orders' => $ubereatsOrders,
-            'ubereats_sales'  => round($ubereatsSales, 2),
-            'grubhub_orders'  => $grubhubOrders,
-            'grubhub_sales'   => round($grubhubSales, 2),
+            'ubereats_sales' => round($ubereatsSales, 2),
+            'grubhub_orders' => $grubhubOrders,
+            'grubhub_sales' => round($grubhubSales, 2),
 
             // Fulfillment totals (sum of category splits)
             'delivery_orders' => $deliveryQtyTotal,
-            'delivery_sales'  => round($deliverySalesTotal, 2),
+            'delivery_sales' => round($deliverySalesTotal, 2),
             'carryout_orders' => $carryoutQtyTotal,
-            'carryout_sales'  => round($carryoutSalesTotal, 2),
+            'carryout_sales' => round($carryoutSalesTotal, 2),
 
             // Category splits
             'pizza_delivery_quantity' => $split['pizza']['dQty'],
-            'pizza_delivery_sales'    => round($split['pizza']['dSales'], 2),
+            'pizza_delivery_sales' => round($split['pizza']['dSales'], 2),
             'pizza_carryout_quantity' => $split['pizza']['cQty'],
-            'pizza_carryout_sales'    => round($split['pizza']['cSales'], 2),
+            'pizza_carryout_sales' => round($split['pizza']['cSales'], 2),
 
             'hnr_delivery_quantity' => $split['hnr']['dQty'],
-            'hnr_delivery_sales'    => round($split['hnr']['dSales'], 2),
+            'hnr_delivery_sales' => round($split['hnr']['dSales'], 2),
             'hnr_carryout_quantity' => $split['hnr']['cQty'],
-            'hnr_carryout_sales'    => round($split['hnr']['cSales'], 2),
+            'hnr_carryout_sales' => round($split['hnr']['cSales'], 2),
 
             'bread_delivery_quantity' => $split['bread']['dQty'],
-            'bread_delivery_sales'    => round($split['bread']['dSales'], 2),
+            'bread_delivery_sales' => round($split['bread']['dSales'], 2),
             'bread_carryout_quantity' => $split['bread']['cQty'],
-            'bread_carryout_sales'    => round($split['bread']['cSales'], 2),
+            'bread_carryout_sales' => round($split['bread']['cSales'], 2),
 
             'wings_delivery_quantity' => $split['wings']['dQty'],
-            'wings_delivery_sales'    => round($split['wings']['dSales'], 2),
+            'wings_delivery_sales' => round($split['wings']['dSales'], 2),
             'wings_carryout_quantity' => $split['wings']['cQty'],
-            'wings_carryout_sales'    => round($split['wings']['cSales'], 2),
+            'wings_carryout_sales' => round($split['wings']['cSales'], 2),
 
             'beverages_delivery_quantity' => $split['beverages']['dQty'],
-            'beverages_delivery_sales'    => round($split['beverages']['dSales'], 2),
+            'beverages_delivery_sales' => round($split['beverages']['dSales'], 2),
             'beverages_carryout_quantity' => $split['beverages']['cQty'],
-            'beverages_carryout_sales'    => round($split['beverages']['cSales'], 2),
+            'beverages_carryout_sales' => round($split['beverages']['cSales'], 2),
 
             'other_foods_delivery_quantity' => $split['other_foods']['dQty'],
-            'other_foods_delivery_sales'    => round($split['other_foods']['dSales'], 2),
+            'other_foods_delivery_sales' => round($split['other_foods']['dSales'], 2),
             'other_foods_carryout_quantity' => $split['other_foods']['cQty'],
-            'other_foods_carryout_sales'    => round($split['other_foods']['cSales'], 2),
+            'other_foods_carryout_sales' => round($split['other_foods']['cSales'], 2),
 
             'side_items_delivery_quantity' => $split['side_items']['dQty'],
-            'side_items_delivery_sales'    => round($split['side_items']['dSales'], 2),
+            'side_items_delivery_sales' => round($split['side_items']['dSales'], 2),
             'side_items_carryout_quantity' => $split['side_items']['cQty'],
-            'side_items_carryout_sales'    => round($split['side_items']['cSales'], 2),
+            'side_items_carryout_sales' => round($split['side_items']['cSales'], 2),
 
             // Financial
-            'sales_tax'     => round($salesTax, 2),
+            'sales_tax' => round($salesTax, 2),
             'delivery_fees' => round($deliveryFees, 2),
             'delivery_tips' => round($deliveryTips, 2),
-            'store_tips'    => round($storeTips, 2),
-            'total_tips'    => round($deliveryTips + $storeTips, 2),
+            'store_tips' => round($storeTips, 2),
+            'total_tips' => round($deliveryTips + $storeTips, 2),
 
             // Payments (hourly estimate)
             'cash_sales' => round($cashSales, 2),
@@ -424,25 +424,25 @@ class AggregationService
 
             // Portal
             'portal_eligible_orders' => $portalEligible,
-            'portal_used_orders'     => $portalUsed,
-            'portal_on_time_orders'  => $portalOnTime,
-            'portal_usage_rate'      => $portalEligible > 0 ? round(($portalUsed / $portalEligible) * 100, 2) : 0,
-            'portal_on_time_rate'    => $portalUsed > 0 ? round(($portalOnTime / $portalUsed) * 100, 2) : 0,
+            'portal_used_orders' => $portalUsed,
+            'portal_on_time_orders' => $portalOnTime,
+            'portal_usage_rate' => $portalEligible > 0 ? round(($portalUsed / $portalEligible) * 100, 2) : 0,
+            'portal_on_time_rate' => $portalUsed > 0 ? round(($portalOnTime / $portalUsed) * 100, 2) : 0,
 
             // Digital
-            'digital_orders'      => $digitalOrders,
-            'digital_sales'       => round($digitalSales, 2),
+            'digital_orders' => $digitalOrders,
+            'digital_sales' => round($digitalSales, 2),
             'digital_penetration' => $totalOrders > 0 ? round(($digitalOrders / $totalOrders) * 100, 2) : 0,
 
-            'hnr_transactions'    => $hnrTransactions,
+            'hnr_transactions' => $hnrTransactions,
             'hnr_broken_promises' => $hnrBrokenPromises,
         ];
 
         HourlyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'business_date'   => $date,
-                'hour'            => $hour,
+                'business_date' => $date,
+                'hour' => $hour,
             ],
             $data
         );
@@ -507,15 +507,15 @@ class AggregationService
             $gross = (float) $group->sum('net_amount');
 
             $data = [
-                'franchise_store'    => $first->franchise_store,
-                'business_date'      => $first->business_date,
-                'hour'               => $hour,
-                'item_id'            => $first->item_id,
-                'menu_item_name'     => $first->menu_item_name,
-                'menu_item_account'  => $first->menu_item_account,
+                'franchise_store' => $first->franchise_store,
+                'business_date' => $first->business_date,
+                'hour' => $hour,
+                'item_id' => $first->item_id,
+                'menu_item_name' => $first->menu_item_name,
+                'menu_item_account' => $first->menu_item_account,
 
                 'quantity_sold' => $qty,
-                'gross_sales'   => round($gross, 2),
+                'gross_sales' => round($gross, 2),
 
                 'net_sales' => round(
                     (float) $group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount'),
@@ -540,9 +540,9 @@ class AggregationService
             HourlyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $first->franchise_store,
-                    'business_date'   => $first->business_date,
-                    'hour'            => $hour,
-                    'item_id'         => $first->item_id,
+                    'business_date' => $first->business_date,
+                    'hour' => $hour,
+                    'item_id' => $first->item_id,
                 ],
                 $data
             );
@@ -582,17 +582,32 @@ class AggregationService
 
         $summary = $this->sumStorePeriod($hourly, [
             'franchise_store' => $store,
-            'business_date'   => $dateStr,
-            'over_short'      => $overShort,
+            'business_date' => $dateStr,
+            'over_short' => $overShort,
         ]);
 
         // Override daily cash with financial_views truth
         $summary['cash_sales'] = round($cashSales, 2);
 
+        $inStoreTips = (float) $this->routedSource('financial_views', $date, $date)
+            ->where('franchise_store', $store)
+            ->where('business_date', $dateStr)
+            ->whereIn('sub_account', ['InStoreTipAmount', 'Prepaid-InStoreTipAmount'])
+            ->sum('amount');
+
+        $deliveryTips = (float) $this->routedSource('financial_views', $date, $date)
+            ->where('franchise_store', $store)
+            ->where('business_date', $dateStr)
+            ->whereIn('sub_account', ['Delivery-Tips', 'Prepaid-Delivery-Tips'])
+            ->sum('amount');
+
+        $summary['store_tips'] = round($inStoreTips, 2);
+        $summary['delivery_tips'] = round($deliveryTips, 2);
+        $summary['total_tips'] = round($deliveryTips + $inStoreTips, 2);
         DailyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'business_date'   => $dateStr,
+                'business_date' => $dateStr,
             ],
             $summary
         );
@@ -624,16 +639,16 @@ class AggregationService
             DailyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $store,
-                    'business_date'   => $dateStr,
-                    'item_id'         => $item->item_id,
+                    'business_date' => $dateStr,
+                    'item_id' => $item->item_id,
                 ],
                 [
-                    'menu_item_name'    => $item->menu_item_name,
+                    'menu_item_name' => $item->menu_item_name,
                     'menu_item_account' => $item->menu_item_account,
-                    'quantity_sold'     => $item->quantity_sold,
-                    'gross_sales'       => round($item->gross_sales, 2),
-                    'net_sales'         => round($item->net_sales, 2),
-                    'avg_item_price'    => round($item->avg_item_price, 2),
+                    'quantity_sold' => $item->quantity_sold,
+                    'gross_sales' => round($item->gross_sales, 2),
+                    'net_sales' => round($item->net_sales, 2),
+                    'avg_item_price' => round($item->avg_item_price, 2),
                     'delivery_quantity' => $item->delivery_quantity,
                     'carryout_quantity' => $item->carryout_quantity,
                     'modified_quantity' => $item->modified_quantity,
@@ -673,15 +688,15 @@ class AggregationService
         }
 
         $summary = $this->sumStorePeriod($daily, [
-            'franchise_store'   => $store,
-            'year_num'          => $year,
-            'week_num'          => $week,
-            'week_start_date'   => $weekStart->toDateString(),
-            'week_end_date'     => $weekEnd->toDateString(),
+            'franchise_store' => $store,
+            'year_num' => $year,
+            'week_num' => $week,
+            'week_start_date' => $weekStart->toDateString(),
+            'week_end_date' => $weekEnd->toDateString(),
         ]);
 
         $daysCount = $daily->count();
-        $summary['avg_daily_sales']  = $daysCount > 0 ? round($summary['royalty_obligation'] / $daysCount, 2) : 0;
+        $summary['avg_daily_sales'] = $daysCount > 0 ? round($summary['royalty_obligation'] / $daysCount, 2) : 0;
         $summary['avg_daily_orders'] = $daysCount > 0 ? round($summary['total_orders'] / $daysCount, 2) : 0;
 
         $priorWeek = WeeklyStoreSummary::where('franchise_store', $store)
@@ -713,8 +728,8 @@ class AggregationService
         WeeklyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'year_num'        => $year,
-                'week_num'        => $week,
+                'year_num' => $year,
+                'week_num' => $week,
             ],
             $summary
         );
@@ -746,22 +761,22 @@ class AggregationService
             WeeklyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $store,
-                    'year_num'        => $year,
-                    'week_num'        => $week,
-                    'item_id'         => $item->item_id,
+                    'year_num' => $year,
+                    'week_num' => $week,
+                    'item_id' => $item->item_id,
                 ],
                 [
-                    'menu_item_name'     => $item->menu_item_name,
-                    'menu_item_account'  => $item->menu_item_account,
-                    'quantity_sold'      => $item->quantity_sold,
-                    'gross_sales'        => round($item->gross_sales, 2),
-                    'net_sales'          => round($item->net_sales, 2),
-                    'avg_item_price'     => round($item->avg_item_price, 2),
+                    'menu_item_name' => $item->menu_item_name,
+                    'menu_item_account' => $item->menu_item_account,
+                    'quantity_sold' => $item->quantity_sold,
+                    'gross_sales' => round($item->gross_sales, 2),
+                    'net_sales' => round($item->net_sales, 2),
+                    'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
-                    'delivery_quantity'  => $item->delivery_quantity,
-                    'carryout_quantity'  => $item->carryout_quantity,
-                    'week_start_date'    => $weekStart->toDateString(),
-                    'week_end_date'      => $weekEnd->toDateString(),
+                    'delivery_quantity' => $item->delivery_quantity,
+                    'carryout_quantity' => $item->carryout_quantity,
+                    'week_start_date' => $weekStart->toDateString(),
+                    'week_end_date' => $weekEnd->toDateString(),
                 ]
             );
         }
@@ -813,11 +828,11 @@ class AggregationService
             ->count();
 
         $summary = $this->sumStorePeriod($weekly, [
-            'franchise_store'   => $store,
-            'year_num'          => $year,
-            'month_num'         => $month,
-            'month_name'        => $monthStart->format('F'),
-            'operational_days'  => $operationalDays,
+            'franchise_store' => $store,
+            'year_num' => $year,
+            'month_num' => $month,
+            'month_name' => $monthStart->format('F'),
+            'operational_days' => $operationalDays,
         ]);
 
         $priorMonth = MonthlyStoreSummary::where('franchise_store', $store)
@@ -849,8 +864,8 @@ class AggregationService
         MonthlyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'year_num'        => $year,
-                'month_num'       => $month,
+                'year_num' => $year,
+                'month_num' => $month,
             ],
             $summary
         );
@@ -886,20 +901,20 @@ class AggregationService
             MonthlyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $store,
-                    'year_num'        => $year,
-                    'month_num'       => $month,
-                    'item_id'         => $item->item_id,
+                    'year_num' => $year,
+                    'month_num' => $month,
+                    'item_id' => $item->item_id,
                 ],
                 [
-                    'menu_item_name'     => $item->menu_item_name,
-                    'menu_item_account'  => $item->menu_item_account,
-                    'quantity_sold'      => $item->quantity_sold,
-                    'gross_sales'        => round($item->gross_sales, 2),
-                    'net_sales'          => round($item->net_sales, 2),
-                    'avg_item_price'     => round($item->avg_item_price, 2),
+                    'menu_item_name' => $item->menu_item_name,
+                    'menu_item_account' => $item->menu_item_account,
+                    'quantity_sold' => $item->quantity_sold,
+                    'gross_sales' => round($item->gross_sales, 2),
+                    'net_sales' => round($item->net_sales, 2),
+                    'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
-                    'delivery_quantity'  => $item->delivery_quantity,
-                    'carryout_quantity'  => $item->carryout_quantity,
+                    'delivery_quantity' => $item->delivery_quantity,
+                    'carryout_quantity' => $item->carryout_quantity,
                 ]
             );
         }
@@ -943,12 +958,12 @@ class AggregationService
         $qEnd = Carbon::create($year, $m3, 1)->endOfMonth();
 
         $summary = $this->sumStorePeriod($monthly, [
-            'franchise_store'    => $store,
-            'year_num'           => $year,
-            'quarter_num'        => $quarter,
+            'franchise_store' => $store,
+            'year_num' => $year,
+            'quarter_num' => $quarter,
             'quarter_start_date' => $qStart->toDateString(),
-            'quarter_end_date'   => $qEnd->toDateString(),
-            'operational_days'   => $monthly->sum('operational_days'),
+            'quarter_end_date' => $qEnd->toDateString(),
+            'operational_days' => $monthly->sum('operational_days'),
             'operational_months' => $monthly->count(),
         ]);
 
@@ -981,8 +996,8 @@ class AggregationService
         QuarterlyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'year_num'        => $year,
-                'quarter_num'     => $quarter,
+                'year_num' => $year,
+                'quarter_num' => $quarter,
             ],
             $summary
         );
@@ -1018,22 +1033,22 @@ class AggregationService
             QuarterlyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $store,
-                    'year_num'        => $year,
-                    'quarter_num'     => $quarter,
-                    'item_id'         => $item->item_id,
+                    'year_num' => $year,
+                    'quarter_num' => $quarter,
+                    'item_id' => $item->item_id,
                 ],
                 [
-                    'menu_item_name'     => $item->menu_item_name,
-                    'menu_item_account'  => $item->menu_item_account,
-                    'quantity_sold'      => $item->quantity_sold,
-                    'gross_sales'        => round($item->gross_sales, 2),
-                    'net_sales'          => round($item->net_sales, 2),
-                    'avg_item_price'     => round($item->avg_item_price, 2),
+                    'menu_item_name' => $item->menu_item_name,
+                    'menu_item_account' => $item->menu_item_account,
+                    'quantity_sold' => $item->quantity_sold,
+                    'gross_sales' => round($item->gross_sales, 2),
+                    'net_sales' => round($item->net_sales, 2),
+                    'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
-                    'delivery_quantity'  => $item->delivery_quantity,
-                    'carryout_quantity'  => $item->carryout_quantity,
+                    'delivery_quantity' => $item->delivery_quantity,
+                    'carryout_quantity' => $item->carryout_quantity,
                     'quarter_start_date' => $qStart->toDateString(),
-                    'quarter_end_date'   => $qEnd->toDateString(),
+                    'quarter_end_date' => $qEnd->toDateString(),
                 ]
             );
         }
@@ -1066,9 +1081,9 @@ class AggregationService
         }
 
         $summary = $this->sumStorePeriod($quarterly, [
-            'franchise_store'    => $store,
-            'year_num'           => $year,
-            'operational_days'   => $quarterly->sum('operational_days'),
+            'franchise_store' => $store,
+            'year_num' => $year,
+            'operational_days' => $quarterly->sum('operational_days'),
             'operational_months' => $quarterly->sum('operational_months'),
         ]);
 
@@ -1087,7 +1102,7 @@ class AggregationService
         YearlyStoreSummary::updateOrCreate(
             [
                 'franchise_store' => $store,
-                'year_num'        => $year,
+                'year_num' => $year,
             ],
             $summary
         );
@@ -1116,19 +1131,19 @@ class AggregationService
             YearlyItemSummary::updateOrCreate(
                 [
                     'franchise_store' => $store,
-                    'year_num'        => $year,
-                    'item_id'         => $item->item_id,
+                    'year_num' => $year,
+                    'item_id' => $item->item_id,
                 ],
                 [
-                    'menu_item_name'     => $item->menu_item_name,
-                    'menu_item_account'  => $item->menu_item_account,
-                    'quantity_sold'      => $item->quantity_sold,
-                    'gross_sales'        => round($item->gross_sales, 2),
-                    'net_sales'          => round($item->net_sales, 2),
-                    'avg_item_price'     => round($item->avg_item_price, 2),
+                    'menu_item_name' => $item->menu_item_name,
+                    'menu_item_account' => $item->menu_item_account,
+                    'quantity_sold' => $item->quantity_sold,
+                    'gross_sales' => round($item->gross_sales, 2),
+                    'net_sales' => round($item->net_sales, 2),
+                    'avg_item_price' => round($item->avg_item_price, 2),
                     'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
-                    'delivery_quantity'  => $item->delivery_quantity,
-                    'carryout_quantity'  => $item->carryout_quantity,
+                    'delivery_quantity' => $item->delivery_quantity,
+                    'carryout_quantity' => $item->carryout_quantity,
                 ]
             );
         }
@@ -1143,88 +1158,88 @@ class AggregationService
         $summary = $base + [
             // Sales
             'royalty_obligation' => round((float) $records->sum('royalty_obligation'), 2),
-            'gross_sales'        => round((float) $records->sum('gross_sales'), 2),
-            'net_sales'          => round((float) $records->sum('net_sales'), 2),
-            'refund_amount'      => round((float) $records->sum('refund_amount'), 2),
+            'gross_sales' => round((float) $records->sum('gross_sales'), 2),
+            'net_sales' => round((float) $records->sum('net_sales'), 2),
+            'refund_amount' => round((float) $records->sum('refund_amount'), 2),
 
             // Orders
-            'total_orders'     => (int) $records->sum('total_orders'),
+            'total_orders' => (int) $records->sum('total_orders'),
             'completed_orders' => (int) $records->sum('completed_orders'),
             'cancelled_orders' => (int) $records->sum('cancelled_orders'),
-            'modified_orders'  => (int) $records->sum('modified_orders'),
-            'refunded_orders'  => (int) $records->sum('refunded_orders'),
-            'customer_count'   => (int) $records->sum('customer_count'),
+            'modified_orders' => (int) $records->sum('modified_orders'),
+            'refunded_orders' => (int) $records->sum('refunded_orders'),
+            'customer_count' => (int) $records->sum('customer_count'),
 
             // Channels (Orders)
-            'phone_orders'       => (int) $records->sum('phone_orders'),
-            'website_orders'     => (int) $records->sum('website_orders'),
-            'mobile_orders'      => (int) $records->sum('mobile_orders'),
+            'phone_orders' => (int) $records->sum('phone_orders'),
+            'website_orders' => (int) $records->sum('website_orders'),
+            'mobile_orders' => (int) $records->sum('mobile_orders'),
             'call_center_orders' => (int) $records->sum('call_center_orders'),
-            'drive_thru_orders'  => (int) $records->sum('drive_thru_orders'),
+            'drive_thru_orders' => (int) $records->sum('drive_thru_orders'),
 
             // Channels (Sales)
-            'phone_sales'       => round((float) $records->sum('phone_sales'), 2),
-            'website_sales'     => round((float) $records->sum('website_sales'), 2),
-            'mobile_sales'      => round((float) $records->sum('mobile_sales'), 2),
+            'phone_sales' => round((float) $records->sum('phone_sales'), 2),
+            'website_sales' => round((float) $records->sum('website_sales'), 2),
+            'mobile_sales' => round((float) $records->sum('mobile_sales'), 2),
             'call_center_sales' => round((float) $records->sum('call_center_sales'), 2),
-            'drive_thru_sales'  => round((float) $records->sum('drive_thru_sales'), 2),
+            'drive_thru_sales' => round((float) $records->sum('drive_thru_sales'), 2),
 
             // Marketplace
             'doordash_orders' => (int) $records->sum('doordash_orders'),
-            'doordash_sales'  => round((float) $records->sum('doordash_sales'), 2),
+            'doordash_sales' => round((float) $records->sum('doordash_sales'), 2),
             'ubereats_orders' => (int) $records->sum('ubereats_orders'),
-            'ubereats_sales'  => round((float) $records->sum('ubereats_sales'), 2),
-            'grubhub_orders'  => (int) $records->sum('grubhub_orders'),
-            'grubhub_sales'   => round((float) $records->sum('grubhub_sales'), 2),
+            'ubereats_sales' => round((float) $records->sum('ubereats_sales'), 2),
+            'grubhub_orders' => (int) $records->sum('grubhub_orders'),
+            'grubhub_sales' => round((float) $records->sum('grubhub_sales'), 2),
 
             // Fulfillment totals (these will be recomputed at end to ensure correctness)
             'delivery_orders' => (int) $records->sum('delivery_orders'),
-            'delivery_sales'  => round((float) $records->sum('delivery_sales'), 2),
+            'delivery_sales' => round((float) $records->sum('delivery_sales'), 2),
             'carryout_orders' => (int) $records->sum('carryout_orders'),
-            'carryout_sales'  => round((float) $records->sum('carryout_sales'), 2),
+            'carryout_sales' => round((float) $records->sum('carryout_sales'), 2),
 
             // Category splits (Delivery vs Carryout)
             'pizza_delivery_quantity' => (int) $records->sum('pizza_delivery_quantity'),
-            'pizza_delivery_sales'    => round((float) $records->sum('pizza_delivery_sales'), 2),
+            'pizza_delivery_sales' => round((float) $records->sum('pizza_delivery_sales'), 2),
             'pizza_carryout_quantity' => (int) $records->sum('pizza_carryout_quantity'),
-            'pizza_carryout_sales'    => round((float) $records->sum('pizza_carryout_sales'), 2),
+            'pizza_carryout_sales' => round((float) $records->sum('pizza_carryout_sales'), 2),
 
             'hnr_delivery_quantity' => (int) $records->sum('hnr_delivery_quantity'),
-            'hnr_delivery_sales'    => round((float) $records->sum('hnr_delivery_sales'), 2),
+            'hnr_delivery_sales' => round((float) $records->sum('hnr_delivery_sales'), 2),
             'hnr_carryout_quantity' => (int) $records->sum('hnr_carryout_quantity'),
-            'hnr_carryout_sales'    => round((float) $records->sum('hnr_carryout_sales'), 2),
+            'hnr_carryout_sales' => round((float) $records->sum('hnr_carryout_sales'), 2),
 
             'bread_delivery_quantity' => (int) $records->sum('bread_delivery_quantity'),
-            'bread_delivery_sales'    => round((float) $records->sum('bread_delivery_sales'), 2),
+            'bread_delivery_sales' => round((float) $records->sum('bread_delivery_sales'), 2),
             'bread_carryout_quantity' => (int) $records->sum('bread_carryout_quantity'),
-            'bread_carryout_sales'    => round((float) $records->sum('bread_carryout_sales'), 2),
+            'bread_carryout_sales' => round((float) $records->sum('bread_carryout_sales'), 2),
 
             'wings_delivery_quantity' => (int) $records->sum('wings_delivery_quantity'),
-            'wings_delivery_sales'    => round((float) $records->sum('wings_delivery_sales'), 2),
+            'wings_delivery_sales' => round((float) $records->sum('wings_delivery_sales'), 2),
             'wings_carryout_quantity' => (int) $records->sum('wings_carryout_quantity'),
-            'wings_carryout_sales'    => round((float) $records->sum('wings_carryout_sales'), 2),
+            'wings_carryout_sales' => round((float) $records->sum('wings_carryout_sales'), 2),
 
             'beverages_delivery_quantity' => (int) $records->sum('beverages_delivery_quantity'),
-            'beverages_delivery_sales'    => round((float) $records->sum('beverages_delivery_sales'), 2),
+            'beverages_delivery_sales' => round((float) $records->sum('beverages_delivery_sales'), 2),
             'beverages_carryout_quantity' => (int) $records->sum('beverages_carryout_quantity'),
-            'beverages_carryout_sales'    => round((float) $records->sum('beverages_carryout_sales'), 2),
+            'beverages_carryout_sales' => round((float) $records->sum('beverages_carryout_sales'), 2),
 
             'other_foods_delivery_quantity' => (int) $records->sum('other_foods_delivery_quantity'),
-            'other_foods_delivery_sales'    => round((float) $records->sum('other_foods_delivery_sales'), 2),
+            'other_foods_delivery_sales' => round((float) $records->sum('other_foods_delivery_sales'), 2),
             'other_foods_carryout_quantity' => (int) $records->sum('other_foods_carryout_quantity'),
-            'other_foods_carryout_sales'    => round((float) $records->sum('other_foods_carryout_sales'), 2),
+            'other_foods_carryout_sales' => round((float) $records->sum('other_foods_carryout_sales'), 2),
 
             'side_items_delivery_quantity' => (int) $records->sum('side_items_delivery_quantity'),
-            'side_items_delivery_sales'    => round((float) $records->sum('side_items_delivery_sales'), 2),
+            'side_items_delivery_sales' => round((float) $records->sum('side_items_delivery_sales'), 2),
             'side_items_carryout_quantity' => (int) $records->sum('side_items_carryout_quantity'),
-            'side_items_carryout_sales'    => round((float) $records->sum('side_items_carryout_sales'), 2),
+            'side_items_carryout_sales' => round((float) $records->sum('side_items_carryout_sales'), 2),
 
             // Financial
-            'sales_tax'     => round((float) $records->sum('sales_tax'), 2),
+            'sales_tax' => round((float) $records->sum('sales_tax'), 2),
             'delivery_fees' => round((float) $records->sum('delivery_fees'), 2),
             'delivery_tips' => round((float) $records->sum('delivery_tips'), 2),
-            'store_tips'    => round((float) $records->sum('store_tips'), 2),
-            'total_tips'    => round((float) $records->sum('total_tips'), 2),
+            'store_tips' => round((float) $records->sum('store_tips'), 2),
+            'total_tips' => round((float) $records->sum('total_tips'), 2),
 
             // Payments
             'cash_sales' => round((float) $records->sum('cash_sales'), 2),
@@ -1232,12 +1247,12 @@ class AggregationService
 
             // Portal
             'portal_eligible_orders' => (int) $records->sum('portal_eligible_orders'),
-            'portal_used_orders'     => (int) $records->sum('portal_used_orders'),
-            'portal_on_time_orders'  => (int) $records->sum('portal_on_time_orders'),
+            'portal_used_orders' => (int) $records->sum('portal_used_orders'),
+            'portal_on_time_orders' => (int) $records->sum('portal_on_time_orders'),
 
             // Digital
             'digital_orders' => (int) $records->sum('digital_orders'),
-            'digital_sales'  => round((float) $records->sum('digital_sales'), 2),
+            'digital_sales' => round((float) $records->sum('digital_sales'), 2),
 
             'hnr_transactions' => (int) $records->sum('hnr_transactions'),
             'hnr_broken_promises' => (int) $records->sum('hnr_broken_promises'),
@@ -1274,12 +1289,12 @@ class AggregationService
 
         $summary['delivery_sales'] = round(
             $summary['pizza_delivery_sales']
-                + $summary['hnr_delivery_sales']
-                + $summary['bread_delivery_sales']
-                + $summary['wings_delivery_sales']
-                + $summary['beverages_delivery_sales']
-                + $summary['other_foods_delivery_sales']
-                + $summary['side_items_delivery_sales'],
+            + $summary['hnr_delivery_sales']
+            + $summary['bread_delivery_sales']
+            + $summary['wings_delivery_sales']
+            + $summary['beverages_delivery_sales']
+            + $summary['other_foods_delivery_sales']
+            + $summary['side_items_delivery_sales'],
             2
         );
 
@@ -1296,12 +1311,12 @@ class AggregationService
 
         $summary['carryout_sales'] = round(
             $summary['pizza_carryout_sales']
-                + $summary['hnr_carryout_sales']
-                + $summary['bread_carryout_sales']
-                + $summary['wings_carryout_sales']
-                + $summary['beverages_carryout_sales']
-                + $summary['other_foods_carryout_sales']
-                + $summary['side_items_carryout_sales'],
+            + $summary['hnr_carryout_sales']
+            + $summary['bread_carryout_sales']
+            + $summary['wings_carryout_sales']
+            + $summary['beverages_carryout_sales']
+            + $summary['other_foods_carryout_sales']
+            + $summary['side_items_carryout_sales'],
             2
         );
 
