@@ -35,7 +35,8 @@ class ReportsController extends Controller
     public function __construct(
         private readonly SummaryQueryService $summaryQuery,
         private readonly IntelligentAggregationService $intelligentAgg,
-    ) {}
+    ) {
+    }
 
     /**
      * GET /api/reports/dspr-lite/{store}/{date}
@@ -60,11 +61,11 @@ class ReportsController extends Controller
         [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
 
         $prevWeekStart = $weekStart->subWeek();
-        $prevWeekEnd   = $weekEnd->subWeek();
+        $prevWeekEnd = $weekEnd->subWeek();
 
         // Same business week last year (Tue–Mon)
         $lastYearWeekStart = $weekStart->subWeeks(52);
-        $lastYearWeekEnd   = $weekEnd->subWeeks(52);
+        $lastYearWeekEnd = $weekEnd->subWeeks(52);
         $daily = $this->dailySummary($store, $day);
 
         $hourlySalesByChannel = $this->hourlySalesByChannel($store, $day);
@@ -92,6 +93,29 @@ class ReportsController extends Controller
             $totalSales['doordash_sales'] += $hourlyData['doordash_sales'];
             $totalSales['ubereats_sales'] += $hourlyData['ubereats_sales'];
             $totalSales['grubhub_sales'] += $hourlyData['grubhub_sales'];
+        }
+
+        $adjustedTotalSales = $totalSales['royalty_obligation'] - (
+            $totalSales['phone_sales'] +
+            $totalSales['call_center_sales'] +
+            $totalSales['drive_thru_sales'] +
+            $totalSales['website_sales'] +
+            $totalSales['mobile_sales'] +
+            $totalSales['doordash_sales'] +
+            $totalSales['ubereats_sales'] +
+            $totalSales['grubhub_sales']
+        );
+        foreach ($hourlySalesByChannel as &$hourlyData) {
+            $hourlyData['adjusted_royalty_obligation'] = $hourlyData['royalty_obligation'] - (
+                $hourlyData['phone_sales'] +
+                $hourlyData['call_center_sales'] +
+                $hourlyData['drive_thru_sales'] +
+                $hourlyData['website_sales'] +
+                $hourlyData['mobile_sales'] +
+                $hourlyData['doordash_sales'] +
+                $hourlyData['ubereats_sales'] +
+                $hourlyData['grubhub_sales']
+            );
         }
         return [
             'filtering' => [
@@ -123,7 +147,7 @@ class ReportsController extends Controller
             'day' => [
                 'hourly_sales_and_channels' => $hourlySalesByChannel,
                 'total_sales' => [
-                    'royalty_obligation' => round($totalSales['royalty_obligation'], 2),
+                    'royalty_obligation' => round($adjustedTotalSales, 2),
                     'phone_sales' => round($totalSales['phone_sales'], 2),
                     'call_center_sales' => round($totalSales['call_center_sales'], 2),
                     'drive_thru_sales' => round($totalSales['drive_thru_sales'], 2),
@@ -341,7 +365,7 @@ class ReportsController extends Controller
     private function getIngredientName(array $results, int $id): string
     {
         foreach ($results as $row) {
-            if ((int)$row['ingredient_id'] === $id) {
+            if ((int) $row['ingredient_id'] === $id) {
                 return $row['ingredient_description'];
             }
         }
