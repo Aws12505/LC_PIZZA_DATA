@@ -91,6 +91,7 @@ class DueKeyResolverService
                         'fill_mode' => $rule->fill_mode,
                         'filled' => $filled,
                         'value' => $filled ? $existingValues->sortByDesc('entry_date')->first() : null,
+                        'tags' => $key->tags,  // Add tags to the output
                     ]);
 
                 } else {
@@ -137,6 +138,7 @@ class DueKeyResolverService
 
                             'filled' => $value !== null,
                             'value' => $value,
+                            'tags' => $key->tags,  // Add tags to the output
                         ]);
                     }
 
@@ -171,6 +173,7 @@ class DueKeyResolverService
                     'fill_mode' => $rule->fill_mode,
                     'filled' => $value !== null,
                     'value' => $value,
+                    'tags' => $key->tags,  // Add tags to the output
                 ]);
 
             } else {
@@ -214,6 +217,7 @@ class DueKeyResolverService
 
                         'filled' => $value !== null,
                         'value' => $value,
+                        'tags' => $key->tags,  // Add tags to the output
                     ]);
                 }
             }
