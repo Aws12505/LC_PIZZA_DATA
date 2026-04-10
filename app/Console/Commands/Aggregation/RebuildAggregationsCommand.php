@@ -159,19 +159,25 @@ class RebuildAggregationsCommand extends Command
     {
         $fullChain = ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'];
         $report = [];
+        $pipelineDatePool = $this->pipelineDatePool($start, $end, $selectedStages);
 
         foreach ($fullChain as $stage) {
-            $availableUnits = $this->availableUnitsForStage($stage, $start, $end);
+            $currentUnits = $this->availableUnitsForStage($stage, $start, $end);
+            $projectedUnits = in_array($stage, $selectedStages, true)
+                ? $this->projectedUnitsForStage($stage, $pipelineDatePool)
+                : $currentUnits;
             $expectedUnits = $this->expectedUnitsForStage($stage, $start, $end);
-            $missingUnits = array_values(array_diff($expectedUnits, $availableUnits));
+            $missingUnits = array_values(array_diff($expectedUnits, $projectedUnits));
 
             $report[] = [
                 'stage' => $stage,
                 'selected' => in_array($stage, $selectedStages, true),
-                'available_units' => count($availableUnits),
+                'current_units' => count($currentUnits),
+                'projected_units' => count($projectedUnits),
                 'expected_units' => count($expectedUnits),
                 'missing_units' => count($missingUnits),
-                'available_labels' => $availableUnits,
+                'current_labels' => $currentUnits,
+                'projected_labels' => $projectedUnits,
                 'missing_labels' => $missingUnits,
                 'missing_reason' => $this->missingReasonForStage($stage),
             ];
@@ -188,9 +194,11 @@ class RebuildAggregationsCommand extends Command
         foreach ($coverage as $stage) {
             $status = $stage['selected'] ? 'selected' : 'skipped';
             $this->line(sprintf(
-                '  - %s: %d/%d available, %d missing [%s]',
+                '  - %s: current %d/%d, projected %d/%d, missing %d [%s]',
                 $stage['stage'],
-                $stage['available_units'],
+                $stage['current_units'],
+                $stage['expected_units'],
+                $stage['projected_units'],
                 $stage['expected_units'],
                 $stage['missing_units'],
                 $status
@@ -230,6 +238,97 @@ class RebuildAggregationsCommand extends Command
                 ->all()),
             default => [],
         };
+    }
+
+    private function pipelineDatePool(Carbon $start, Carbon $end, array $selectedStages): array
+    {
+        if (in_array('hourly', $selectedStages, true)) {
+            return $this->availableUnitsForStage('hourly', $start, $end);
+        }
+
+        if (in_array('daily', $selectedStages, true)) {
+            return $this->availableUnitsForStage('daily', $start, $end);
+        }
+
+        if (in_array('weekly', $selectedStages, true)) {
+            return $this->datePoolFromWeeklyStage($start, $end);
+        }
+
+        if (in_array('monthly', $selectedStages, true)) {
+            return $this->datePoolFromMonthlyStage($start, $end);
+        }
+
+        if (in_array('quarterly', $selectedStages, true)) {
+            return $this->datePoolFromQuarterlyStage($start, $end);
+        }
+
+        if (in_array('yearly', $selectedStages, true)) {
+            return $this->datePoolFromYearlyStage($start, $end);
+        }
+
+        return $this->availableUnitsForStage('hourly', $start, $end);
+    }
+
+    private function projectedUnitsForStage(string $stage, array $datePool): array
+    {
+        return match ($stage) {
+            'hourly', 'daily' => $this->uniqueValues($datePool),
+            'weekly' => $this->uniqueValues(array_map(fn($date) => $this->weekLabel(Carbon::parse($date)), $datePool)),
+            'monthly' => $this->uniqueValues(array_map(fn($date) => $this->monthLabel(Carbon::parse($date)), $datePool)),
+            'quarterly' => $this->uniqueValues(array_map(fn($date) => $this->quarterLabel(Carbon::parse($date)), $datePool)),
+            'yearly' => $this->uniqueValues(array_map(fn($date) => (string) Carbon::parse($date)->year, $datePool)),
+            default => [],
+        };
+    }
+
+    private function datePoolFromWeeklyStage(Carbon $start, Carbon $end): array
+    {
+        $rows = WeeklyStoreSummary::query()
+            ->whereBetween('week_start_date', [$start->toDateString(), $end->toDateString()])
+            ->orWhereBetween('week_end_date', [$start->toDateString(), $end->toDateString()])
+            ->get(['week_start_date', 'week_end_date']);
+
+        $dates = [];
+        foreach ($rows as $row) {
+            if ($row->week_start_date) {
+                $dates[] = $row->week_start_date;
+            }
+            if ($row->week_end_date) {
+                $dates[] = $row->week_end_date;
+            }
+        }
+
+        return $this->uniqueValues($dates);
+    }
+
+    private function datePoolFromMonthlyStage(Carbon $start, Carbon $end): array
+    {
+        return $this->uniqueValues(MonthlyStoreSummary::query()
+            ->where('year_num', '>=', $start->year)
+            ->where('year_num', '<=', $end->year)
+            ->get(['year_num', 'month_num'])
+            ->map(fn($row) => Carbon::create((int) $row->year_num, (int) $row->month_num, 1)->toDateString())
+            ->all());
+    }
+
+    private function datePoolFromQuarterlyStage(Carbon $start, Carbon $end): array
+    {
+        return $this->uniqueValues(QuarterlyStoreSummary::query()
+            ->where('year_num', '>=', $start->year)
+            ->where('year_num', '<=', $end->year)
+            ->get(['year_num', 'quarter_num'])
+            ->map(fn($row) => Carbon::create((int) $row->year_num, ((int) $row->quarter_num - 1) * 3 + 1, 1)->toDateString())
+            ->all());
+    }
+
+    private function datePoolFromYearlyStage(Carbon $start, Carbon $end): array
+    {
+        return $this->uniqueValues(QuarterlyStoreSummary::query()
+            ->where('year_num', '>=', $start->year)
+            ->where('year_num', '<=', $end->year)
+            ->pluck('year_num')
+            ->map(fn($year) => Carbon::create((int) $year, 1, 1)->toDateString())
+            ->all());
     }
 
     private function expectedUnitsForStage(string $stage, Carbon $start, Carbon $end): array
