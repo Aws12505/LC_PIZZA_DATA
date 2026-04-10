@@ -3,9 +3,18 @@
 namespace App\Console\Commands\Aggregation;
 
 use App\Jobs\RebuildAggregationPipeline\RebuildAggregationPipelineJob;
+use App\Models\Aggregation\DailyStoreSummary;
+use App\Models\Aggregation\HourlyStoreSummary;
+use App\Models\Aggregation\MonthlyStoreSummary;
+use App\Models\Aggregation\QuarterlyStoreSummary;
+use App\Models\Aggregation\WeeklyStoreSummary;
+use App\Services\Database\DatabaseRouter;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class RebuildAggregationsCommand extends Command
 {
@@ -75,6 +84,9 @@ class RebuildAggregationsCommand extends Command
             ]
         ]);
 
+        $coverage = $this->buildCoverageReport($start, $end, $stages);
+        $this->renderCoverageReport($coverage);
+
         if (!$this->confirm('🚀 Queue rebuild pipeline?', true)) {
             return self::SUCCESS;
         }
@@ -87,6 +99,7 @@ class RebuildAggregationsCommand extends Command
             'type' => $type,
             'without' => $without,
             'stages' => $stages,
+            'coverage' => $coverage,
             'started_at' => now()->toISOString(),
             'updated_at' => now()->toISOString(),
             'date_range' => [
@@ -140,5 +153,184 @@ class RebuildAggregationsCommand extends Command
             $base,
             static fn($stage) => !in_array($stage, $without, true)
         ));
+    }
+
+    private function buildCoverageReport(Carbon $start, Carbon $end, array $selectedStages): array
+    {
+        $fullChain = ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'];
+        $report = [];
+
+        foreach ($fullChain as $stage) {
+            $availableUnits = $this->availableUnitsForStage($stage, $start, $end);
+            $expectedUnits = $this->expectedUnitsForStage($stage, $start, $end);
+            $missingUnits = array_values(array_diff($expectedUnits, $availableUnits));
+
+            $report[] = [
+                'stage' => $stage,
+                'selected' => in_array($stage, $selectedStages, true),
+                'available_units' => count($availableUnits),
+                'expected_units' => count($expectedUnits),
+                'missing_units' => count($missingUnits),
+                'available_labels' => $availableUnits,
+                'missing_labels' => $missingUnits,
+                'missing_reason' => $this->missingReasonForStage($stage),
+            ];
+        }
+
+        return $report;
+    }
+
+    private function renderCoverageReport(array $coverage): void
+    {
+        $this->newLine();
+        $this->line('Coverage preflight:');
+
+        foreach ($coverage as $stage) {
+            $status = $stage['selected'] ? 'selected' : 'skipped';
+            $this->line(sprintf(
+                '  - %s: %d/%d available, %d missing [%s]',
+                $stage['stage'],
+                $stage['available_units'],
+                $stage['expected_units'],
+                $stage['missing_units'],
+                $status
+            ));
+
+            foreach ($stage['missing_labels'] as $label) {
+                Log::warning('Aggregation preflight missing unit', [
+                    'stage' => $stage['stage'],
+                    'unit' => $label,
+                    'reason' => $stage['missing_reason'],
+                ]);
+            }
+        }
+
+        $this->newLine();
+    }
+
+    private function availableUnitsForStage(string $stage, Carbon $start, Carbon $end): array
+    {
+        return match ($stage) {
+            'hourly' => $this->uniqueValues($this->routedSource('detail_orders', $start, $end)->select('business_date')->pluck('business_date')->all()),
+            'daily' => $this->uniqueValues(HourlyStoreSummary::query()
+                ->whereBetween('business_date', [$start->toDateString(), $end->toDateString()])
+                ->pluck('business_date')
+                ->all()),
+            'weekly' => $this->uniqueValues(DailyStoreSummary::query()
+                ->whereBetween('business_date', [$start->toDateString(), $end->toDateString()])
+                ->pluck('business_date')
+                ->map(fn($date) => $this->weekLabel(Carbon::parse($date)))
+                ->all()),
+            'monthly' => $this->uniqueValues($this->monthLabelsFromWeeklyRows($start, $end)),
+            'quarterly' => $this->uniqueValues($this->quarterLabelsFromMonthlyRows($start, $end)),
+            'yearly' => $this->uniqueValues(QuarterlyStoreSummary::query()
+                ->whereBetween('year_num', [$start->year, $end->year])
+                ->pluck('year_num')
+                ->map(fn($year) => (string) $year)
+                ->all()),
+            default => [],
+        };
+    }
+
+    private function expectedUnitsForStage(string $stage, Carbon $start, Carbon $end): array
+    {
+        $units = [];
+        $cursor = $start->copy()->startOfDay();
+        $last = $end->copy()->startOfDay();
+
+        while ($cursor <= $last) {
+            $units[] = match ($stage) {
+                'hourly', 'daily' => $cursor->toDateString(),
+                'weekly' => $this->weekLabel($cursor),
+                'monthly' => $this->monthLabel($cursor),
+                'quarterly' => $this->quarterLabel($cursor),
+                'yearly' => (string) $cursor->year,
+                default => $cursor->toDateString(),
+            };
+
+            $cursor->addDay();
+        }
+
+        return $this->uniqueValues($units);
+    }
+
+    private function routedSource(string $baseTable, Carbon $start, Carbon $end): Builder
+    {
+        $queries = DatabaseRouter::routedQueries($baseTable, $start, $end);
+
+        $union = array_shift($queries);
+        foreach ($queries as $query) {
+            $union->unionAll($query);
+        }
+
+        return DB::query()->fromSub($union, 'src');
+    }
+
+    private function monthLabelsFromWeeklyRows(Carbon $start, Carbon $end): array
+    {
+        $rows = WeeklyStoreSummary::query()
+            ->where('year_num', '>=', $start->year)
+            ->where('year_num', '<=', $end->year)
+            ->get(['week_start_date', 'week_end_date']);
+
+        $labels = [];
+
+        foreach ($rows as $row) {
+            if ($row->week_start_date) {
+                $labels[] = $this->monthLabel(Carbon::parse($row->week_start_date));
+            }
+
+            if ($row->week_end_date) {
+                $labels[] = $this->monthLabel(Carbon::parse($row->week_end_date));
+            }
+        }
+
+        return $labels;
+    }
+
+    private function quarterLabelsFromMonthlyRows(Carbon $start, Carbon $end): array
+    {
+        $rows = MonthlyStoreSummary::query()
+            ->where('year_num', '>=', $start->year)
+            ->where('year_num', '<=', $end->year)
+            ->get(['year_num', 'month_num']);
+
+        return $rows->map(fn($row) => sprintf('%d-Q%d', (int) $row->year_num, (int) ceil(((int) $row->month_num) / 3)))->all();
+    }
+
+    private function weekLabel(Carbon $date): string
+    {
+        return sprintf('%d-W%02d', $date->year, (int) $date->format('W'));
+    }
+
+    private function monthLabel(Carbon $date): string
+    {
+        return $date->format('Y-m');
+    }
+
+    private function quarterLabel(Carbon $date): string
+    {
+        return sprintf('%d-Q%d', $date->year, (int) ceil($date->month / 3));
+    }
+
+    private function missingReasonForStage(string $stage): string
+    {
+        return match ($stage) {
+            'hourly' => 'No raw detail_orders rows for that day.',
+            'daily' => 'No hourly summaries for that day.',
+            'weekly' => 'No daily summaries for that week bucket.',
+            'monthly' => 'No weekly summaries for that month bucket.',
+            'quarterly' => 'No monthly summaries for that quarter bucket.',
+            'yearly' => 'No quarterly summaries for that year bucket.',
+            default => 'No source data available.',
+        };
+    }
+
+    private function uniqueValues(array $values): array
+    {
+        $values = array_map(static fn($value) => (string) $value, $values);
+        $values = array_values(array_filter($values, static fn($value) => $value !== ''));
+
+        return array_values(array_unique($values));
     }
 }
