@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Throwable;
-
+use App\Support\AggregationRebuildLogger;
 /**
  * JOB PIPELINE ORCHESTRATOR
  *
@@ -109,7 +109,15 @@ class RebuildAggregationPipelineJob implements ShouldQueue
         $endStr = $end->toDateString();
         $type = $this->type;
         $nextIndex = $this->stageIndex + 1;
-
+        AggregationRebuildLogger::info('Dispatching aggregation stage batch', [
+            'rebuild_id' => $rebuildId,
+            'stage' => $stage,
+            'stage_index' => $this->stageIndex,
+            'stage_total' => count($stages),
+            'job_count' => count($jobs),
+            'start_date' => $startStr,
+            'end_date' => $endStr,
+        ]);
         Bus::batch($jobs)
             ->name("agg_rebuild:{$rebuildId}:{$stage}")
             ->allowFailures()
@@ -139,11 +147,11 @@ class RebuildAggregationPipelineJob implements ShouldQueue
                     ]
                 ), 7200);
 
-                Log::error('Aggregation stage batch failed', [
+                AggregationRebuildLogger::error('Aggregation stage batch failed', [
                     'rebuild_id' => $rebuildId,
                     'stage' => $stage,
                     'batch_id' => $batch->id ?? null,
-                    'error' => $e->getMessage(),
+                    'exception' => $e,
                 ]);
             })
             ->finally(static function (Batch $batch) use ($rebuildId, $startStr, $endStr, $type, $stages, $nextIndex, $stage) {

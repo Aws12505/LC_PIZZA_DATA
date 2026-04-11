@@ -3,6 +3,7 @@
 namespace App\Jobs\RebuildAggregationPipeline;
 
 use App\Services\Aggregation\AggregationService;
+use App\Support\AggregationRebuildLogger;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -10,6 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Bus\Batchable;
+use Throwable;
 
 class RebuildHourlyDayJob implements ShouldQueue
 {
@@ -27,6 +29,41 @@ class RebuildHourlyDayJob implements ShouldQueue
     public function handle(AggregationService $service): void
     {
         $date = Carbon::parse($this->businessDate);
-        $service->updateHourlySummaries($date);
+
+        AggregationRebuildLogger::info('Hourly rebuild day job started', [
+            'rebuild_id' => $this->rebuildId,
+            'business_date' => $date->toDateString(),
+            'job' => static::class,
+            'attempt' => method_exists($this, 'attempts') ? $this->attempts() : null,
+        ]);
+
+        try {
+            $service->updateHourlySummaries($date, $this->rebuildId);
+
+            AggregationRebuildLogger::info('Hourly rebuild day job completed', [
+                'rebuild_id' => $this->rebuildId,
+                'business_date' => $date->toDateString(),
+                'job' => static::class,
+            ]);
+        } catch (Throwable $e) {
+            AggregationRebuildLogger::error('Hourly rebuild day job failed', [
+                'rebuild_id' => $this->rebuildId,
+                'business_date' => $date->toDateString(),
+                'job' => static::class,
+                'exception' => $e,
+            ]);
+
+            throw $e;
+        }
+    }
+
+    public function failed(Throwable $e): void
+    {
+        AggregationRebuildLogger::critical('Hourly rebuild day job permanently failed', [
+            'rebuild_id' => $this->rebuildId,
+            'business_date' => $this->businessDate,
+            'job' => static::class,
+            'exception' => $e,
+        ]);
     }
 }
