@@ -3,14 +3,17 @@
 namespace App\Jobs\RebuildAggregationPipeline;
 
 use Carbon\Carbon;
+use Illuminate\Bus\Batch;
 use Illuminate\Bus\Batchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Support\Facades\Bus;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * JOB PIPELINE ORCHESTRATOR
@@ -19,8 +22,8 @@ use Illuminate\Support\Facades\Cache;
  *   hourly(range) -> daily(range) -> weekly(range) -> monthly(periods) -> quarterly(periods) -> yearly(years)
  *
  * IMPORTANT:
- * - Uses Bus::chain() for each stage to ensure deterministic progression.
- * - Each stage job is responsible for handling its own failures and logging.
+ * - Uses Bus::batch() for each stage.
+ * - Batch callbacks are STATIC and do NOT capture $this to avoid SerializableClosure serialization errors.
  * - After each stage chain completes, ContinueAggregationPipelineJob advances the pipeline.
  */
 class RebuildAggregationPipelineJob implements ShouldQueue
@@ -100,17 +103,73 @@ class RebuildAggregationPipelineJob implements ShouldQueue
             'stage_job_count' => count($jobs),
         ]);
 
-        // Chain stage jobs so continuation is deterministic without batch callbacks.
-        $jobs[] = new ContinueAggregationPipelineJob(
-            rebuildId: $this->rebuildId,
-            startDate: $start->toDateString(),
-            endDate: $end->toDateString(),
-            type: $this->type,
-            stages: $stages,
-            nextIndex: $this->stageIndex + 1
-        );
+        // IMPORTANT: prepare all values for closures WITHOUT capturing $this
+        $rebuildId = $this->rebuildId;
+        $startStr = $start->toDateString();
+        $endStr = $end->toDateString();
+        $type = $this->type;
+        $nextIndex = $this->stageIndex + 1;
 
-        Bus::chain($jobs)->dispatch();
+        Bus::batch($jobs)
+            ->name("agg_rebuild:{$rebuildId}:{$stage}")
+            ->allowFailures()
+            ->then(static function (Batch $batch) use ($rebuildId, $stage) {
+                Cache::put("agg_rebuild_progress_{$rebuildId}", array_merge(
+                    Cache::get("agg_rebuild_progress_{$rebuildId}", []),
+                    [
+                        'status' => 'processing',
+                        'last_stage_completed' => $stage,
+                        'last_stage_result' => 'completed',
+                        'last_batch_id' => $batch->id,
+                        'last_failed_jobs' => $batch->failedJobs,
+                        'updated_at' => now()->toISOString(),
+                    ]
+                ), 7200);
+            })
+            ->catch(static function (Batch $batch, Throwable $e) use ($rebuildId, $stage) {
+                // Keep pipeline alive; continuation is handled in finally.
+                Cache::put("agg_rebuild_progress_{$rebuildId}", array_merge(
+                    Cache::get("agg_rebuild_progress_{$rebuildId}", []),
+                    [
+                        'status' => 'processing',
+                        'current_stage' => $stage,
+                        'last_stage_result' => 'completed_with_failures',
+                        'last_stage_error' => $e->getMessage(),
+                        'updated_at' => now()->toISOString(),
+                    ]
+                ), 7200);
+
+                Log::error('Aggregation stage batch failed', [
+                    'rebuild_id' => $rebuildId,
+                    'stage' => $stage,
+                    'batch_id' => $batch->id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
+            })
+            ->finally(static function (Batch $batch) use ($rebuildId, $startStr, $endStr, $type, $stages, $nextIndex, $stage) {
+                // Continue to next stage even if some jobs in this stage failed.
+                Cache::put("agg_rebuild_progress_{$rebuildId}", array_merge(
+                    Cache::get("agg_rebuild_progress_{$rebuildId}", []),
+                    [
+                        'status' => 'processing',
+                        'last_stage_completed' => $stage,
+                        'last_stage_result' => $batch->failedJobs > 0 ? 'completed_with_failures' : 'completed',
+                        'last_batch_id' => $batch->id,
+                        'last_failed_jobs' => $batch->failedJobs,
+                        'updated_at' => now()->toISOString(),
+                    ]
+                ), 7200);
+
+                ContinueAggregationPipelineJob::dispatch(
+                    rebuildId: $rebuildId,
+                    startDate: $startStr,
+                    endDate: $endStr,
+                    type: $type,
+                    stages: $stages,
+                    nextIndex: $nextIndex
+                );
+            })
+            ->dispatch();
     }
 
     // -------------------------------------------------------------------------

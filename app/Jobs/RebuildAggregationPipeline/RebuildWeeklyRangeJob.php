@@ -10,7 +10,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Bus\Batchable;
-use Illuminate\Support\Facades\Log;
 
 class RebuildWeeklyRangeJob implements ShouldQueue
 {
@@ -28,20 +27,11 @@ class RebuildWeeklyRangeJob implements ShouldQueue
 
     public function handle(AggregationService $service): void
     {
-        try {
-            $start = Carbon::parse($this->startDate)->startOfDay();
-            $end = Carbon::parse($this->endDate)->startOfDay();
+        $start = Carbon::parse($this->startDate)->startOfDay();
+        $end = Carbon::parse($this->endDate)->startOfDay();
 
 
-            // Your service already supports weekly range aggregation from DAILY:
-            $service->updateWeeklySummariesRange($start, $end);
-        } catch (\Throwable $e) {
-            Log::error('RebuildWeeklyRangeJob failed', [
-                'rebuild_id' => $this->rebuildId,
-                'start_date' => $this->startDate,
-                'end_date' => $this->endDate,
-                'error' => $e->getMessage(),
-            ]);
-        }
+        // Your service already supports weekly range aggregation from DAILY:
+        $service->updateWeeklySummariesRange($start, $end);
     }
 }

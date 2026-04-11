@@ -10,7 +10,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Bus\Batchable;
-use Illuminate\Support\Facades\Log;
 
 class RebuildDailyDayJob implements ShouldQueue
 {
@@ -27,15 +26,7 @@ class RebuildDailyDayJob implements ShouldQueue
 
     public function handle(AggregationService $service): void
     {
-        try {
-            $date = Carbon::parse($this->businessDate);
-            $service->updateDailySummaries($date);
-        } catch (\Throwable $e) {
-            Log::error('RebuildDailyDayJob failed', [
-                'rebuild_id' => $this->rebuildId,
-                'business_date' => $this->businessDate,
-                'error' => $e->getMessage(),
-            ]);
-        }
+        $date = Carbon::parse($this->businessDate);
+        $service->updateDailySummaries($date);
     }
 }

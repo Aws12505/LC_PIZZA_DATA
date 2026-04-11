@@ -9,7 +9,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Bus\Batchable;
-use Illuminate\Support\Facades\Log;
 
 class RebuildQuarterlyJob implements ShouldQueue
 {
@@ -27,15 +26,6 @@ class RebuildQuarterlyJob implements ShouldQueue
 
     public function handle(AggregationService $service): void
     {
-        try {
-            $service->updateQuarterlySummariesYearQuarter($this->year, $this->quarter);
-        } catch (\Throwable $e) {
-            Log::error('RebuildQuarterlyJob failed', [
-                'rebuild_id' => $this->rebuildId,
-                'year' => $this->year,
-                'quarter' => $this->quarter,
-                'error' => $e->getMessage(),
-            ]);
-        }
+        $service->updateQuarterlySummariesYearQuarter($this->year, $this->quarter);
     }
 }
