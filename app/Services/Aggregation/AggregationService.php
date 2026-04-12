@@ -14,7 +14,6 @@ use App\Models\Aggregation\QuarterlyStoreSummary;
 use App\Models\Aggregation\QuarterlyItemSummary;
 use App\Models\Aggregation\YearlyStoreSummary;
 use App\Models\Aggregation\YearlyItemSummary;
-use App\Support\AggregationRebuildLogger;
 use App\Services\Database\DatabaseRouter;
 
 use Carbon\Carbon;
@@ -72,51 +71,25 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        AggregationRebuildLogger::info('Hourly aggregation started', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'service_method' => __METHOD__,
-        ]);
 
         $stores = $this->routedSource('detail_orders', $date, $date)
             ->where('business_date', $dateStr)
             ->distinct()
             ->pluck('franchise_store');
 
-        AggregationRebuildLogger::info('Hourly aggregation stores discovered', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'store_count' => $stores->count(),
-            'stores' => $stores->values()->all(),
-        ]);
 
-        if ($stores->isEmpty()) {
-            AggregationRebuildLogger::warning('No stores found for hourly aggregation date', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $dateStr,
-                'source_table' => 'detail_orders',
-            ]);
-            return;
-        }
+
 
         foreach ($stores as $store) {
             try {
-                AggregationRebuildLogger::info('Hourly aggregation store started', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => (string) $store,
-                ]);
+
 
                 $this->updateHourlyStoreSummary((string) $store, $date, $rebuildId);
                 $this->updateHourlyItemSummary((string) $store, $date, $rebuildId);
 
-                AggregationRebuildLogger::info('Hourly aggregation store completed', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => (string) $store,
-                ]);
+
             } catch (\Throwable $e) {
-                AggregationRebuildLogger::error('Hourly aggregation failed for store', [
+                Log::error('Hourly aggregation failed for store', [
                     'rebuild_id' => $rebuildId,
                     'business_date' => $dateStr,
                     'store' => (string) $store,
@@ -125,11 +98,6 @@ class AggregationService
             }
         }
 
-        AggregationRebuildLogger::info('Hourly aggregation finished', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'service_method' => __METHOD__,
-        ]);
     }
 
     /**
@@ -139,50 +107,25 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        AggregationRebuildLogger::info('Daily aggregation started', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'service_method' => __METHOD__,
-        ]);
+
 
         $stores = HourlyStoreSummary::where('business_date', $dateStr)
             ->distinct()
             ->pluck('franchise_store');
 
-        AggregationRebuildLogger::info('Daily aggregation stores discovered from hourly summaries', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'store_count' => $stores->count(),
-            'stores' => $stores->values()->all(),
-        ]);
 
-        if ($stores->isEmpty()) {
-            AggregationRebuildLogger::warning('No hourly data found for daily aggregation date', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $dateStr,
-                'source_table' => 'hourly_store_summaries',
-            ]);
-            return;
-        }
+
 
         foreach ($stores as $store) {
             try {
-                AggregationRebuildLogger::info('Daily aggregation store started', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => (string) $store,
-                ]);
+
 
                 $this->aggregateDailyFromHourly((string) $store, $date);
                 $this->aggregateDailyItemsFromHourly((string) $store, $date);
 
-                AggregationRebuildLogger::info('Daily aggregation store completed', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => (string) $store,
-                ]);
+
             } catch (\Throwable $e) {
-                AggregationRebuildLogger::error('Daily aggregation failed for store', [
+                Log::error('Daily aggregation failed for store', [
                     'rebuild_id' => $rebuildId,
                     'business_date' => $dateStr,
                     'store' => (string) $store,
@@ -191,11 +134,6 @@ class AggregationService
             }
         }
 
-        AggregationRebuildLogger::info('Daily aggregation finished', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'service_method' => __METHOD__,
-        ]);
     }
 
     /**
@@ -264,37 +202,17 @@ class AggregationService
             ->map(fn($hour) => (int) $hour)
             ->values();
 
-        if ($hours->isEmpty()) {
-            AggregationRebuildLogger::warning('No hourly store buckets found', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $dateStr,
-                'store' => $store,
-            ]);
-            return;
-        }
-
-        AggregationRebuildLogger::info('Hourly store buckets discovered', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'store' => $store,
-            'hours' => $hours->all(),
-        ]);
 
         foreach ($hours as $hour) {
             try {
                 $this->aggregateHourlyStoreData($store, $dateStr, (int) $hour, $rebuildId);
 
-                AggregationRebuildLogger::debug('Hourly store summary row written', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => $store,
-                    'hour' => (int) $hour,
-                ]);
+
             } catch (\Throwable $e) {
-                AggregationRebuildLogger::error('Hourly store summary row failed', [
+                Log::error('Hourly aggregation failed for store', [
                     'rebuild_id' => $rebuildId,
                     'business_date' => $dateStr,
-                    'store' => $store,
+                    'store' => (string) $store,
                     'hour' => (int) $hour,
                     'exception' => $e,
                 ]);
@@ -315,27 +233,14 @@ class AggregationService
     {
         $day = Carbon::parse($date);
 
-        AggregationRebuildLogger::debug('Aggregating hourly store data', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $date,
-            'store' => $store,
-            'hour' => $hour,
-        ]);
+
 
         $baseOrders = $this->routedSource('detail_orders', $day, $day)
             ->where('franchise_store', $store)
             ->where('business_date', $date)
             ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
 
-        if (!(clone $baseOrders)->exists()) {
-            AggregationRebuildLogger::warning('No raw orders found for store/date/hour', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $date,
-                'store' => $store,
-                'hour' => $hour,
-            ]);
-            return;
-        }
+
 
         $totalSales = (float) (clone $baseOrders)->sum('royalty_obligation');
         $grossSales = (float) (clone $baseOrders)->sum('gross_sales');
@@ -567,20 +472,7 @@ class AggregationService
             'hnr_broken_promises' => $hnrBrokenPromises,
         ];
 
-        AggregationRebuildLogger::info('Writing hourly store summary row', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $date,
-            'store' => $store,
-            'hour' => $hour,
-            'total_orders' => $totalOrders,
-            'completed_orders' => $data['completed_orders'],
-            'cancelled_orders' => $cancelledOrders,
-            'refunded_orders' => $refundedOrders,
-            'gross_sales' => round($grossSales, 2),
-            'royalty_obligation' => round($totalSales, 2),
-            'delivery_orders' => $deliveryQtyTotal,
-            'carryout_orders' => $carryoutQtyTotal,
-        ]);
+
 
         $this->replaceRow(HourlyStoreSummary::class, [
             'franchise_store' => $store,
@@ -608,37 +500,20 @@ class AggregationService
             ->map(fn($hour) => (int) $hour)
             ->values();
 
-        if ($hours->isEmpty()) {
-            AggregationRebuildLogger::warning('No hourly item buckets found', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $dateStr,
-                'store' => $store,
-            ]);
-            return;
-        }
 
-        AggregationRebuildLogger::info('Hourly item buckets discovered', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $dateStr,
-            'store' => $store,
-            'hours' => $hours->all(),
-        ]);
+
+
 
         foreach ($hours as $hour) {
             try {
                 $this->aggregateHourlyItemData($store, $dateStr, (int) $hour, $rebuildId);
 
-                AggregationRebuildLogger::debug('Hourly item summary rows written', [
-                    'rebuild_id' => $rebuildId,
-                    'business_date' => $dateStr,
-                    'store' => $store,
-                    'hour' => (int) $hour,
-                ]);
+
             } catch (\Throwable $e) {
-                AggregationRebuildLogger::error('Hourly item summary row failed', [
+                Log::error('Hourly item aggregation failed for store', [
                     'rebuild_id' => $rebuildId,
                     'business_date' => $dateStr,
-                    'store' => $store,
+                    'store' => (string) $store,
                     'hour' => (int) $hour,
                     'exception' => $e,
                 ]);
@@ -650,12 +525,7 @@ class AggregationService
     {
         $day = Carbon::parse($date);
 
-        AggregationRebuildLogger::debug('Aggregating hourly item data', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $date,
-            'store' => $store,
-            'hour' => $hour,
-        ]);
+
 
         $lines = $this->routedSource('order_line', $day, $day)
             ->where('franchise_store', $store)
@@ -675,28 +545,14 @@ class AggregationService
                 'modified_order_amount',
             ]);
 
-        if ($lines->isEmpty()) {
-            AggregationRebuildLogger::warning('No raw item lines found for store/date/hour', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $date,
-                'store' => $store,
-                'hour' => $hour,
-            ]);
-            return;
-        }
+
 
         $items = $lines->groupBy(
             fn($r) =>
             "{$r->franchise_store}|{$r->business_date}|{$r->item_id}|{$r->menu_item_name}|{$r->menu_item_account}"
         );
 
-        AggregationRebuildLogger::debug('Hourly item groups discovered', [
-            'rebuild_id' => $rebuildId,
-            'business_date' => $date,
-            'store' => $store,
-            'hour' => $hour,
-            'item_group_count' => $items->count(),
-        ]);
+
 
         foreach ($items as $group) {
             $first = $group->first();
@@ -732,16 +588,7 @@ class AggregationService
                 'refunded_quantity' => (float) $group->where('refunded', 'Yes')->sum('quantity'),
             ];
 
-            AggregationRebuildLogger::debug('Writing hourly item summary row', [
-                'rebuild_id' => $rebuildId,
-                'business_date' => $date,
-                'store' => $store,
-                'hour' => $hour,
-                'item_id' => $first->item_id,
-                'menu_item_name' => $first->menu_item_name,
-                'quantity_sold' => $qty,
-                'gross_sales' => round($gross, 2),
-            ]);
+
 
             $this->replaceRow(HourlyItemSummary::class, [
                 'franchise_store' => $first->franchise_store,
