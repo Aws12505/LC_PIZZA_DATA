@@ -16,14 +16,24 @@ class RunAggregationRebuildJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 21600; // 6 hours
+    public $timeout = 21600;
     public $tries = 1;
+
+    protected array $stageOrder = [
+        'hourly' => 1,
+        'daily' => 2,
+        'weekly' => 3,
+        'monthly' => 4,
+        'quarterly' => 5,
+        'yearly' => 6,
+    ];
 
     public function __construct(
         protected string $aggregationId,
         protected string $startDate,
         protected string $endDate,
-        protected string $type = 'all'
+        protected string $type = 'all',
+        protected ?array $stages = null
     ) {
     }
 
@@ -45,7 +55,8 @@ class RunAggregationRebuildJob implements ShouldQueue
             $start = Carbon::parse($this->startDate)->startOfDay();
             $end = Carbon::parse($this->endDate)->startOfDay();
 
-            $units = $this->buildExecutionPlan($start, $end, $this->type);
+            $stages = $this->normalizeStageOrder($this->stages ?? $this->stagesFromType($this->type));
+            $units = $this->buildExecutionPlan($start, $end, $stages);
 
             $processed = 0;
             $successful = 0;
@@ -53,10 +64,13 @@ class RunAggregationRebuildJob implements ShouldQueue
             $failedUnits = [];
 
             $this->updateProgress('processing', [
+                'type' => $this->type,
+                'stages' => $stages,
                 'total' => count($units),
                 'processed' => 0,
                 'successful' => 0,
                 'failed' => 0,
+                'current_date' => null,
                 'current_unit' => null,
                 'failed_units' => [],
                 'started_at' => now()->toISOString(),
@@ -68,6 +82,7 @@ class RunAggregationRebuildJob implements ShouldQueue
                     'processed' => $processed,
                     'successful' => $successful,
                     'failed' => $failed,
+                    'current_date' => $this->unitDateForProgress($unit),
                     'current_unit' => $unit,
                 ]);
 
@@ -89,12 +104,11 @@ class RunAggregationRebuildJob implements ShouldQueue
                     Log::error('Aggregation rebuild unit failed', [
                         'aggregation_id' => $this->aggregationId,
                         'type' => $this->type,
+                        'stages' => $stages,
                         'unit' => $unit,
                         'error' => $e->getMessage(),
                         'trace' => $e->getTraceAsString(),
                     ]);
-
-                    // Important: do NOT throw. Continue normally.
                 }
 
                 $processed++;
@@ -104,16 +118,22 @@ class RunAggregationRebuildJob implements ShouldQueue
                     'processed' => $processed,
                     'successful' => $successful,
                     'failed' => $failed,
+                    'current_date' => $processed < count($units)
+                        ? $this->unitDateForProgress($units[$processed])
+                        : null,
                     'current_unit' => $processed < count($units) ? $units[$processed] : null,
                     'failed_units' => array_slice($failedUnits, -50),
                 ]);
             }
 
             $this->updateProgress('completed', [
+                'type' => $this->type,
+                'stages' => $stages,
                 'total' => count($units),
                 'processed' => $processed,
                 'successful' => $successful,
                 'failed' => $failed,
+                'current_date' => null,
                 'current_unit' => null,
                 'failed_units' => array_slice($failedUnits, -50),
                 'completed_at' => now()->toISOString(),
@@ -123,25 +143,45 @@ class RunAggregationRebuildJob implements ShouldQueue
         }
     }
 
-    protected function buildExecutionPlan(Carbon $start, Carbon $end, string $type): array
+    protected function stagesFromType(string $type): array
     {
+        $type = trim(strtolower($type));
+
         return match ($type) {
-            'hourly' => $this->buildDailyUnits($start, $end, 'hourly'),
-            'daily' => $this->buildDailyUnits($start, $end, 'daily'),
-            'weekly' => $this->buildWeeklyUnits($start, $end),
-            'monthly' => $this->buildMonthlyUnits($start, $end),
-            'quarterly' => $this->buildQuarterlyUnits($start, $end),
-            'yearly' => $this->buildYearlyUnits($start, $end),
-            'all' => array_merge(
-                $this->buildDailyUnits($start, $end, 'hourly'),
-                $this->buildDailyUnits($start, $end, 'daily'),
-                $this->buildWeeklyUnits($start, $end),
-                $this->buildMonthlyUnits($start, $end),
-                $this->buildQuarterlyUnits($start, $end),
-                $this->buildYearlyUnits($start, $end),
-            ),
-            default => [],
+            'hourly' => ['hourly'],
+            'daily' => ['hourly', 'daily'],
+            'weekly' => ['hourly', 'daily', 'weekly'],
+            'monthly' => ['hourly', 'daily', 'weekly', 'monthly'],
+            'quarterly' => ['hourly', 'daily', 'weekly', 'monthly', 'quarterly'],
+            'yearly' => ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'],
+            'all', '' => ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'],
+            default => ['hourly', 'daily', 'weekly', 'monthly', 'quarterly', 'yearly'],
         };
+    }
+
+    protected function normalizeStageOrder(array $stages): array
+    {
+        usort($stages, fn(string $a, string $b) => $this->stageOrder[$a] <=> $this->stageOrder[$b]);
+        return array_values(array_unique($stages));
+    }
+
+    protected function buildExecutionPlan(Carbon $start, Carbon $end, array $stages): array
+    {
+        $units = [];
+
+        foreach ($stages as $stage) {
+            $units = array_merge($units, match ($stage) {
+                'hourly' => $this->buildDailyUnits($start, $end, 'hourly'),
+                'daily' => $this->buildDailyUnits($start, $end, 'daily'),
+                'weekly' => $this->buildWeeklyUnits($start, $end),
+                'monthly' => $this->buildMonthlyUnits($start, $end),
+                'quarterly' => $this->buildQuarterlyUnits($start, $end),
+                'yearly' => $this->buildYearlyUnits($start, $end),
+                default => [],
+            });
+        }
+
+        return $units;
     }
 
     protected function buildDailyUnits(Carbon $start, Carbon $end, string $stage): array
@@ -261,6 +301,24 @@ class RunAggregationRebuildJob implements ShouldQueue
         };
     }
 
+    protected function unitDateForProgress(array $unit): ?string
+    {
+        return match ($unit['stage']) {
+            'hourly', 'daily' => $unit['date'] ?? null,
+            'weekly' => $unit['start_date'] ?? null,
+            'monthly' => isset($unit['year'], $unit['month'])
+            ? Carbon::create($unit['year'], $unit['month'], 1)->toDateString()
+            : null,
+            'quarterly' => isset($unit['year'], $unit['quarter'])
+            ? Carbon::create($unit['year'], (($unit['quarter'] - 1) * 3) + 1, 1)->toDateString()
+            : null,
+            'yearly' => isset($unit['year'])
+            ? Carbon::create($unit['year'], 1, 1)->toDateString()
+            : null,
+            default => null,
+        };
+    }
+
     protected function updateProgress(string $status, array $data = []): void
     {
         $current = Cache::get("agg_progress_{$this->aggregationId}", []);
@@ -282,12 +340,14 @@ class RunAggregationRebuildJob implements ShouldQueue
             'start_date' => $this->startDate,
             'end_date' => $this->endDate,
             'type' => $this->type,
+            'stages' => $this->stages,
             'error' => $e->getMessage(),
             'trace' => $e->getTraceAsString(),
         ]);
 
         $this->updateProgress('failed', [
             'message' => $e->getMessage(),
+            'current_date' => null,
             'current_unit' => null,
             'failed_at' => now()->toISOString(),
         ]);
