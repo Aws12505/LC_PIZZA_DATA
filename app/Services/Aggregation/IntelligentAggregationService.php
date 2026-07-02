@@ -49,22 +49,22 @@ class IntelligentAggregationService
      */
     private const MODEL_MAP = [
         'hourly_store' => HourlyStoreSummary::class,
-        'hourly_item'  => HourlyItemSummary::class,
+        'hourly_item' => HourlyItemSummary::class,
 
-        'daily_store'  => DailyStoreSummary::class,
-        'daily_item'   => DailyItemSummary::class,
+        'daily_store' => DailyStoreSummary::class,
+        'daily_item' => DailyItemSummary::class,
 
         'weekly_store' => WeeklyStoreSummary::class,
-        'weekly_item'  => WeeklyItemSummary::class,
+        'weekly_item' => WeeklyItemSummary::class,
 
         'monthly_store' => MonthlyStoreSummary::class,
-        'monthly_item'  => MonthlyItemSummary::class,
+        'monthly_item' => MonthlyItemSummary::class,
 
         'quarterly_store' => QuarterlyStoreSummary::class,
-        'quarterly_item'  => QuarterlyItemSummary::class,
+        'quarterly_item' => QuarterlyItemSummary::class,
 
         'yearly_store' => YearlyStoreSummary::class,
-        'yearly_item'  => YearlyItemSummary::class,
+        'yearly_item' => YearlyItemSummary::class,
     ];
 
     // ========================================================================
@@ -75,19 +75,19 @@ class IntelligentAggregationService
     {
         $this->executionStartTime = microtime(true);
 
-        $request  = $this->parseRequest($input);
+        $request = $this->parseRequest($input);
         $strategy = $this->optimizeStrategy($request);
 
         $data = $this->executeQueriesStreaming($request, $strategy);
 
         return [
             'success' => true,
-            'data'    => $data,
+            'data' => $data,
             'metadata' => [
-                'query_plan'         => $strategy,
-                'execution_time_ms'  => round((microtime(true) - $this->executionStartTime) * 1000, 2),
-                'rows_returned'      => count($data),
-                'rows_scanned_est'   => $this->calculateTotalRows($strategy),
+                'query_plan' => $strategy,
+                'execution_time_ms' => round((microtime(true) - $this->executionStartTime) * 1000, 2),
+                'rows_returned' => count($data),
+                'rows_scanned_est' => $this->calculateTotalRows($strategy),
             ]
         ];
     }
@@ -95,7 +95,7 @@ class IntelligentAggregationService
     public function explain(array $input): array
     {
         $this->debugLevel = 1;
-        $request  = $this->parseRequest($input);
+        $request = $this->parseRequest($input);
         $strategy = $this->optimizeStrategy($request);
 
         return [
@@ -111,18 +111,18 @@ class IntelligentAggregationService
     private function parseRequest(array $input): array
     {
         $startDate = new DateTime($input['start_date'] ?? throw new InvalidArgumentException('start_date required'));
-        $endDate   = new DateTime($input['end_date'] ?? throw new InvalidArgumentException('end_date required'));
+        $endDate = new DateTime($input['end_date'] ?? throw new InvalidArgumentException('end_date required'));
 
         if ($startDate > $endDate) {
             throw new InvalidArgumentException('start_date must be before end_date');
         }
 
         $orderBy = $input['order_by'] ?? null;
-        $limit   = $input['limit'] ?? null;
+        $limit = $input['limit'] ?? null;
 
         return [
             'start_date' => $startDate,
-            'end_date'   => $endDate,
+            'end_date' => $endDate,
             'summary_type' => $input['summary_type'] ?? 'store',
 
             'metrics' => $this->parseMetrics($input['metrics'] ?? ['*']),
@@ -134,10 +134,10 @@ class IntelligentAggregationService
             'group_by' => $input['group_by'] ?? [],
 
             // If true: include time dims of chosen granularity in group_by (time series output)
-            'group_time' => (bool)($input['group_time'] ?? false),
+            'group_time' => (bool) ($input['group_time'] ?? false),
 
             'order_by' => $orderBy,
-            'limit'    => $limit,
+            'limit' => $limit,
 
             // Enterprise rule: final sort/limit after merge/subtractions
             'finalize_after_merge' => true,
@@ -197,62 +197,191 @@ class IntelligentAggregationService
     {
         $days = $request['day_span'];
 
-        // Short ranges: hourly gives best latency (but still safe since we aggregate across range)
-        if ($days <= 3) {
-            return ['operations' => [
-                ['type' => '+', 'granularity' => 'hourly', 'start' => $request['start_date'], 'end' => $request['end_date']]
-            ]];
-        }
-
+        // Short ranges: prefer daily, but backfill missing days from hourly.
         if ($days <= 14) {
-            return ['operations' => [
-                ['type' => '+', 'granularity' => 'daily', 'start' => $request['start_date'], 'end' => $request['end_date']]
-            ]];
+            return ['operations' => $this->buildShortRangeOps($request)];
         }
 
-        // Long ranges: full intelligent strategy
+        // Long ranges: read the daily grain directly (see buildIntelligentStrategy). This is the
+        // only plan that reconciles exactly with a manual sum of daily store summaries.
         return $this->buildIntelligentStrategy($request['start_date'], $request['end_date']);
     }
 
+    private function buildShortRangeOps(array $request): array
+    {
+        $start = $request['start_date'];
+        $end = $request['end_date'];
+
+        $dailyOp = [
+            'type' => '+',
+            'granularity' => 'daily',
+            'start' => $start,
+            'end' => $end,
+        ];
+
+        // Avoid mixed granularity for time series output.
+        if ($request['group_time']) {
+            return $this->hasDailyRowsForRange($request)
+                ? [$dailyOp]
+                : [
+                    [
+                        'type' => '+',
+                        'granularity' => 'hourly',
+                        'start' => $start,
+                        'end' => $end,
+                    ]
+                ];
+        }
+
+        $missingDates = $this->findMissingDailyDates($request);
+
+        if (count($missingDates) === 0) {
+            return [$dailyOp];
+        }
+
+        if (count($missingDates) >= $request['day_span']) {
+            return [
+                [
+                    'type' => '+',
+                    'granularity' => 'hourly',
+                    'start' => $start,
+                    'end' => $end,
+                ]
+            ];
+        }
+
+        return array_merge([$dailyOp], $this->buildHourlyOpsForMissingDays($missingDates));
+    }
+
+    private function hasDailyRowsForRange(array $request): bool
+    {
+        $modelClass = $this->getModelClass('daily', $request['summary_type']);
+        $query = $modelClass::query();
+
+        $this->applyWhereConditions($query, [
+            'granularity' => 'daily',
+            'start' => $request['start_date'],
+            'end' => $request['end_date'],
+        ], $request);
+
+        return $query->limit(1)->exists();
+    }
+
+    private function findMissingDailyDates(array $request): array
+    {
+        $modelClass = $this->getModelClass('daily', $request['summary_type']);
+        $query = $modelClass::query();
+
+        $this->applyWhereConditions($query, [
+            'granularity' => 'daily',
+            'start' => $request['start_date'],
+            'end' => $request['end_date'],
+        ], $request);
+
+        $available = $query
+            ->distinct()
+            ->pluck('business_date')
+            ->map(static function ($date) {
+                return $date instanceof DateTime
+                    ? $date->format('Y-m-d')
+                    : (new DateTime((string) $date))->format('Y-m-d');
+            })
+            ->toArray();
+
+        $availableSet = array_flip($available);
+        $missing = [];
+
+        $cursor = clone $request['start_date'];
+        $end = clone $request['end_date'];
+
+        while ($cursor <= $end) {
+            $dateStr = $cursor->format('Y-m-d');
+            if (!isset($availableSet[$dateStr])) {
+                $missing[] = $dateStr;
+            }
+            $cursor->modify('+1 day');
+        }
+
+        return $missing;
+    }
+
+    private function buildHourlyOpsForMissingDays(array $missingDates): array
+    {
+        if (count($missingDates) === 0) {
+            return [];
+        }
+
+        sort($missingDates);
+
+        $ops = [];
+        $rangeStart = null;
+        $prev = null;
+
+        foreach ($missingDates as $dateStr) {
+            $date = new DateTime($dateStr);
+
+            if ($rangeStart === null) {
+                $rangeStart = $date;
+                $prev = $date;
+                continue;
+            }
+
+            $expectedNext = (clone $prev)->modify('+1 day');
+            if ($date->format('Y-m-d') === $expectedNext->format('Y-m-d')) {
+                $prev = $date;
+                continue;
+            }
+
+            $ops[] = [
+                'type' => '+',
+                'granularity' => 'hourly',
+                'start' => $rangeStart,
+                'end' => $prev,
+            ];
+
+            $rangeStart = $date;
+            $prev = $date;
+        }
+
+        $ops[] = [
+            'type' => '+',
+            'granularity' => 'hourly',
+            'start' => $rangeStart,
+            'end' => $prev,
+        ];
+
+        return $ops;
+    }
+
     /**
-     * Full cost-based optimizer: tries direct vs subtraction-based plans across granularities.
+     * Long-range plan: read the daily grain directly over the exact window.
+     *
+     * This is the ONLY source that reconciles to the cent with a manual sum of daily store
+     * summaries, so it is what we use:
+     *   - A single daily op filters daily_store_summary on `business_date BETWEEN start AND end`
+     *     and SUMs in SQL — exactly the rows a human sums by hand. One indexed range scan.
+     *
+     * The coarse rollups are intentionally never read:
+     *   - monthly/quarterly/yearly are built by summing Tue–Mon weekly rows that OVERLAP a
+     *     calendar period (AggregationService::aggregateMonthlyStore), so a week straddling a
+     *     boundary is double-counted — the bucket is inflated and != the period's daily sum.
+     *   - weekly can lag the daily grain and is keyed on Tue–Mon spans that need not align to
+     *     an arbitrary requested window.
+     *
+     * NOTE: the cost-based coarse/subtraction strategy methods below this point
+     * (buildDirectOps, build*SubtractionOps, calculate*Cost, buildOptimalExclusion, …) are no
+     * longer reachable and are kept only for reference/history. Do not route plans through
+     * them — they read the inflated coarse tables and pull whole buckets that overhang the
+     * requested range.
      */
     private function buildIntelligentStrategy(DateTime $start, DateTime $end): array
     {
-        $costs = [
-            'direct_daily'     => $this->calculateDirectCost($start, $end, 'daily'),
-            'direct_weekly'    => $this->calculateDirectCost($start, $end, 'weekly'),
-            'direct_monthly'   => $this->calculateDirectCost($start, $end, 'monthly'),
-            'direct_quarterly' => $this->calculateDirectCost($start, $end, 'quarterly'),
-            'direct_yearly'    => $this->calculateDirectCost($start, $end, 'yearly'),
-
-            'yearly_subtraction'    => $this->calculateYearlySubtractionCost($start, $end),
-            'quarterly_subtraction' => $this->calculateQuarterlySubtractionCost($start, $end),
-            'monthly_subtraction'   => $this->calculateMonthlySubtractionCost($start, $end),
-        ];
-
-        if ($this->debugLevel > 0) {
-            echo "\nOptimizing period: {$start->format('Y-m-d')} to {$end->format('Y-m-d')}\n";
-            echo "Costs: " . json_encode($costs, JSON_PRETTY_PRINT) . "\n";
-        }
-
-        $minCost = min($costs);
-        $bestApproach = array_search($minCost, $costs, true);
-
-        if ($this->debugLevel > 0) {
-            echo "Chosen: {$bestApproach} (cost: {$minCost})\n";
-        }
-
-        return match ($bestApproach) {
-            'yearly_subtraction'    => ['operations' => $this->buildYearlySubtractionOps($start, $end)],
-            'quarterly_subtraction' => ['operations' => $this->buildQuarterlySubtractionOps($start, $end)],
-            'monthly_subtraction'   => ['operations' => $this->buildMonthlySubtractionOps($start, $end)],
-            'direct_yearly'         => ['operations' => $this->buildDirectOps($start, $end, 'yearly')],
-            'direct_quarterly'      => ['operations' => $this->buildDirectOps($start, $end, 'quarterly')],
-            'direct_monthly'        => ['operations' => $this->buildDirectOps($start, $end, 'monthly')],
-            'direct_weekly'         => ['operations' => $this->buildDirectOps($start, $end, 'weekly')],
-            default                 => ['operations' => $this->buildDirectOps($start, $end, 'daily')],
-        };
+        return ['operations' => [[
+            'type' => '+',
+            'granularity' => 'daily',
+            'start' => $start,
+            'end' => $end,
+        ]]];
     }
 
     private function calculateDirectCost(DateTime $start, DateTime $end, string $granularity): int
@@ -260,26 +389,26 @@ class IntelligentAggregationService
         $days = $start->diff($end)->days + 1;
 
         return match ($granularity) {
-            'hourly'     => $days * 24,
-            'daily'      => $days,
-            'weekly'     => (int)ceil($days / 7),
-            'monthly'    => (int)ceil($days / 30),
-            'quarterly'  => (int)ceil($days / 90),
-            'yearly'     => (int)ceil($days / 365),
-            default      => $days,
+            'hourly' => $days * 24,
+            'daily' => $days,
+            'weekly' => (int) ceil($days / 7),
+            'monthly' => (int) ceil($days / 30),
+            'quarterly' => (int) ceil($days / 90),
+            'yearly' => (int) ceil($days / 365),
+            default => $days,
         };
     }
 
     private function calculateYearlySubtractionCost(DateTime $start, DateTime $end): int
     {
         // Count years touched + estimated cost of excluding edges with optimal granularity
-        $startYear = (int)$start->format('Y');
-        $endYear   = (int)$end->format('Y');
+        $startYear = (int) $start->format('Y');
+        $endYear = (int) $end->format('Y');
         $cost = 0;
 
         for ($year = $startYear; $year <= $endYear; $year++) {
             $yearStart = new DateTime("{$year}-01-01");
-            $yearEnd   = new DateTime("{$year}-12-31");
+            $yearEnd = new DateTime("{$year}-12-31");
 
             $overlapDays = $this->getOverlapDays($yearStart, $yearEnd, $start, $end);
 
@@ -300,7 +429,7 @@ class IntelligentAggregationService
             } else {
                 // partial year: cheaper of monthly vs daily vs weekly vs quarterly
                 $periodStart = max($yearStart, $start);
-                $periodEnd   = min($yearEnd, $end);
+                $periodEnd = min($yearEnd, $end);
                 $cost += min(
                     $this->calculateDirectCost($periodStart, $periodEnd, 'monthly'),
                     $this->calculateDirectCost($periodStart, $periodEnd, 'weekly'),
@@ -338,7 +467,7 @@ class IntelligentAggregationService
             } else {
                 // partial quarter
                 $periodStart = max($qStart, $start);
-                $periodEnd   = min($qEnd, $end);
+                $periodEnd = min($qEnd, $end);
                 $cost += min(
                     $this->calculateDirectCost($periodStart, $periodEnd, 'monthly'),
                     $this->calculateDirectCost($periodStart, $periodEnd, 'weekly'),
@@ -381,12 +510,12 @@ class IntelligentAggregationService
     private function buildYearlySubtractionOps(DateTime $start, DateTime $end): array
     {
         $ops = [];
-        $startYear = (int)$start->format('Y');
-        $endYear   = (int)$end->format('Y');
+        $startYear = (int) $start->format('Y');
+        $endYear = (int) $end->format('Y');
 
         for ($year = $startYear; $year <= $endYear; $year++) {
             $yStart = new DateTime("{$year}-01-01");
-            $yEnd   = new DateTime("{$year}-12-31");
+            $yEnd = new DateTime("{$year}-12-31");
 
             $overlapDays = $this->getOverlapDays($yStart, $yEnd, $start, $end);
 
@@ -411,7 +540,7 @@ class IntelligentAggregationService
             } else {
                 // partial year -> recurse for best plan inside that year slice
                 $periodStart = max($yStart, $start);
-                $periodEnd   = min($yEnd, $end);
+                $periodEnd = min($yEnd, $end);
                 $ops = array_merge($ops, $this->buildIntelligentStrategy($periodStart, $periodEnd)['operations']);
             }
         }
@@ -450,7 +579,7 @@ class IntelligentAggregationService
                 }
             } else {
                 $periodStart = max($qStart, $start);
-                $periodEnd   = min($qEnd, $end);
+                $periodEnd = min($qEnd, $end);
                 $ops = array_merge($ops, $this->buildIntelligentStrategy($periodStart, $periodEnd)['operations']);
             }
         }
@@ -489,7 +618,7 @@ class IntelligentAggregationService
                 }
             } else {
                 $periodStart = max($mStart, $start);
-                $periodEnd   = min($mEnd, $end);
+                $periodEnd = min($mEnd, $end);
                 $ops = array_merge($ops, $this->buildIntelligentStrategy($periodStart, $periodEnd)['operations']);
             }
         }
@@ -503,12 +632,14 @@ class IntelligentAggregationService
 
         // tiny: daily
         if ($days <= 3) {
-            return [[
-                'type' => '-',
-                'granularity' => 'daily',
-                'start' => $start,
-                'end' => $end
-            ]];
+            return [
+                [
+                    'type' => '-',
+                    'granularity' => 'daily',
+                    'start' => $start,
+                    'end' => $end
+                ]
+            ];
         }
 
         // quarterly aligned?
@@ -555,8 +686,8 @@ class IntelligentAggregationService
                         'start' => clone $current,
                         'end' => $monthEnd,
                         'metadata' => [
-                            'year_num' => (int)$current->format('Y'),
-                            'month_num' => (int)$current->format('m')
+                            'year_num' => (int) $current->format('Y'),
+                            'month_num' => (int) $current->format('m')
                         ]
                     ];
                     $current = (clone $monthEnd)->modify('+1 day');
@@ -587,8 +718,8 @@ class IntelligentAggregationService
                         'start' => clone $current,
                         'end' => $wEnd,
                         'metadata' => [
-                            'year_num' => (int)$current->format('o'),
-                            'week_num' => (int)$current->format('W')
+                            'year_num' => (int) $current->format('o'),
+                            'week_num' => (int) $current->format('W')
                         ]
                     ];
                     $current = (clone $wEnd)->modify('+1 day');
@@ -611,12 +742,14 @@ class IntelligentAggregationService
         }
 
         // fallback daily
-        return [[
-            'type' => '-',
-            'granularity' => 'daily',
-            'start' => $start,
-            'end' => $end
-        ]];
+        return [
+            [
+                'type' => '-',
+                'granularity' => 'daily',
+                'start' => $start,
+                'end' => $end
+            ]
+        ];
     }
 
     private function getOptimalExclusionCost(DateTime $start, DateTime $end): int
@@ -633,7 +766,7 @@ class IntelligentAggregationService
             $current = clone $start;
 
             while ($this->isQuarterStart($current) && $current <= $end) {
-                [,,, $qEnd] = $this->quarterInfo($current);
+                [, , , $qEnd] = $this->quarterInfo($current);
                 if ($qEnd <= $end) {
                     $quarters++;
                     $current = (clone $qEnd)->modify('+1 day');
@@ -667,7 +800,7 @@ class IntelligentAggregationService
 
         // weekly aligned
         if ($start->format('N') == 1 && $days >= 7) {
-            $weeks = (int)floor($days / 7);
+            $weeks = (int) floor($days / 7);
             $rem = $days % 7;
             return min($days, $weeks + $rem);
         }
@@ -677,18 +810,20 @@ class IntelligentAggregationService
 
     private function buildDirectOps(DateTime $start, DateTime $end, string $granularity): array
     {
-        return [[
-            'type' => '+',
-            'granularity' => $granularity,
-            'start' => $start,
-            'end' => $end
-        ]];
+        return [
+            [
+                'type' => '+',
+                'granularity' => $granularity,
+                'start' => $start,
+                'end' => $end
+            ]
+        ];
     }
 
     private function getOverlapDays(DateTime $p1Start, DateTime $p1End, DateTime $p2Start, DateTime $p2End): int
     {
         $overlapStart = max($p1Start, $p2Start);
-        $overlapEnd   = min($p1End, $p2End);
+        $overlapEnd = min($p1End, $p2End);
 
         if ($overlapStart > $overlapEnd) {
             return 0;
@@ -730,7 +865,7 @@ class IntelligentAggregationService
     {
         $granularity = $operation['granularity'];
         $start = $operation['start'];
-        $end   = $operation['end'];
+        $end = $operation['end'];
 
         // Store filtering + other filters
         foreach ($request['filters'] as $k => $v) {
@@ -756,7 +891,7 @@ class IntelligentAggregationService
             $query->where(function (Builder $q) use ($start, $end) {
                 // overlap condition: (week_start <= end) AND (week_end >= start)
                 $q->whereDate('week_start_date', '<=', $end->format('Y-m-d'))
-                    ->whereDate('week_end_date',   '>=', $start->format('Y-m-d'));
+                    ->whereDate('week_end_date', '>=', $start->format('Y-m-d'));
             });
             return;
         }
@@ -776,7 +911,7 @@ class IntelligentAggregationService
         if ($granularity === 'quarterly') {
             $query->where(function (Builder $q) use ($start, $end) {
                 $q->whereDate('quarter_start_date', '<=', $end->format('Y-m-d'))
-                    ->whereDate('quarter_end_date',   '>=', $start->format('Y-m-d'));
+                    ->whereDate('quarter_end_date', '>=', $start->format('Y-m-d'));
             });
             return;
         }
@@ -964,7 +1099,7 @@ class IntelligentAggregationService
             $a = $m['alias'];
             if (isset($row[$a]) && is_numeric($row[$a])) {
                 // float cast is safe for sums; if you need exact currency, use decimal strings + bc math.
-                $row[$a] = (float)$row[$a];
+                $row[$a] = (float) $row[$a];
             }
         }
         return $row;
@@ -975,7 +1110,7 @@ class IntelligentAggregationService
         foreach ($metrics as $metric) {
             $alias = $metric['alias'];
             if (isset($row1[$alias]) && isset($row2[$alias]) && is_numeric($row1[$alias]) && is_numeric($row2[$alias])) {
-                $row1[$alias] = (float)$row1[$alias] + (float)$row2[$alias];
+                $row1[$alias] = (float) $row1[$alias] + (float) $row2[$alias];
             }
         }
         return $row1;
@@ -992,7 +1127,7 @@ class IntelligentAggregationService
             $alias = $metric['alias'];
 
             if (isset($row1[$alias]) && isset($row2[$alias]) && is_numeric($row1[$alias]) && is_numeric($row2[$alias])) {
-                $row1[$alias] = max(0.0, (float)$row1[$alias] - (float)$row2[$alias]);
+                $row1[$alias] = max(0.0, (float) $row1[$alias] - (float) $row2[$alias]);
             }
         }
         return $row1;
@@ -1042,7 +1177,7 @@ class IntelligentAggregationService
         }
 
         if ($request['limit']) {
-            $rows = array_slice($rows, 0, (int)$request['limit']);
+            $rows = array_slice($rows, 0, (int) $request['limit']);
         }
 
         return $rows;
@@ -1055,10 +1190,11 @@ class IntelligentAggregationService
         $clauses = [];
 
         foreach ($parts as $p) {
-            if ($p === '') continue;
+            if ($p === '')
+                continue;
             $bits = preg_split('/\s+/', $p);
             $field = $bits[0] ?? '';
-            $dir   = strtoupper($bits[1] ?? 'ASC');
+            $dir = strtoupper($bits[1] ?? 'ASC');
             $dir = ($dir === 'DESC') ? 'DESC' : 'ASC';
             if ($field !== '') {
                 $clauses[] = [$field, $dir];
@@ -1096,7 +1232,7 @@ class IntelligentAggregationService
 
     private function executeStreamingTopN(array $request, array $strategy): array
     {
-        $limit = (int)$request['limit'];
+        $limit = (int) $request['limit'];
         $clauses = $this->parseOrderBy($request['order_by']);
         [$sortField, $dir] = $clauses[0];
 
@@ -1123,7 +1259,7 @@ class IntelligentAggregationService
 
         foreach ($rows as $row) {
             $val = $row[$sortField] ?? 0;
-            $priority = (float)$val;
+            $priority = (float) $val;
 
             // For DESC we want highest; SplPriorityQueue extracts highest first.
             // For ASC we invert.
@@ -1150,14 +1286,14 @@ class IntelligentAggregationService
     {
         $parts = [];
 
-        $parts[] = (string)($row['franchise_store'] ?? '');
+        $parts[] = (string) ($row['franchise_store'] ?? '');
 
         foreach ($request['group_by'] as $dim) {
-            $parts[] = (string)($row[$dim] ?? '');
+            $parts[] = (string) ($row[$dim] ?? '');
         }
 
         if ($request['summary_type'] === 'item') {
-            $parts[] = (string)($row['item_id'] ?? '');
+            $parts[] = (string) ($row['item_id'] ?? '');
         }
 
         if ($request['group_time']) {
@@ -1165,7 +1301,7 @@ class IntelligentAggregationService
             // include any time fields that might exist on the row
             foreach (['business_date', 'hour', 'year_num', 'quarter_num', 'month_num', 'week_num'] as $t) {
                 if (array_key_exists($t, $row)) {
-                    $parts[] = (string)$row[$t];
+                    $parts[] = (string) $row[$t];
                 }
             }
         }
@@ -1180,8 +1316,8 @@ class IntelligentAggregationService
     private function listYearsBetween(DateTime $start, DateTime $end): array
     {
         $years = [];
-        $sy = (int)$start->format('Y');
-        $ey = (int)$end->format('Y');
+        $sy = (int) $start->format('Y');
+        $ey = (int) $end->format('Y');
         for ($y = $sy; $y <= $ey; $y++) {
             $years[] = $y;
         }
@@ -1196,12 +1332,12 @@ class IntelligentAggregationService
         $cur->setTime(0, 0, 0);
 
         // Advance to Monday of current ISO week
-        $dow = (int)$cur->format('N');
+        $dow = (int) $cur->format('N');
         $cur->modify('-' . ($dow - 1) . ' days');
 
         while ($cur <= $end) {
-            $isoYear = (int)$cur->format('o');
-            $isoWeek = (int)$cur->format('W');
+            $isoYear = (int) $cur->format('o');
+            $isoWeek = (int) $cur->format('W');
             $pairs[] = [$isoYear, $isoWeek];
             $cur->modify('+7 days');
         }
@@ -1221,7 +1357,7 @@ class IntelligentAggregationService
         $endMonth = new DateTime($end->format('Y-m-01'));
 
         while ($cur <= $endMonth) {
-            $pairs[] = [(int)$cur->format('Y'), (int)$cur->format('m')];
+            $pairs[] = [(int) $cur->format('Y'), (int) $cur->format('m')];
             $cur->modify('+1 month');
         }
 
@@ -1236,8 +1372,8 @@ class IntelligentAggregationService
 
         while ($cur <= $endMonth) {
             $mStart = new DateTime($cur->format('Y-m-01'));
-            $mEnd   = new DateTime($cur->format('Y-m-t'));
-            $out[]  = [(int)$cur->format('Y'), (int)$cur->format('m'), $mStart, $mEnd];
+            $mEnd = new DateTime($cur->format('Y-m-t'));
+            $out[] = [(int) $cur->format('Y'), (int) $cur->format('m'), $mStart, $mEnd];
             $cur->modify('+1 month');
         }
 
@@ -1283,9 +1419,9 @@ class IntelligentAggregationService
 
     private function quarterInfo(DateTime $d): array
     {
-        $y = (int)$d->format('Y');
-        $m = (int)$d->format('m');
-        $q = (int)floor(($m - 1) / 3) + 1;
+        $y = (int) $d->format('Y');
+        $m = (int) $d->format('m');
+        $q = (int) floor(($m - 1) / 3) + 1;
 
         $startMonth = (($q - 1) * 3) + 1;
         $qStart = new DateTime(sprintf('%04d-%02d-01', $y, $startMonth));
@@ -1296,15 +1432,15 @@ class IntelligentAggregationService
 
     private function isQuarterStart(DateTime $d): bool
     {
-        $m = (int)$d->format('m');
-        $day = (int)$d->format('d');
+        $m = (int) $d->format('m');
+        $day = (int) $d->format('d');
         return $day === 1 && in_array($m, [1, 4, 7, 10], true);
     }
 
     private function sameQuarter(DateTime $a, DateTime $b): bool
     {
-        [$ya, $qa] = [$a->format('Y'), (int)floor(((int)$a->format('m') - 1) / 3) + 1];
-        [$yb, $qb] = [$b->format('Y'), (int)floor(((int)$b->format('m') - 1) / 3) + 1];
+        [$ya, $qa] = [$a->format('Y'), (int) floor(((int) $a->format('m') - 1) / 3) + 1];
+        [$yb, $qb] = [$b->format('Y'), (int) floor(((int) $b->format('m') - 1) / 3) + 1];
         return $ya === $yb && $qa === $qb;
     }
 
@@ -1319,13 +1455,13 @@ class IntelligentAggregationService
         foreach ($strategy['operations'] as $op) {
             $days = $op['start']->diff($op['end'])->days + 1;
             $total += match ($op['granularity']) {
-                'yearly'     => 1,
-                'quarterly'  => 1,
-                'monthly'    => 1,
-                'weekly'     => 1,
-                'daily'      => $days,
-                'hourly'     => $days * 24,
-                default      => $days
+                'yearly' => 1,
+                'quarterly' => 1,
+                'monthly' => 1,
+                'weekly' => 1,
+                'daily' => $days,
+                'hourly' => $days * 24,
+                default => $days
             };
         }
 

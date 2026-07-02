@@ -10,6 +10,12 @@ $dataSubject = $devMode
     ? 'data.testing.v1.>'
     : 'data.v1.>';
 
+$hiringSubject = $devMode
+    ? 'hiring.testing.v1.>'
+    : 'hiring.v1.>';
+$notificationsSubject = $devMode
+? 'notifications.testing.v1.>'
+: 'notifications.v1.>';
 return [
     'dev_mode' => $devMode,
     'host' => env('NATS_HOST', '127.0.0.1'),
@@ -19,6 +25,15 @@ return [
     'pass' => env('NATS_PASS'),
     'token' => env('NATS_TOKEN'),
 
+    'jetstream' => [
+        'stream' => $devMode
+            ? env('NATS_NOTIFICATIONS_STREAM', 'NOTIFICATIONS_TESTING_EVENTS')
+            : env('NATS_NOTIFICATIONS_STREAM', 'NOTIFICATIONS_EVENTS'),
+
+        'subjects' => [
+            $notificationsSubject,
+        ],
+    ],
 
 
     'publishers' => [
@@ -28,6 +43,12 @@ return [
                 : env('NATS_DATA_STREAM', 'DATA_EVENTS'),
             'subjects' => [$dataSubject],
         ],
+        [
+        'name' => $devMode
+            ? env('NATS_NOTIFICATIONS_STREAM', 'NOTIFICATIONS_TESTING_EVENTS')
+            : env('NATS_NOTIFICATIONS_STREAM', 'NOTIFICATIONS_EVENTS'),
+        'subjects' => [$notificationsSubject],
+         ],
     ],
     /**
      * Add streams here as new projects appear.
@@ -39,7 +60,11 @@ return [
             'durable' => $devMode ? env('NATS_AUTH_DURABLE', 'DATA_AUTH_TESTING_CONSUMER') : env('NATS_AUTH_DURABLE', 'DATA_AUTH_CONSUMER'),
             'filter_subject' => $authSubject, // match your stream subjects
         ],
-
+        [
+            'name' => $devMode ? env('NATS_HIRING_STREAM', 'HIRING_TESTING_EVENTS') : env('NATS_HIRING_STREAM', 'HIRING_EVENTS'),
+            'durable' => $devMode ? env('NATS_HIRING_DURABLE', 'DATA_HIRING_TESTING_CONSUMER') : env('NATS_HIRING_DURABLE', 'DATA_HIRING_CONSUMER'),
+            'filter_subject' => $hiringSubject, // match your stream subjects
+        ],
         // Example additional stream later:
         // [
         //   'name' => env('NATS_PROJECT_STREAM', 'PROJECT_EVENTS'),

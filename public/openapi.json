@@ -23,34 +23,15 @@
             "description": "Manual CSV and ZIP data imports"
         },
         {
-            "name": "Key Engine - Keys",
-            "description": "Manage data keys and store rules"
+            "name": "Goal Metrics",
+            "description": "Metric definitions used as goal types"
         },
         {
-            "name": "Key Engine - Values",
-            "description": "Store and query entered key values"
-        },
-        {
-            "name": "Key Engine - Due",
-            "description": "Resolve which keys are due"
-        },
-        {
-            "name": "Employee Debriefs",
-            "description": "Employee debrief notes per store"
-        },
-        {
-            "name": "Key Engine - Tags",
-            "description": "Manage key tags"
+            "name": "Goals",
+            "description": "Store-scoped weekly targets for goal metrics"
         }
     ],
     "components": {
-        "securitySchemes": {
-            "BearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT"
-            }
-        },
         "schemas": {
             "ErrorResponse": {
                 "type": "object",
@@ -182,11 +163,18 @@
                         "type": "integer",
                         "description": "User who created the note"
                     },
-                    "employee_name": {
-                        "type": "string"
+                    "employee_id": {
+                        "type": "integer",
+                        "description": "Employee referenced by the note"
                     },
                     "note": {
                         "type": "string"
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EmployeeDebriefAttachment"
+                        }
                     },
                     "date": {
                         "type": "string",
@@ -210,7 +198,7 @@
                     "id",
                     "store_id",
                     "user_id",
-                    "employee_name",
+                    "employee_id",
                     "note",
                     "date"
                 ]
@@ -219,20 +207,26 @@
             "EmployeeDebriefCreate": {
                 "type": "object",
                 "properties": {
-                    "employee_name": {
-                        "type": "string",
-                        "maxLength": 255
+                    "employee_id": {
+                        "type": "integer"
                     },
                     "note": {
                         "type": "string",
                         "maxLength": 5000
+                    },
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "binary"
+                        }
                     },
                     "date": {
                         "type": "string",
                         "format": "date"
                     }
                 },
-                "required": ["employee_name", "note", "date"]
+                "required": ["employee_id", "note", "date"]
             },
 
             "EmployeeDebriefBulkCreate": {
@@ -268,6 +262,30 @@
                 "required": ["data", "links", "meta"]
             },
 
+            "EmployeeDebriefRangeDay": {
+                "type": "array",
+                "items": {
+                    "$ref": "#/components/schemas/EmployeeDebrief"
+                },
+                "description": "Array of debrief notes for a specific date"
+            },
+
+            "EmployeeDebriefRangeResponse": {
+                "type": "object",
+                "properties": {
+                    "store_id": { "type": "string" },
+                    "from": { "type": "string", "format": "date" },
+                    "to": { "type": "string", "format": "date" },
+                    "days": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "$ref": "#/components/schemas/EmployeeDebriefRangeDay"
+                        }
+                    }
+                },
+                "required": ["store_id", "from", "to", "days"]
+            },
+
             "UserSimple": {
                 "type": "object",
                 "properties": {
@@ -287,6 +305,7 @@
                 "properties": {
                     "hour": { "type": "integer", "minimum": 0, "maximum": 23 },
                     "royalty_obligation": { "type": "number" },
+                    "adjusted_royalty_obligation": { "type": "number" },
                     "phone_sales": { "type": "number" },
                     "call_center_sales": { "type": "number" },
                     "drive_thru_sales": { "type": "number" },
@@ -299,6 +318,7 @@
                 "required": [
                     "hour",
                     "royalty_obligation",
+                    "adjusted_royalty_obligation",
                     "phone_sales",
                     "call_center_sales",
                     "drive_thru_sales",
@@ -323,12 +343,35 @@
                 },
                 "required": ["count", "sales"]
             },
+            "DsprLiteDayRefundedOrdersAverage": {
+                "type": "object",
+                "properties": {
+                    "count": { "type": "number" },
+                    "sales": { "type": "number" }
+                },
+                "required": ["count", "sales"]
+            },
             "DsprLiteDayHnr": {
                 "type": "object",
                 "properties": {
                     "hnr_transactions": { "type": "integer" },
                     "hnr_broken_promises": { "type": "integer" },
                     "hnr_promise_met": { "type": "integer" },
+                    "hnr_promise_met_percent": { "type": "number" }
+                },
+                "required": [
+                    "hnr_transactions",
+                    "hnr_broken_promises",
+                    "hnr_promise_met",
+                    "hnr_promise_met_percent"
+                ]
+            },
+            "DsprLiteDayHnrAverage": {
+                "type": "object",
+                "properties": {
+                    "hnr_transactions": { "type": "number" },
+                    "hnr_broken_promises": { "type": "number" },
+                    "hnr_promise_met": { "type": "number" },
                     "hnr_promise_met_percent": { "type": "number" }
                 },
                 "required": [
@@ -346,7 +389,7 @@
                 },
                 "required": ["alta_inventory", "normal"]
             },
-            "DsprLiteDayPortal": {
+            "DsprLitePortalMetrics": {
                 "type": "object",
                 "properties": {
                     "portal_eligible_orders": { "type": "integer" },
@@ -363,13 +406,111 @@
                     "in_portal_on_time_percent"
                 ]
             },
+            "DsprLitePortalMetricsAverage": {
+                "type": "object",
+                "properties": {
+                    "portal_eligible_orders": { "type": "number" },
+                    "portal_used_orders": { "type": "number" },
+                    "portal_on_time_orders": { "type": "number" },
+                    "put_into_portal_percent": { "type": "number" },
+                    "in_portal_on_time_percent": { "type": "number" }
+                },
+                "required": [
+                    "portal_eligible_orders",
+                    "portal_used_orders",
+                    "portal_on_time_orders",
+                    "put_into_portal_percent",
+                    "in_portal_on_time_percent"
+                ]
+            },
+            "DsprLiteDayPortal": {
+                "type": "object",
+                "properties": {
+                    "portal_eligible_orders": { "type": "integer" },
+                    "portal_used_orders": { "type": "integer" },
+                    "portal_on_time_orders": { "type": "integer" },
+                    "put_into_portal_percent": { "type": "number" },
+                    "in_portal_on_time_percent": { "type": "number" },
+                    "week_to_date": {
+                        "$ref": "#/components/schemas/DsprLitePortalMetrics"
+                    },
+                    "week_to_date_avg": {
+                        "$ref": "#/components/schemas/DsprLitePortalMetricsAverage"
+                    }
+                },
+                "required": [
+                    "portal_eligible_orders",
+                    "portal_used_orders",
+                    "portal_on_time_orders",
+                    "put_into_portal_percent",
+                    "in_portal_on_time_percent",
+                    "week_to_date",
+                    "week_to_date_avg"
+                ]
+            },
             "DsprLiteDayTotals": {
                 "type": "object",
                 "properties": {
                     "hourly_sales_and_channels": {
                         "$ref": "#/components/schemas/DsprLiteHourlySalesByChannel"
                     },
+                    "hourly_sales_and_channels_week_to_date_avg": {
+                        "$ref": "#/components/schemas/DsprLiteHourlySalesByChannel"
+                    },
+                    "hourly_sales_and_channels_week_to_date_sum": {
+                        "$ref": "#/components/schemas/DsprLiteHourlySalesByChannel"
+                    },
                     "total_sales": {
+                        "type": "object",
+                        "properties": {
+                            "royalty_obligation": { "type": "number" },
+                            "phone_sales": { "type": "number" },
+                            "call_center_sales": { "type": "number" },
+                            "drive_thru_sales": { "type": "number" },
+                            "website_sales": { "type": "number" },
+                            "mobile_sales": { "type": "number" },
+                            "doordash_sales": { "type": "number" },
+                            "ubereats_sales": { "type": "number" },
+                            "grubhub_sales": { "type": "number" }
+                        },
+                        "required": [
+                            "royalty_obligation",
+                            "phone_sales",
+                            "call_center_sales",
+                            "drive_thru_sales",
+                            "website_sales",
+                            "mobile_sales",
+                            "doordash_sales",
+                            "ubereats_sales",
+                            "grubhub_sales"
+                        ]
+                    },
+                    "total_sales_week_to_date": {
+                        "type": "object",
+                        "properties": {
+                            "royalty_obligation": { "type": "number" },
+                            "phone_sales": { "type": "number" },
+                            "call_center_sales": { "type": "number" },
+                            "drive_thru_sales": { "type": "number" },
+                            "website_sales": { "type": "number" },
+                            "mobile_sales": { "type": "number" },
+                            "doordash_sales": { "type": "number" },
+                            "ubereats_sales": { "type": "number" },
+                            "grubhub_sales": { "type": "number" }
+                        },
+                        "required": [
+                            "royalty_obligation",
+                            "phone_sales",
+                            "call_center_sales",
+                            "drive_thru_sales",
+                            "website_sales",
+                            "mobile_sales",
+                            "doordash_sales",
+                            "ubereats_sales",
+                            "grubhub_sales"
+                        ]
+                    },
+                    "total_sales_week_to_date_avg": {
                         "type": "object",
                         "properties": {
                             "royalty_obligation": { "type": "number" },
@@ -399,38 +540,90 @@
                     "total_gross_sales": { "type": "number" },
                     "total_digital_sales": { "type": "number" },
                     "total_cash_sales": { "type": "number" },
+                    "total_cash_sales_week_to_date": { "type": "number" },
+                    "total_cash_sales_week_to_date_avg": { "type": "number" },
                     "total_deposit": { "type": "number" },
+                    "total_deposit_week_to_date": { "type": "number" },
+                    "total_deposit_week_to_date_avg": { "type": "number" },
                     "over_short": { "type": "number" },
+                    "over_short_week_to_date": { "type": "number" },
+                    "over_short_week_to_date_avg": { "type": "number" },
                     "refunded_orders": {
                         "$ref": "#/components/schemas/DsprLiteDayRefundedOrders"
                     },
+                    "refunded_orders_week_to_date": {
+                        "$ref": "#/components/schemas/DsprLiteDayRefundedOrders"
+                    },
+                    "refunded_orders_week_to_date_avg": {
+                        "$ref": "#/components/schemas/DsprLiteDayRefundedOrdersAverage"
+                    },
                     "customer_count": { "type": "integer" },
+                    "customer_count_week_to_date": { "type": "integer" },
+                    "customer_count_week_to_date_avg": { "type": "number" },
                     "waste": {
                         "$ref": "#/components/schemas/DsprLiteDayWaste"
                     },
+                    "waste_week_to_date": {
+                        "$ref": "#/components/schemas/DsprLiteDayWaste"
+                    },
+                    "waste_week_to_date_avg": {
+                        "$ref": "#/components/schemas/DsprLiteDayWaste"
+                    },
                     "total_tips": { "type": "number" },
+                    "total_tips_week_to_date": { "type": "number" },
+                    "total_tips_week_to_date_avg": { "type": "number" },
                     "hnr": { "$ref": "#/components/schemas/DsprLiteDayHnr" },
+                    "hnr_week_to_date": {
+                        "$ref": "#/components/schemas/DsprLiteDayHnr"
+                    },
+                    "hnr_week_to_date_avg": {
+                        "$ref": "#/components/schemas/DsprLiteDayHnrAverage"
+                    },
                     "labor": { "type": "number" },
+                    "labor_week_to_date": { "type": "number" },
+                    "labor_week_to_date_avg": { "type": "number" },
                     "portal": {
                         "$ref": "#/components/schemas/DsprLiteDayPortal"
                     }
                 },
                 "required": [
                     "hourly_sales_and_channels",
+                    "hourly_sales_and_channels_week_to_date_avg",
+                    "hourly_sales_and_channels_week_to_date_sum",
                     "total_sales",
+                    "total_sales_week_to_date",
+                    "total_sales_week_to_date_avg",
                     "total_royalty_obligation",
                     "total_net_sales",
                     "total_gross_sales",
                     "total_digital_sales",
                     "total_cash_sales",
+                    "total_cash_sales_week_to_date",
+                    "total_cash_sales_week_to_date_avg",
                     "total_deposit",
+                    "total_deposit_week_to_date",
+                    "total_deposit_week_to_date_avg",
                     "over_short",
+                    "over_short_week_to_date",
+                    "over_short_week_to_date_avg",
                     "refunded_orders",
+                    "refunded_orders_week_to_date",
+                    "refunded_orders_week_to_date_avg",
                     "customer_count",
+                    "customer_count_week_to_date",
+                    "customer_count_week_to_date_avg",
                     "waste",
+                    "waste_week_to_date",
+                    "waste_week_to_date_avg",
                     "total_tips",
+                    "total_tips_week_to_date",
+                    "total_tips_week_to_date_avg",
                     "hnr",
+                    "hnr_week_to_date",
+                    "hnr_week_to_date_avg",
                     "labor",
+                    "labor_week_to_date",
+                    "labor_week_to_date_avg",
                     "portal"
                 ]
             },
@@ -451,12 +644,18 @@
                             },
                             "same_week_last_year_by_day": {
                                 "$ref": "#/components/schemas/DsprLiteSalesByDay"
-                            }
+                            },
+                            "this_week_total": { "type": "number" },
+                            "previous_week_total": { "type": "number" },
+                            "same_week_last_year_total": { "type": "number" }
                         },
                         "required": [
                             "this_week_by_day",
                             "previous_week_by_day",
-                            "same_week_last_year_by_day"
+                            "same_week_last_year_by_day",
+                            "this_week_total",
+                            "previous_week_total",
+                            "same_week_last_year_total"
                         ]
                     },
                     "top": {
@@ -465,12 +664,16 @@
                             "top_5_items_sales_for_day": {
                                 "$ref": "#/components/schemas/DsprLiteTopItems"
                             },
+                            "top_5_items_sales_week_to_date": {
+                                "$ref": "#/components/schemas/DsprLiteTopItems"
+                            },
                             "top_3_ingredients_used": {
                                 "$ref": "#/components/schemas/DsprLiteTopIngredients"
                             }
                         },
                         "required": [
                             "top_5_items_sales_for_day",
+                            "top_5_items_sales_week_to_date",
                             "top_3_ingredients_used"
                         ]
                     },
@@ -544,6 +747,13 @@
                         "minimum": 1,
                         "maximum": 12,
                         "nullable": true
+                    },
+
+                    "due_time": {
+                        "type": "string",
+                        "format": "time",
+                        "nullable": true,
+                        "description": "Time the key is due (HH:mm or HH:mm:ss)"
                     },
 
                     "starts_at": {
@@ -683,6 +893,13 @@
                         "nullable": true
                     },
 
+                    "time": {
+                        "type": "string",
+                        "format": "time",
+                        "nullable": true,
+                        "description": "Optional due time in HH:mm format"
+                    },
+
                     "starts_at": {
                         "type": "string",
                         "format": "date"
@@ -753,6 +970,13 @@
                         "type": "integer"
                     },
 
+                    "due_time": {
+                        "type": "string",
+                        "format": "time",
+                        "nullable": true,
+                        "description": "Time the key is due (HH:mm:ss)"
+                    },
+
                     "mode": {
                         "type": "string",
                         "enum": ["date_specific", "monthly_any_day"]
@@ -783,9 +1007,13 @@
                     },
 
                     "value": {
-                        "type": "object",
                         "nullable": true,
-                        "additionalProperties": true
+                        "description": "Existing EnteredKeyValue when filled is true, including the submitting user's name.",
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/EnteredKeyValue"
+                            }
+                        ]
                     }
                 },
 
@@ -795,7 +1023,22 @@
                     "data_type",
                     "fill_mode",
                     "filled"
-                ]
+                ],
+                "example": {
+                    "key_id": 12,
+                    "label": "Labor Hours",
+                    "data_type": "number",
+                    "frequency_type": "daily",
+                    "interval": 1,
+                    "due_time": "14:30:00",
+                    "mode": "date_specific",
+                    "fill_mode": "store_once",
+                    "user_id": null,
+                    "user_name": null,
+                    "role_name": null,
+                    "filled": false,
+                    "value": null
+                }
             },
             "Tag": {
                 "type": "object",
@@ -821,6 +1064,42 @@
                 },
                 "required": ["id", "name"]
             },
+            "Employee": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer"
+                    },
+                    "first_name": {
+                        "type": "string",
+                        "maxLength": 100
+                    },
+                    "middle_name": {
+                        "type": "string",
+                        "maxLength": 100,
+                        "nullable": true
+                    },
+                    "last_name": {
+                        "type": "string",
+                        "maxLength": 100
+                    },
+                    "store_id": {
+                        "type": "string",
+                        "maxLength": 50
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": ["id", "first_name", "last_name", "store_id"]
+            },
             "DueOnDateResponse": {
                 "type": "object",
                 "properties": {
@@ -829,9 +1108,13 @@
                     "items": {
                         "type": "array",
                         "items": { "$ref": "#/components/schemas/DueItem" }
+                    },
+                    "employees": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Employee" }
                     }
                 },
-                "required": ["store_id", "date", "items"]
+                "required": ["store_id", "date", "items", "employees"]
             },
             "DueRangeDay": {
                 "type": "array",
@@ -877,6 +1160,15 @@
                         "type": "string",
                         "nullable": true,
                         "maxLength": 2000
+                    },
+
+                    "attachments": {
+                        "type": "array",
+                        "description": "Array of uploaded files. Supported only in multipart/form-data requests.",
+                        "items": {
+                            "type": "file",
+                            "description": "File"
+                        }
                     }
                 },
 
@@ -913,6 +1205,13 @@
                         "description": "User that filled the entry"
                     },
 
+                    "user_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true,
+                        "description": "Name of the user that filled the entry"
+                    },
+
                     "entry_date": {
                         "type": "string",
                         "format": "date"
@@ -936,6 +1235,13 @@
                         "description": "Optional note even if value is empty"
                     },
 
+                    "attachments": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EnteredKeyValueAttachment"
+                        }
+                    },
+
                     "created_at": {
                         "type": "string",
                         "format": "date-time",
@@ -954,6 +1260,100 @@
                 },
 
                 "required": ["id", "key_id", "store_id", "entry_date"]
+            },
+            "EnteredKeyValueAttachment": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "entered_key_value_id": { "type": "integer" },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Stored relative file path on the disk"
+                    },
+                    "disk": {
+                        "type": "string",
+                        "description": "Storage disk used when saving this attachment"
+                    },
+                    "original_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Original uploaded filename"
+                    },
+                    "mime_type": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "MIME type reported by the client upload"
+                    },
+                    "size": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Attachment size in bytes"
+                    },
+                    "attachment_url": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true,
+                        "description": "Public URL resolved from file_path and disk"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": ["id", "entered_key_value_id", "file_path", "disk"]
+            },
+            "EmployeeDebriefAttachment": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "employee_debrief_id": { "type": "integer" },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Stored relative file path on the disk"
+                    },
+                    "disk": {
+                        "type": "string",
+                        "description": "Storage disk used when saving this attachment"
+                    },
+                    "original_name": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Original uploaded filename"
+                    },
+                    "mime_type": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "MIME type reported by the client upload"
+                    },
+                    "size": {
+                        "type": "integer",
+                        "nullable": true,
+                        "description": "Attachment size in bytes"
+                    },
+                    "attachment_url": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true,
+                        "description": "Public URL resolved from file_path and disk"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "nullable": true
+                    }
+                },
+                "required": ["id", "employee_debrief_id", "file_path", "disk"]
             },
             "EnteredKeyValuePagination": {
                 "type": "object",
@@ -1208,6 +1608,175 @@
                     "message": { "type": "string" }
                 },
                 "required": ["success", "message"]
+            },
+
+            "GoalMetric": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "name": { "type": "string", "maxLength": 255 },
+                    "created_at": { "type": "string", "format": "date-time", "nullable": true },
+                    "updated_at": { "type": "string", "format": "date-time", "nullable": true }
+                },
+                "required": ["id", "name"]
+            },
+
+            "Goal": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "integer", "readOnly": true },
+                    "goal_metric_id": { "type": "integer" },
+                    "store_id": { "type": "string" },
+                    "week_start_date": { "type": "string", "format": "date" },
+                    "week_end_date": { "type": "string", "format": "date" },
+                    "goal": { "type": "number", "description": "Decimal goal value (up to 4 decimal places)" },
+                    "metric": { "$ref": "#/components/schemas/GoalMetric" },
+                    "created_at": { "type": "string", "format": "date-time", "nullable": true },
+                    "updated_at": { "type": "string", "format": "date-time", "nullable": true }
+                },
+                "required": ["id", "goal_metric_id", "store_id", "week_start_date", "week_end_date", "goal"]
+            },
+
+            "GoalPagination": {
+                "type": "object",
+                "properties": {
+                    "data": {
+                        "type": "array",
+                        "items": { "$ref": "#/components/schemas/Goal" }
+                    },
+                    "links": { "$ref": "#/components/schemas/PaginationLinks" },
+                    "meta": { "$ref": "#/components/schemas/PaginationMeta" }
+                },
+                "required": ["data", "links", "meta"]
+            },
+
+            "MultiDashboardRequest": {
+                "type": "object",
+                "properties": {
+                    "start_date": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "Start date in YYYY-MM-DD format"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "format": "date",
+                        "description": "End date in YYYY-MM-DD format"
+                    },
+                    "stores": {
+                        "oneOf": [
+                            { "type": "string", "enum": ["all"], "description": "Include all stores in the date range" },
+                            {
+                                "type": "array",
+                                "maxItems": 100,
+                                "items": { "type": "string" },
+                                "description": "Array of store numbers"
+                            }
+                        ]
+                    }
+                },
+                "required": ["start_date", "end_date", "stores"]
+            },
+
+            "MultiDashboardMeta": {
+                "type": "object",
+                "properties": {
+                    "start_date": { "type": "string", "format": "date" },
+                    "end_date": { "type": "string", "format": "date" },
+                    "total_days": { "type": "integer" },
+                    "stores": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "store_count": { "type": "integer" }
+                },
+                "required": ["start_date", "end_date", "total_days", "stores", "store_count"]
+            },
+
+            "MultiDashboardMetrics": {
+                "type": "object",
+                "additionalProperties": { "type": "number" },
+                "description": "All sales and operational metrics (80+ columns from DailyStoreSummary)"
+            },
+
+            "MultiDashboardSupplemental": {
+                "type": "object",
+                "properties": {
+                    "labor_total": { "type": "number" },
+                    "transfers_in_cost": { "type": "number" },
+                    "transfers_out_cost": { "type": "number" },
+                    "non_negotiable_count": { "type": "integer" },
+                    "go_to_calls": {
+                        "type": "array",
+                        "items": { "type": "object", "additionalProperties": true }
+                    }
+                }
+            },
+
+            "MultiDashboardAverages": {
+                "type": "object",
+                "properties": {
+                    "gross_sales_per_store_per_day": { "type": "number" },
+                    "royalty_obligation_per_store_per_day": { "type": "number" },
+                    "net_sales_per_store_per_day": { "type": "number" },
+                    "orders_per_store_per_day": { "type": "number" },
+                    "customer_count_per_store_per_day": { "type": "number" },
+                    "avg_order_value": { "type": "number" },
+                    "portal_usage_rate": { "type": "number" },
+                    "portal_on_time_rate": { "type": "number" },
+                    "digital_penetration": { "type": "number" },
+                    "delivery_rate": { "type": "number" }
+                }
+            },
+
+            "MultiDashboardStoreData": {
+                "type": "object",
+                "properties": {
+                    "totals": { "$ref": "#/components/schemas/MultiDashboardMetrics" },
+                    "averages": { "$ref": "#/components/schemas/MultiDashboardAverages" },
+                    "supplemental": { "$ref": "#/components/schemas/MultiDashboardSupplemental" },
+                    "by_date": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "description": "Full DailyStoreSummary row for this store+date"
+                        }
+                    }
+                }
+            },
+
+            "MultiDashboardDateData": {
+                "type": "object",
+                "properties": {
+                    "totals": { "$ref": "#/components/schemas/MultiDashboardMetrics" },
+                    "by_store": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "description": "Full DailyStoreSummary row for store on this date"
+                        }
+                    }
+                }
+            },
+
+            "MultiDashboardResponse": {
+                "type": "object",
+                "properties": {
+                    "meta": { "$ref": "#/components/schemas/MultiDashboardMeta" },
+                    "totals": { "$ref": "#/components/schemas/MultiDashboardMetrics" },
+                    "averages": { "$ref": "#/components/schemas/MultiDashboardAverages" },
+                    "by_store": {
+                        "type": "object",
+                        "additionalProperties": { "$ref": "#/components/schemas/MultiDashboardStoreData" }
+                    },
+                    "by_date": {
+                        "type": "object",
+                        "additionalProperties": { "$ref": "#/components/schemas/MultiDashboardDateData" }
+                    }
+                },
+                "required": ["meta", "totals", "averages", "by_store", "by_date"]
             }
         }
     },
@@ -1472,6 +2041,76 @@
                                 "schema": {
                                     "type": "object",
                                     "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/reports/multi-dashboard": {
+            "post": {
+                "tags": ["Reports"],
+                "summary": "Multi-store date-range dashboard",
+                "description": "Comprehensive dashboard across multiple stores and date ranges. Returns detailed metrics broken down by store, by date, and cross-store totals with averages.",
+                "operationId": "multiStoreDashboard",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/MultiDashboardRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Multi-store dashboard data with full metrics breakdown",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/MultiDashboardResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error (invalid dates, range > 366 days, too many stores, etc.)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": { "type": "string" },
+                                        "errors": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "array",
+                                                "items": { "type": "string" }
+                                            }
+                                        }
+                                    },
+                                    "required": ["message", "errors"]
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": { "type": "string" }
+                                    }
                                 }
                             }
                         }
@@ -2585,9 +3224,16 @@
                 "requestBody": {
                     "required": true,
                     "content": {
-                        "application/json": {
+                        "multipart/form-data": {
                             "schema": {
                                 "$ref": "#/components/schemas/UpsertValuePayload"
+                            },
+                            "encoding": {
+                                "attachments": {
+                                    "style": "form",
+                                    "explode": true,
+                                    "contentType": "application/octet-stream"
+                                }
                             }
                         }
                     }
@@ -2656,10 +3302,11 @@
                 "requestBody": {
                     "required": true,
                     "content": {
-                        "application/json": {
+                        "multipart/form-data": {
                             "schema": {
                                 "$ref": "#/components/schemas/BulkUpsertValuesRequest"
-                            }
+                            },
+                            "description": "For multipart with file uploads, send bracket-notation form keys per item such as: items[0][key_id], items[0][value_text], and items[0][attachments][] for each file."
                         }
                     }
                 },
@@ -2867,9 +3514,9 @@
                         "schema": { "type": "string" }
                     },
                     {
-                        "name": "employee_name",
+                        "name": "employee_id",
                         "in": "query",
-                        "schema": { "type": "string" }
+                        "schema": { "type": "integer" }
                     },
                     {
                         "name": "date",
@@ -2931,7 +3578,7 @@
                 "requestBody": {
                     "required": true,
                     "content": {
-                        "application/json": {
+                        "multipart/form-data": {
                             "schema": {
                                 "$ref": "#/components/schemas/EmployeeDebriefCreate"
                             }
@@ -2951,6 +3598,99 @@
                     },
                     "422": {
                         "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/stores/{store_id}/employee-debriefs/range": {
+            "get": {
+                "tags": ["Employee Debriefs"],
+                "summary": "Employee debrief notes in date range",
+                "operationId": "employeeDebriefRange",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "employee_id",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "Filter debriefs for one employee"
+                    },
+                    {
+                        "name": "paginated",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Debrief notes grouped by day",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EmployeeDebriefRangeResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error for date range",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -2986,7 +3726,7 @@
                 "requestBody": {
                     "required": true,
                     "content": {
-                        "application/json": {
+                        "multipart/form-data": {
                             "schema": {
                                 "$ref": "#/components/schemas/EmployeeDebriefBulkCreate"
                             }
@@ -3315,6 +4055,345 @@
                                     "type": "object",
                                     "additionalProperties": true
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/goal-metrics": {
+            "get": {
+                "tags": ["Goal Metrics"],
+                "summary": "List all goal metrics",
+                "operationId": "listGoalMetrics",
+                "security": [{ "BearerAuth": [] }],
+                "responses": {
+                    "200": {
+                        "description": "List of goal metrics",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": { "$ref": "#/components/schemas/GoalMetric" }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": ["Goal Metrics"],
+                "summary": "Create a goal metric",
+                "operationId": "createGoalMetric",
+                "security": [{ "BearerAuth": [] }],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "maxLength": 255
+                                    }
+                                },
+                                "required": ["name"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Goal metric created",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/GoalMetric" }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/goal-metrics/{goalMetric}": {
+            "delete": {
+                "tags": ["Goal Metrics"],
+                "summary": "Delete a goal metric",
+                "operationId": "deleteGoalMetric",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "goalMetric",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Goal metric deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": { "type": "string", "example": "Goal metric deleted." }
+                                    },
+                                    "required": ["message"]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Goal metric not found",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/stores/{store_id}/goals": {
+            "get": {
+                "tags": ["Goals"],
+                "summary": "List goals for a store",
+                "operationId": "listGoals",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "from",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "description": "Filter goals where week_start_date >= from (YYYY-MM-DD)"
+                    },
+                    {
+                        "name": "to",
+                        "in": "query",
+                        "schema": { "type": "string", "format": "date" },
+                        "description": "Filter goals where week_end_date <= to (YYYY-MM-DD)"
+                    },
+                    {
+                        "name": "goal_metric_id",
+                        "in": "query",
+                        "schema": { "type": "integer" },
+                        "description": "Filter by goal metric ID"
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": { "type": "integer", "minimum": 1 }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": { "type": "integer", "minimum": 1, "maximum": 200 }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Paginated list of goals",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/GoalPagination" }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": ["Goals"],
+                "summary": "Create a goal",
+                "operationId": "createGoal",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "goal_metric_id": { "type": "integer" },
+                                    "week_start_date": { "type": "string", "format": "date" },
+                                    "week_end_date": { "type": "string", "format": "date" },
+                                    "goal": { "type": "number", "minimum": 0 }
+                                },
+                                "required": ["goal_metric_id", "week_start_date", "week_end_date", "goal"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Goal created",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Goal" }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+
+        "/stores/{store_id}/goals/{goal}": {
+            "put": {
+                "tags": ["Goals"],
+                "summary": "Update a goal",
+                "operationId": "updateGoal",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "goal",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "goal": { "type": "number", "minimum": 0 }
+                                },
+                                "required": ["goal"]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Goal updated",
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/Goal" }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — goal belongs to a different store",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Goal not found",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": ["Goals"],
+                "summary": "Delete a goal",
+                "operationId": "deleteGoal",
+                "security": [{ "BearerAuth": [] }],
+                "parameters": [
+                    {
+                        "name": "store_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "string" }
+                    },
+                    {
+                        "name": "goal",
+                        "in": "path",
+                        "required": true,
+                        "schema": { "type": "integer" }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Goal deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": { "type": "string", "example": "Goal deleted." }
+                                    },
+                                    "required": ["message"]
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — goal belongs to a different store",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Goal not found",
+                        "content": {
+                            "application/json": {
+                                "schema": { "type": "object", "additionalProperties": true }
                             }
                         }
                     }

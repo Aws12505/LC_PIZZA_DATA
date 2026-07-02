@@ -42,6 +42,7 @@ class DueKeyResolverService
         $valuesToday = EnteredKeyValue::query()
             ->where('store_id', $storeId)
             ->whereDate('entry_date', $date)
+            ->with('attachments', 'user')
             ->get();
 
         $valuesByKey = $valuesToday->groupBy('key_id');
@@ -52,6 +53,7 @@ class DueKeyResolverService
         $valuesThisMonth = EnteredKeyValue::query()
             ->where('store_id', $storeId)
             ->whereBetween('entry_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
+            ->with('attachments', 'user')
             ->get()
             ->groupBy('key_id');
 
@@ -79,7 +81,8 @@ class DueKeyResolverService
 
                 if ($rule->fill_mode === 'store_once') {
 
-                    $filled = $existingValues->isNotEmpty();
+                    $value = $existingValues->sortByDesc('entry_date')->first();
+                    $filled = $value !== null;
 
                     $out->push([
                         'key_id' => $key->id,
@@ -87,30 +90,27 @@ class DueKeyResolverService
                         'data_type' => $key->data_type,
                         'frequency_type' => $rule->frequency_type,
                         'interval' => (int) $rule->interval,
+                        'due_time' => $rule->due_time,
                         'mode' => 'monthly_any_day',
                         'fill_mode' => $rule->fill_mode,
+                        'user_id' => $value?->user_id,
+                        'user_name' => $value?->user?->name,
                         'filled' => $filled,
-                        'value' => $filled ? $existingValues->sortByDesc('entry_date')->first() : null,
+                        'value' => $this->serializeValueWithUserName($value),
                         'tags' => $key->tags,  // Add tags to the output
                     ]);
 
                 } else {
 
                     $roles = $rule->role_names ?? [];
+                    $valueUserIds = $existingValues->pluck('user_id')->filter()->unique();
 
-                    $users = UserStoreRole::query()
-                        ->join('users', 'users.id', '=', 'user_store_roles.user_id')
-                        ->where('user_store_roles.store_id', $storeId)
-                        ->where('user_store_roles.active', true)
-                        ->where('user_store_roles.user_id', $authUserId)
-                        ->whereIn('user_store_roles.role_name', $roles)
-                        ->select([
-                            'user_store_roles.user_id',
-                            'user_store_roles.role_name',
-                            'users.name as user_name',
-                        ])
-                        ->distinct()
-                        ->get();
+                    $users = $this->resolveUsersForRule(
+                        $storeId,
+                        $roles,
+                        (int) $authUserId,
+                        $valueUserIds
+                    );
 
                     foreach ($users as $userRole) {
 
@@ -128,6 +128,7 @@ class DueKeyResolverService
 
                             'frequency_type' => $rule->frequency_type,
                             'interval' => (int) $rule->interval,
+                            'due_time' => $rule->due_time,
 
                             'mode' => 'monthly_any_day',
                             'fill_mode' => $rule->fill_mode,
@@ -137,7 +138,7 @@ class DueKeyResolverService
                             'role_name' => $userRole->role_name,
 
                             'filled' => $value !== null,
-                            'value' => $value,
+                            'value' => $this->serializeValueWithUserName($value),
                             'tags' => $key->tags,  // Add tags to the output
                         ]);
                     }
@@ -169,30 +170,27 @@ class DueKeyResolverService
                     'data_type' => $key->data_type,
                     'frequency_type' => $rule->frequency_type,
                     'interval' => (int) $rule->interval,
+                    'due_time' => $rule->due_time,
                     'mode' => 'date_specific',
                     'fill_mode' => $rule->fill_mode,
+                    'user_id' => $value?->user_id,
+                    'user_name' => $value?->user?->name,
                     'filled' => $value !== null,
-                    'value' => $value,
+                    'value' => $this->serializeValueWithUserName($value),
                     'tags' => $key->tags,  // Add tags to the output
                 ]);
 
             } else {
 
                 $roles = $rule->role_names ?? [];
+                $valueUserIds = $existingValues->pluck('user_id')->filter()->unique();
 
-                $users = UserStoreRole::query()
-                    ->join('users', 'users.id', '=', 'user_store_roles.user_id')
-                    ->where('user_store_roles.store_id', $storeId)
-                    ->where('user_store_roles.active', true)
-                    ->where('user_store_roles.user_id', $authUserId)
-                    ->whereIn('user_store_roles.role_name', $roles)
-                    ->select([
-                        'user_store_roles.user_id',
-                        'user_store_roles.role_name',
-                        'users.name as user_name',
-                    ])
-                    ->distinct()
-                    ->get();
+                $users = $this->resolveUsersForRule(
+                    $storeId,
+                    $roles,
+                    (int) $authUserId,
+                    $valueUserIds
+                );
 
                 foreach ($users as $userRole) {
 
@@ -207,6 +205,7 @@ class DueKeyResolverService
 
                         'frequency_type' => $rule->frequency_type,
                         'interval' => (int) $rule->interval,
+                        'due_time' => $rule->due_time,
 
                         'mode' => 'date_specific',
                         'fill_mode' => $rule->fill_mode,
@@ -216,7 +215,7 @@ class DueKeyResolverService
                         'role_name' => $userRole->role_name,
 
                         'filled' => $value !== null,
-                        'value' => $value,
+                        'value' => $this->serializeValueWithUserName($value),
                         'tags' => $key->tags,  // Add tags to the output
                     ]);
                 }
@@ -225,6 +224,50 @@ class DueKeyResolverService
         }
 
         return $out->values();
+    }
+
+    private function serializeValueWithUserName(?EnteredKeyValue $value): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $payload = $value->toArray();
+        $payload['user_name'] = $value->user?->name;
+
+        return $payload;
+    }
+
+    private function resolveUsersForRule(
+        string $storeId,
+        array $roles,
+        int $authUserId,
+        Collection $valueUserIds
+    ): Collection {
+        $baseQuery = UserStoreRole::query()
+            ->join('users', 'users.id', '=', 'user_store_roles.user_id')
+            ->where('user_store_roles.store_id', $storeId)
+            ->where('user_store_roles.active', true)
+            ->whereIn('user_store_roles.role_name', $roles)
+            ->select([
+                'user_store_roles.user_id',
+                'user_store_roles.role_name',
+                'users.name as user_name',
+            ])
+            ->distinct();
+
+        $authUsers = $authUserId
+            ? (clone $baseQuery)->where('user_store_roles.user_id', $authUserId)->get()
+            : collect();
+
+        $filledUsers = $valueUserIds->isNotEmpty()
+            ? (clone $baseQuery)->whereIn('user_store_roles.user_id', $valueUserIds->all())->get()
+            : collect();
+
+        return $authUsers
+            ->merge($filledUsers)
+            ->unique('user_id')
+            ->values();
     }
 
     /**
