@@ -53,6 +53,7 @@ class DetailOrderHot extends OperationalModel
         'put_into_portal_before_promise_time',
         'portal_compartments_used',
         'time_loaded_into_portal',
+        'marketplace_order_number',
     ];
 
     protected $casts = [
