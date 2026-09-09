@@ -20,7 +20,7 @@ class DetailOrderArchive extends ArchiveModel
         'promise_date', 'tax_exemption_id', 'tax_exemption_entity_name', 'user_id',
         'hnrOrder', 'broken_promise', 'portal_eligible', 'portal_used',
         'put_into_portal_before_promise_time', 'portal_compartments_used',
-        'time_loaded_into_portal',
+        'time_loaded_into_portal', 'marketplace_order_number',
     ];
 
     protected $casts = [

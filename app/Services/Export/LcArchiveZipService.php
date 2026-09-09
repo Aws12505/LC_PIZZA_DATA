@@ -313,8 +313,7 @@ class LcArchiveZipService
                     ['header' => 'TimeLoadedIntoPortal', 'db' => 'time_loaded_into_portal', 'type' => 'us_datetime'],
                     ['header' => 'PutIntoPortalBeforePromiseTime', 'db' => 'put_into_portal_before_promise_time', 'type' => 'string'],
                     ['header' => 'PortalCompartmentsUsed', 'db' => 'portal_compartments_used', 'type' => 'string'],
-                    // Not persisted by DetailOrdersProcessor (aggregator order ref / Mexico factura id).
-                    ['header' => 'MarketplaceOrderNumber', 'compute' => fn() => ''],
+                    ['header' => 'MarketplaceOrderNumber', 'db' => 'marketplace_order_number', 'type' => 'string'],
                     ['header' => 'FacturaUniqueId', 'compute' => fn() => ''],
                 ],
             ],
