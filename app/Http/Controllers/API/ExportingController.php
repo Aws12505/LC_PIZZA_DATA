@@ -652,7 +652,8 @@ class ExportingController extends Controller
                 'portal_used',
                 'put_into_portal_before_promise_time',
                 'portal_compartments_used',
-                'time_loaded_into_portal'
+                'time_loaded_into_portal',
+                'marketplace_order_number'
             ],
             'order_line' => [
                 'franchise_store',
