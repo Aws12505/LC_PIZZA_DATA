@@ -60,7 +60,8 @@ class ReportsController extends Controller
     ];
     private const LTO_ITEM_IDS = [
         // Add LTO item IDs here, e.g. '201234', '205678'
-        '406152'
+        '101466',
+        '101465'
     ];
     private const IMPORTANT_ITEMS_HNR_ITEM_IDS = ['103001', '101001', '103044', '105001', '201048'];
 
@@ -69,7 +70,14 @@ class ReportsController extends Controller
     //     4943, 389, 1095, 476, 4759, 5858, 4659, 1612, 4342, 967, 4913,
     // ];
     private const PORTIONING_DETAIL_IDS = [
-        404, 3813, 1042, '4660/4621', 1515, 1103, '03', '02',
+        404,
+        3813,
+        1042,
+        '4660/4621',
+        1515,
+        1103,
+        '03',
+        '02',
     ];
 
     private const LABOR_ENTERED_KEY_ID = 23;
@@ -489,7 +497,7 @@ class ReportsController extends Controller
     private function computeHnrPlusScores(array $totals): array
     {
         $made = $totals['made'];
-        $pct = fn (int $value): float => $made > 0 ? round(($value / $made) * 100, 2) : 0.0;
+        $pct = fn(int $value): float => $made > 0 ? round(($value / $made) * 100, 2) : 0.0;
 
         $soldPercent = $pct($totals['sold']);
         $voidPercent = $pct($totals['voided']);
@@ -1108,7 +1116,7 @@ class ReportsController extends Controller
             $cacheKey,
             $ttl,
             fn() =>
-            $this->buildMultiDashboard($storesInput, $startDate, $endDate)
+                $this->buildMultiDashboard($storesInput, $startDate, $endDate)
         );
 
         return response()->json($result);
