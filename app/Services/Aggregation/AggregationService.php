@@ -841,8 +841,14 @@ class AggregationService
      *                      ("0.00" is not empty), so only NULL is empty
      *   refunded_quantity  rows where refunded == 'Yes'
      *
-     * The grouping is byte-exact too (the old code grouped on PHP string keys), hence the CAST(... AS BINARY)
-     * in GROUP BY; MIN() just returns the group's single value under ONLY_FULL_GROUP_BY.
+     * The grouping mirrors the old PHP string key "item_id|name|account": byte-exact (CAST ... AS BINARY)
+     * with NULL and '' collapsed together (COALESCE); MIN() just returns the group's single value under
+     * ONLY_FULL_GROUP_BY. Groups come back in first-appearance order (MIN(id)), which is the order the
+     * old code iterated them in, so "last group wins" for a duplicate item_id resolves the same way.
+     *
+     * gross_sales is summed as DOUBLE on purpose: the old code summed the fetched strings as PHP floats
+     * and divided that float for avg_item_price, so the same floating-point accumulation is needed for
+     * the same rounding at half-cent boundaries.
      *
      * Keyed by hour, ascending; NULL hours are excluded as the old DISTINCT HOUR() pluck excluded them.
      */
@@ -854,7 +860,7 @@ class AggregationService
             'MIN(menu_item_name) AS menu_item_name',
             'MIN(menu_item_account) AS menu_item_account',
             'SUM(quantity) AS quantity_sold',
-            'SUM(net_amount) AS gross_sales',
+            'SUM(net_amount + 0e0) AS gross_sales',
             "SUM(CASE WHEN modification_reason IS NULL OR CAST(modification_reason AS BINARY) IN ('', '0') THEN net_amount END) AS net_sales",
             "SUM(CASE WHEN CAST(order_fulfilled_method AS BINARY) = 'Delivery' THEN quantity END) AS delivery_quantity",
             "SUM(CASE WHEN order_fulfilled_method IS NULL OR CAST(order_fulfilled_method AS BINARY) != 'Delivery' THEN quantity END) AS carryout_quantity",
@@ -866,8 +872,14 @@ class AggregationService
             ->where('franchise_store', $store)
             ->where('business_date', $date->toDateString())
             ->selectRaw(implode(', ', $select))
-            ->groupByRaw('HOUR(date_time_fulfilled), CAST(item_id AS BINARY), CAST(menu_item_name AS BINARY), CAST(menu_item_account AS BINARY)')
+            ->groupByRaw(
+                'HOUR(date_time_fulfilled), '
+                . "COALESCE(CAST(item_id AS BINARY), ''), "
+                . "COALESCE(CAST(menu_item_name AS BINARY), ''), "
+                . "COALESCE(CAST(menu_item_account AS BINARY), '')"
+            )
             ->orderBy('hour')
+            ->orderByRaw('MIN(id)')
             ->get()
             ->filter(fn($row) => $row->hour !== null)
             ->groupBy(fn($row) => (int) $row->hour);
