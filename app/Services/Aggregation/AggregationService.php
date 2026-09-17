@@ -17,11 +17,35 @@ use App\Models\Aggregation\YearlyItemSummary;
 use App\Services\Database\DatabaseRouter;
 use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class AggregationService
 {
+    /** order_placed_method filters for the hourly channel metrics (same predicates the per-hour queries used). */
+    private const HOURLY_ORDER_CHANNELS = [
+        'phone' => "order_placed_method = 'Phone'",
+        'website' => "order_placed_method = 'Website'",
+        'mobile' => "order_placed_method = 'Mobile'",
+        'call_center' => "order_placed_method IN ('SoundHoundAgent', 'CallCenterAgent')",
+        'drive_thru' => "order_placed_method = 'Drive Thru'",
+        'doordash' => "order_placed_method = 'DoorDash'",
+        'ubereats' => "order_placed_method = 'UberEats'",
+        'grubhub' => "order_placed_method = 'Grubhub'",
+    ];
+
+    /** menu_item_account values for the hourly delivery/carryout category splits. */
+    private const HOURLY_CATEGORY_ACCOUNTS = [
+        'pizza' => 'Pizza',
+        'hnr' => 'HNR',
+        'bread' => 'Bread',
+        'wings' => 'Wings',
+        'beverages' => 'Beverages',
+        'other_foods' => 'Other Foods',
+        'side_items' => 'Side Items',
+    ];
+
     /**
      * Build a single query (as a subquery) that unions hot + archive for a base table,
      * filtered to the given date range (via DatabaseRouter).
@@ -31,6 +55,12 @@ class AggregationService
     private function routedSource(string $baseTable, ?Carbon $startDate = null, ?Carbon $endDate = null): Builder
     {
         $queries = DatabaseRouter::routedQueries($baseTable, $startDate, $endDate);
+
+        // Single routed table (always the case for a one-day range): query it directly on its own
+        // connection instead of wrapping it in a derived table. Same rows, no materialization.
+        if (count($queries) === 1) {
+            return $queries[0];
+        }
 
         $union = array_shift($queries);
         foreach ($queries as $q) {
@@ -48,15 +78,82 @@ class AggregationService
         });
     }
 
-    private function replaceRowsForGroup(string $modelClass, array $scopeKey, array $rows): void
+    /**
+     * Bulk equivalent of replaceRow() for many rows: one INSERT ... ON DUPLICATE KEY UPDATE per chunk
+     * instead of a delete + insert round trip per row. Every column is overwritten and both timestamps
+     * are refreshed, so the stored row is the same as a delete + create. Rows are filtered through the
+     * model's $fillable exactly like Model::create() does.
+     *
+     * @return array{written:int, failed:array<int, array{row:array, error:string}>}
+     */
+    private function upsertRows(string $modelClass, array $rows, array $uniqueBy): array
     {
-        DB::transaction(function () use ($modelClass, $scopeKey, $rows) {
-            $modelClass::where($scopeKey)->delete();
+        if (empty($rows)) {
+            return ['written' => 0, 'failed' => []];
+        }
 
-            if (!empty($rows)) {
-                $modelClass::insert($rows);
+        $model = new $modelClass;
+        $fillable = array_flip($model->getFillable());
+
+        $columns = [];
+        foreach ($rows as $i => $row) {
+            $rows[$i] = array_intersect_key($row, $fillable);
+            $columns += $rows[$i];
+        }
+
+        // Every row must carry the same column set; absent columns are NULL, as with create().
+        $template = array_fill_keys(array_keys($columns), null);
+
+        $update = array_keys($template);
+        if ($model->usesTimestamps()) {
+            $update[] = $model->getCreatedAtColumn();
+        }
+
+        $chunkSize = min(1000, max(1, intdiv(60000, count($template) + 2)));
+
+        $written = 0;
+        $failed = [];
+
+        foreach (array_chunk($rows, $chunkSize) as $chunk) {
+            $chunk = array_map(fn(array $row) => array_replace($template, $row), $chunk);
+
+            try {
+                $modelClass::upsert($chunk, $uniqueBy, $update);
+                $written += count($chunk);
+            } catch (\Throwable $e) {
+                // Isolate the bad row(s) so one failure does not discard the whole chunk.
+                foreach ($chunk as $row) {
+                    try {
+                        $modelClass::upsert([$row], $uniqueBy, $update);
+                        $written++;
+                    } catch (\Throwable $rowError) {
+                        $failed[] = ['row' => $row, 'error' => $rowError->getMessage()];
+                    }
+                }
             }
-        });
+        }
+
+        return ['written' => $written, 'failed' => $failed];
+    }
+
+    /**
+     * Writes one store/period's item rows in bulk. Throws on any failed row, as the per-item
+     * replaceRow() did, so the caller's per-store try/catch still counts the store as failed.
+     */
+    private function writeItemRows(string $modelClass, array $rows, array $uniqueBy): int
+    {
+        $write = $this->upsertRows($modelClass, $rows, $uniqueBy);
+
+        if (!empty($write['failed'])) {
+            throw new \RuntimeException(sprintf(
+                '%d of %d item rows failed to write: %s',
+                count($write['failed']),
+                count($rows),
+                $write['failed'][0]['error']
+            ));
+        }
+
+        return $write['written'];
     }
 
     private function stageResult(
@@ -338,25 +435,18 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        $ordersSrc = $this->routedSource('detail_orders', $date, $date);
+        // One query per source table for the whole store/day, grouped by hour, instead of ~60 queries
+        // per hour. The hours are the same DISTINCT HOUR(date_time_fulfilled) set as before.
+        $orderGroups = $this->fetchHourlyOrderGroups($store, $date);
+        $lineGroups = $this->fetchHourlyLineGroups($store, $date);
 
-        $hours = $ordersSrc
-            ->where('franchise_store', $store)
-            ->where('business_date', $dateStr)
-            ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
-            ->orderBy('hour')
-            ->pluck('hour')
-            ->filter(fn($hour) => $hour !== null)
-            ->map(fn($hour) => (int) $hour)
-            ->values();
-
-        $hoursFound = $hours->count();
-        $rowsWritten = 0;
+        $hoursFound = $orderGroups->count();
+        $rows = [];
         $failedHours = 0;
 
-        foreach ($hours as $hour) {
+        foreach ($orderGroups as $hour => $orders) {
             try {
-                $rowsWritten += $this->aggregateHourlyStoreData($store, $dateStr, (int) $hour, $rebuildId);
+                $rows[] = $this->aggregateHourlyStoreData($store, $dateStr, (int) $hour, $orders, $lineGroups->get($hour));
             } catch (\Throwable $e) {
                 $failedHours++;
 
@@ -370,11 +460,103 @@ class AggregationService
             }
         }
 
+        $write = $this->upsertRows(HourlyStoreSummary::class, $rows, ['franchise_store', 'business_date', 'hour']);
+
+        foreach ($write['failed'] as $failure) {
+            $failedHours++;
+
+            Log::error('Hourly store aggregation failed for hour', [
+                'rebuild_id' => $rebuildId,
+                'business_date' => $dateStr,
+                'store' => (string) $store,
+                'hour' => (int) ($failure['row']['hour'] ?? -1),
+                'exception' => $failure['error'],
+            ]);
+        }
+
         return [
-            'rows_written' => $rowsWritten,
+            'rows_written' => $write['written'],
             'hours_found' => $hoursFound,
             'failed_hours' => $failedHours,
         ];
+    }
+
+    /**
+     * Every hourly store metric for one store/day in a single pass over detail_orders, grouped by hour.
+     * Each column is exactly the aggregate the former per-hour query computed (same predicates, same
+     * DISTINCT/row-count semantics). Keyed by hour, ascending; NULL hours are excluded as the old
+     * DISTINCT HOUR() pluck excluded them.
+     */
+    private function fetchHourlyOrderGroups(string $store, Carbon $date): Collection
+    {
+        $select = [
+            'HOUR(date_time_fulfilled) AS hour',
+            'SUM(royalty_obligation) AS total_sales',
+            'SUM(gross_sales) AS gross_sales',
+            'SUM(COALESCE(taxable_amount, 0) + COALESCE(non_taxable_amount, 0)) AS net_sales',
+            "SUM(CASE WHEN refunded = 'Yes' THEN royalty_obligation END) AS refund_amount",
+            "SUM(CASE WHEN hnrOrder = 'Yes' THEN 1 ELSE 0 END) AS hnr_transactions",
+            "SUM(CASE WHEN hnrOrder = 'Yes' AND broken_promise = 'Yes' THEN 1 ELSE 0 END) AS hnr_broken_promises",
+            'COUNT(DISTINCT CASE WHEN customer_count > 0 THEN order_id END) AS total_orders',
+            "COUNT(DISTINCT CASE WHEN refunded = 'Yes' THEN order_id END) AS refunded_orders",
+            "COUNT(DISTINCT CASE WHEN override_approval_employee IS NOT NULL AND override_approval_employee != '' THEN order_id END) AS modified_orders",
+            "COUNT(DISTINCT CASE WHEN transaction_type = 'Cancelled' THEN order_id END) AS cancelled_orders",
+            'SUM(customer_count) AS customer_count',
+            'SUM(sales_tax) AS sales_tax',
+            'SUM(delivery_fee) AS delivery_fees',
+            'SUM(delivery_tip) AS delivery_tips',
+            'SUM(store_tip_amount) AS store_tips',
+            "COUNT(DISTINCT CASE WHEN portal_eligible = 'Yes' THEN order_id END) AS portal_eligible",
+            "COUNT(DISTINCT CASE WHEN portal_used = 'Yes' THEN order_id END) AS portal_used",
+            "COUNT(DISTINCT CASE WHEN put_into_portal_before_promise_time = 'Yes' THEN order_id END) AS portal_on_time",
+            // stripos($payment_methods, 'Cash') !== false: ASCII case-fold, byte match.
+            "SUM(CASE WHEN CAST(LOWER(payment_methods) AS BINARY) LIKE '%cash%' THEN royalty_obligation END) AS cash_sales",
+        ];
+
+        foreach (self::HOURLY_ORDER_CHANNELS as $key => $condition) {
+            $select[] = "COUNT(DISTINCT CASE WHEN {$condition} THEN order_id END) AS {$key}_orders";
+            $select[] = "SUM(CASE WHEN {$condition} THEN royalty_obligation END) AS {$key}_sales";
+        }
+
+        return $this->routedSource('detail_orders', $date, $date)
+            ->where('franchise_store', $store)
+            ->where('business_date', $date->toDateString())
+            ->selectRaw(implode(', ', $select))
+            ->groupByRaw('HOUR(date_time_fulfilled)')
+            ->orderBy('hour')
+            ->get()
+            ->filter(fn($row) => $row->hour !== null)
+            ->keyBy(fn($row) => (int) $row->hour);
+    }
+
+    /**
+     * The 28 delivery/carryout category splits for one store/day in a single pass over order_line,
+     * grouped by hour. Same predicates as the former per-category queries:
+     *   delivery = order_fulfilled_method = 'Delivery'
+     *   carryout = order_fulfilled_method IS NULL OR != 'Delivery'
+     */
+    private function fetchHourlyLineGroups(string $store, Carbon $date): Collection
+    {
+        $delivery = "order_fulfilled_method = 'Delivery'";
+        $carryout = "(order_fulfilled_method IS NULL OR order_fulfilled_method != 'Delivery')";
+
+        $select = ['HOUR(date_time_fulfilled) AS hour'];
+
+        foreach (self::HOURLY_CATEGORY_ACCOUNTS as $key => $account) {
+            $select[] = "SUM(CASE WHEN {$delivery} AND menu_item_account = '{$account}' THEN quantity END) AS {$key}_delivery_quantity";
+            $select[] = "SUM(CASE WHEN {$delivery} AND menu_item_account = '{$account}' THEN net_amount END) AS {$key}_delivery_sales";
+            $select[] = "SUM(CASE WHEN {$carryout} AND menu_item_account = '{$account}' THEN quantity END) AS {$key}_carryout_quantity";
+            $select[] = "SUM(CASE WHEN {$carryout} AND menu_item_account = '{$account}' THEN net_amount END) AS {$key}_carryout_sales";
+        }
+
+        return $this->routedSource('order_line', $date, $date)
+            ->where('franchise_store', $store)
+            ->where('business_date', $date->toDateString())
+            ->selectRaw(implode(', ', $select))
+            ->groupByRaw('HOUR(date_time_fulfilled)')
+            ->get()
+            ->filter(fn($row) => $row->hour !== null)
+            ->keyBy(fn($row) => (int) $row->hour);
     }
 
     /**
@@ -385,103 +567,65 @@ class AggregationService
      *   carryout = order_fulfilled_method != "Delivery" (including NULL)
      * - delivery_orders/sales and carryout_orders/sales are sums of the category splits
      * - cash_sales hourly is estimated; daily overrides with financial_views "Total Cash Sales"
+     *
+     * Builds the row for one store/date/hour from the pre-aggregated groups ($orders from
+     * fetchHourlyOrderGroups(), $lines from fetchHourlyLineGroups(); $lines is null when the hour has
+     * no order lines, which yields the same zero splits the per-category queries returned).
      */
-    private function aggregateHourlyStoreData(string $store, string $date, int $hour, ?string $rebuildId = null): int
+    private function aggregateHourlyStoreData(string $store, string $date, int $hour, object $orders, ?object $lines = null): array
     {
-        $day = Carbon::parse($date);
+        $totalSales = (float) $orders->total_sales;
+        $grossSales = (float) $orders->gross_sales;
 
-        $baseOrders = $this->routedSource('detail_orders', $day, $day)
-            ->where('franchise_store', $store)
-            ->where('business_date', $date)
-            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
+        $netSales = (float) $orders->net_sales;
 
-        $totalSales = (float) (clone $baseOrders)->sum('royalty_obligation');
-        $grossSales = (float) (clone $baseOrders)->sum('gross_sales');
+        $refundAmount = (float) $orders->refund_amount;
 
-        $netSales = (clone $baseOrders)
-            ->get(['taxable_amount', 'non_taxable_amount'])
-            ->sum(fn($r) => (float) $r->taxable_amount + (float) ($r->non_taxable_amount ?? 0));
+        $hnrTransactions = (int) $orders->hnr_transactions;
+        $hnrBrokenPromises = (int) $orders->hnr_broken_promises;
 
-        $refundAmount = (float) (clone $baseOrders)
-            ->where('refunded', 'Yes')
-            ->sum('royalty_obligation');
+        $totalOrders = (int) $orders->total_orders;
 
-        $hnrTransactions = (int) (clone $baseOrders)->where('hnrOrder', 'Yes')->count();
-        $hnrBrokenPromises = (int) (clone $baseOrders)->where('hnrOrder', 'Yes')->where('broken_promise', 'Yes')->count();
+        $refundedOrders = (int) $orders->refunded_orders;
 
-        $totalOrders = (int) (clone $baseOrders)->where('customer_count', '>', 0)->distinct()->count('order_id');
+        $modifiedOrders = (int) $orders->modified_orders;
 
-        $refundedOrders = (int) (clone $baseOrders)
-            ->where('refunded', 'Yes')
-            ->distinct()
-            ->count('order_id');
+        $cancelledOrders = (int) $orders->cancelled_orders;
 
-        $modifiedOrders = (int) (clone $baseOrders)
-            ->whereNotNull('override_approval_employee')
-            ->where('override_approval_employee', '!=', '')
-            ->distinct()
-            ->count('order_id');
+        $customerCount = (int) $orders->customer_count;
 
-        $cancelledOrders = (int) (clone $baseOrders)
-            ->where('transaction_type', 'Cancelled')
-            ->distinct()
-            ->count('order_id');
+        $phoneOrders = (int) $orders->phone_orders;
+        $phoneSales = (float) $orders->phone_sales;
 
-        $customerCount = (int) (clone $baseOrders)->sum('customer_count');
+        $websiteOrders = (int) $orders->website_orders;
+        $websiteSales = (float) $orders->website_sales;
 
-        $phoneOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Phone')->distinct()->count('order_id');
-        $phoneSales = (float) (clone $baseOrders)->where('order_placed_method', 'Phone')->sum('royalty_obligation');
+        $mobileOrders = (int) $orders->mobile_orders;
+        $mobileSales = (float) $orders->mobile_sales;
 
-        $websiteOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Website')->distinct()->count('order_id');
-        $websiteSales = (float) (clone $baseOrders)->where('order_placed_method', 'Website')->sum('royalty_obligation');
+        $callCenterOrders = (int) $orders->call_center_orders;
+        $callCenterSales = (float) $orders->call_center_sales;
 
-        $mobileOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Mobile')->distinct()->count('order_id');
-        $mobileSales = (float) (clone $baseOrders)->where('order_placed_method', 'Mobile')->sum('royalty_obligation');
+        $driveThruOrders = (int) $orders->drive_thru_orders;
+        $driveThruSales = (float) $orders->drive_thru_sales;
 
-        $callCenterOrders = (int) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->distinct()->count('order_id');
-        $callCenterSales = (float) (clone $baseOrders)->whereIn('order_placed_method', ['SoundHoundAgent', 'CallCenterAgent'])->sum('royalty_obligation');
+        $doordashOrders = (int) $orders->doordash_orders;
+        $doordashSales = (float) $orders->doordash_sales;
 
-        $driveThruOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->distinct()->count('order_id');
-        $driveThruSales = (float) (clone $baseOrders)->where('order_placed_method', 'Drive Thru')->sum('royalty_obligation');
+        $ubereatsOrders = (int) $orders->ubereats_orders;
+        $ubereatsSales = (float) $orders->ubereats_sales;
 
-        $doordashOrders = (int) (clone $baseOrders)->where('order_placed_method', 'DoorDash')->distinct()->count('order_id');
-        $doordashSales = (float) (clone $baseOrders)->where('order_placed_method', 'DoorDash')->sum('royalty_obligation');
+        $grubhubOrders = (int) $orders->grubhub_orders;
+        $grubhubSales = (float) $orders->grubhub_sales;
 
-        $ubereatsOrders = (int) (clone $baseOrders)->where('order_placed_method', 'UberEats')->distinct()->count('order_id');
-        $ubereatsSales = (float) (clone $baseOrders)->where('order_placed_method', 'UberEats')->sum('royalty_obligation');
+        $salesTax = (float) $orders->sales_tax;
+        $deliveryFees = (float) $orders->delivery_fees;
+        $deliveryTips = (float) $orders->delivery_tips;
+        $storeTips = (float) $orders->store_tips;
 
-        $grubhubOrders = (int) (clone $baseOrders)->where('order_placed_method', 'Grubhub')->distinct()->count('order_id');
-        $grubhubSales = (float) (clone $baseOrders)->where('order_placed_method', 'Grubhub')->sum('royalty_obligation');
-
-        $salesTax = (float) (clone $baseOrders)->sum('sales_tax');
-        $deliveryFees = (float) (clone $baseOrders)->sum('delivery_fee');
-        $deliveryTips = (float) (clone $baseOrders)->sum('delivery_tip');
-        $storeTips = (float) (clone $baseOrders)->sum('store_tip_amount');
-
-        $portalEligible = (int) (clone $baseOrders)->where('portal_eligible', 'Yes')->distinct()->count('order_id');
-        $portalUsed = (int) (clone $baseOrders)->where('portal_used', 'Yes')->distinct()->count('order_id');
-        $portalOnTime = (int) (clone $baseOrders)->where('put_into_portal_before_promise_time', 'Yes')->distinct()->count('order_id');
-
-        $baseLines = $this->routedSource('order_line', $day, $day)
-            ->where('franchise_store', $store)
-            ->where('business_date', $date)
-            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour]);
-
-        $deliveryLines = (clone $baseLines)->where('order_fulfilled_method', 'Delivery');
-        $carryoutLines = (clone $baseLines)->where(function ($q) {
-            $q->whereNull('order_fulfilled_method')
-                ->orWhere('order_fulfilled_method', '!=', 'Delivery');
-        });
-
-        $cats = [
-            'pizza' => 'Pizza',
-            'hnr' => 'HNR',
-            'bread' => 'Bread',
-            'wings' => 'Wings',
-            'beverages' => 'Beverages',
-            'other_foods' => 'Other Foods',
-            'side_items' => 'Side Items',
-        ];
+        $portalEligible = (int) $orders->portal_eligible;
+        $portalUsed = (int) $orders->portal_used;
+        $portalOnTime = (int) $orders->portal_on_time;
 
         $split = [];
         $deliveryQtyTotal = 0;
@@ -489,12 +633,12 @@ class AggregationService
         $carryoutQtyTotal = 0;
         $carryoutSalesTotal = 0.0;
 
-        foreach ($cats as $key => $account) {
-            $dQty = (int) (clone $deliveryLines)->where('menu_item_account', $account)->sum('quantity');
-            $dSales = (float) (clone $deliveryLines)->where('menu_item_account', $account)->sum('net_amount');
+        foreach (self::HOURLY_CATEGORY_ACCOUNTS as $key => $account) {
+            $dQty = (int) ($lines?->{"{$key}_delivery_quantity"} ?? 0);
+            $dSales = (float) ($lines?->{"{$key}_delivery_sales"} ?? 0);
 
-            $cQty = (int) (clone $carryoutLines)->where('menu_item_account', $account)->sum('quantity');
-            $cSales = (float) (clone $carryoutLines)->where('menu_item_account', $account)->sum('net_amount');
+            $cQty = (int) ($lines?->{"{$key}_carryout_quantity"} ?? 0);
+            $cSales = (float) ($lines?->{"{$key}_carryout_sales"} ?? 0);
 
             $split[$key] = [
                 'dQty' => $dQty,
@@ -509,17 +653,7 @@ class AggregationService
             $carryoutSalesTotal += $cSales;
         }
 
-        $ordersWithPayments = (clone $baseOrders)->get(['payment_methods', 'royalty_obligation']);
-        $cashSales = 0.0;
-
-        foreach ($ordersWithPayments as $order) {
-            $paymentMethod = (string) ($order->payment_methods ?? '');
-            $amount = (float) ($order->royalty_obligation ?? 0);
-
-            if (stripos($paymentMethod, 'Cash') !== false) {
-                $cashSales += $amount;
-            }
-        }
+        $cashSales = (float) $orders->cash_sales;
 
         $overShort = 0.0;
 
@@ -625,13 +759,7 @@ class AggregationService
             'hnr_broken_promises' => $hnrBrokenPromises,
         ];
 
-        $this->replaceRow(HourlyStoreSummary::class, [
-            'franchise_store' => $store,
-            'business_date' => $date,
-            'hour' => $hour,
-        ], $data);
-
-        return 1;
+        return $data;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -642,25 +770,21 @@ class AggregationService
     {
         $dateStr = $date->toDateString();
 
-        $linesSrc = $this->routedSource('order_line', $date, $date);
+        // One query for the whole store/day, grouped by hour + item, instead of a row fetch per hour
+        // and a delete + insert per item. The hours are the same DISTINCT HOUR() set as before.
+        $groupsByHour = $this->fetchHourlyItemGroups($store, $date);
 
-        $hours = $linesSrc
-            ->where('franchise_store', $store)
-            ->where('business_date', $dateStr)
-            ->selectRaw('DISTINCT HOUR(date_time_fulfilled) as hour')
-            ->orderBy('hour')
-            ->pluck('hour')
-            ->filter(fn($hour) => $hour !== null)
-            ->map(fn($hour) => (int) $hour)
-            ->values();
-
-        $hoursFound = $hours->count();
+        $hoursFound = $groupsByHour->count();
+        $rows = [];
         $rowsWritten = 0;
         $failedHours = 0;
 
-        foreach ($hours as $hour) {
+        foreach ($groupsByHour as $hour => $groups) {
             try {
-                $rowsWritten += $this->aggregateHourlyItemData($store, $dateStr, (int) $hour, $rebuildId);
+                [$hourRows, $groupCount] = $this->aggregateHourlyItemData($store, $dateStr, (int) $hour, $groups);
+
+                $rows = array_merge($rows, $hourRows);
+                $rowsWritten += $groupCount;
             } catch (\Throwable $e) {
                 $failedHours++;
 
@@ -674,87 +798,124 @@ class AggregationService
             }
         }
 
+        $write = $this->upsertRows(HourlyItemSummary::class, $rows, ['franchise_store', 'business_date', 'hour', 'item_id']);
+
+        if (!empty($write['failed'])) {
+            $failedHourSet = [];
+
+            foreach ($write['failed'] as $failure) {
+                $failedHourSet[(int) ($failure['row']['hour'] ?? -1)] = true;
+
+                Log::error('Hourly item aggregation failed for hour', [
+                    'rebuild_id' => $rebuildId,
+                    'business_date' => $dateStr,
+                    'store' => (string) $store,
+                    'hour' => (int) ($failure['row']['hour'] ?? -1),
+                    'item_id' => $failure['row']['item_id'] ?? null,
+                    'exception' => $failure['error'],
+                ]);
+            }
+
+            $failedHours += count($failedHourSet);
+            $rowsWritten -= count($write['failed']);
+        }
+
         return [
-            'rows_written' => $rowsWritten,
+            'rows_written' => max(0, $rowsWritten),
             'hours_found' => $hoursFound,
             'failed_hours' => $failedHours,
         ];
     }
 
-    private function aggregateHourlyItemData(string $store, string $date, int $hour, ?string $rebuildId = null): int
+    /**
+     * All item groups for one store/day in a single pass over order_line, grouped by
+     * hour + item_id + menu_item_name + menu_item_account (the same grouping key as before).
+     *
+     * The filters were previously applied in PHP on the fetched rows (==, !==, empty()), i.e. byte-exact,
+     * so they are expressed with CAST(... AS BINARY) here rather than the collation-insensitive
+     * comparison used by the store-level queries:
+     *   net_sales          rows where empty(modification_reason)      -> NULL, '' or '0'
+     *   delivery_quantity  rows where order_fulfilled_method == 'Delivery'
+     *   carryout_quantity  rows where empty(order_fulfilled_method) || !== 'Delivery'
+     *   modified_quantity  rows where !empty(modified_order_amount)   -> DECIMAL comes back as a string
+     *                      ("0.00" is not empty), so only NULL is empty
+     *   refunded_quantity  rows where refunded == 'Yes'
+     *
+     * The grouping is byte-exact too (the old code grouped on PHP string keys), hence the CAST(... AS BINARY)
+     * in GROUP BY; MIN() just returns the group's single value under ONLY_FULL_GROUP_BY.
+     *
+     * Keyed by hour, ascending; NULL hours are excluded as the old DISTINCT HOUR() pluck excluded them.
+     */
+    private function fetchHourlyItemGroups(string $store, Carbon $date): Collection
     {
-        $day = Carbon::parse($date);
+        $select = [
+            'HOUR(date_time_fulfilled) AS hour',
+            'MIN(item_id) AS item_id',
+            'MIN(menu_item_name) AS menu_item_name',
+            'MIN(menu_item_account) AS menu_item_account',
+            'SUM(quantity) AS quantity_sold',
+            'SUM(net_amount) AS gross_sales',
+            "SUM(CASE WHEN modification_reason IS NULL OR CAST(modification_reason AS BINARY) IN ('', '0') THEN net_amount END) AS net_sales",
+            "SUM(CASE WHEN CAST(order_fulfilled_method AS BINARY) = 'Delivery' THEN quantity END) AS delivery_quantity",
+            "SUM(CASE WHEN order_fulfilled_method IS NULL OR CAST(order_fulfilled_method AS BINARY) != 'Delivery' THEN quantity END) AS carryout_quantity",
+            'SUM(CASE WHEN modified_order_amount IS NOT NULL THEN quantity END) AS modified_quantity',
+            "SUM(CASE WHEN CAST(refunded AS BINARY) = 'Yes' THEN quantity END) AS refunded_quantity",
+        ];
 
-        $lines = $this->routedSource('order_line', $day, $day)
+        return $this->routedSource('order_line', $date, $date)
             ->where('franchise_store', $store)
-            ->where('business_date', $date)
-            ->whereRaw('HOUR(date_time_fulfilled) = ?', [$hour])
-            ->get([
-                'franchise_store',
-                'business_date',
-                'item_id',
-                'menu_item_name',
-                'menu_item_account',
-                'quantity',
-                'net_amount',
-                'modification_reason',
-                'order_fulfilled_method',
-                'refunded',
-                'modified_order_amount',
-            ]);
+            ->where('business_date', $date->toDateString())
+            ->selectRaw(implode(', ', $select))
+            ->groupByRaw('HOUR(date_time_fulfilled), CAST(item_id AS BINARY), CAST(menu_item_name AS BINARY), CAST(menu_item_account AS BINARY)')
+            ->orderBy('hour')
+            ->get()
+            ->filter(fn($row) => $row->hour !== null)
+            ->groupBy(fn($row) => (int) $row->hour);
+    }
 
-        $items = $lines->groupBy(
-            fn($r) =>
-            "{$r->franchise_store}|{$r->business_date}|{$r->item_id}|{$r->menu_item_name}|{$r->menu_item_account}"
-        );
+    /**
+     * Builds the hourly item rows for one store/date/hour from the pre-aggregated groups.
+     *
+     * @return array{0: array<int, array>, 1: int} [rows to write, number of item groups]
+     */
+    private function aggregateHourlyItemData(string $store, string $date, int $hour, Collection $groups): array
+    {
+        $rows = [];
+        $groupCount = 0;
 
-        $rowsWritten = 0;
+        foreach ($groups as $group) {
+            $groupCount++;
 
-        foreach ($items as $group) {
-            $first = $group->first();
-
-            $qty = (float) $group->sum('quantity');
-            $gross = (float) $group->sum('net_amount');
+            $qty = (float) $group->quantity_sold;
+            $gross = (float) $group->gross_sales;
 
             $data = [
-                'franchise_store' => $first->franchise_store,
-                'business_date' => $first->business_date,
+                'franchise_store' => $store,
+                'business_date' => $date,
                 'hour' => $hour,
-                'item_id' => $first->item_id,
-                'menu_item_name' => $first->menu_item_name,
-                'menu_item_account' => $first->menu_item_account,
+                'item_id' => $group->item_id,
+                'menu_item_name' => $group->menu_item_name,
+                'menu_item_account' => $group->menu_item_account,
 
                 'quantity_sold' => $qty,
                 'gross_sales' => round($gross, 2),
 
-                'net_sales' => round(
-                    (float) $group->filter(fn($r) => empty($r->modification_reason))->sum('net_amount'),
-                    2
-                ),
+                'net_sales' => round((float) $group->net_sales, 2),
 
                 'avg_item_price' => $qty > 0 ? round($gross / $qty, 2) : 0,
 
-                'delivery_quantity' => (float) $group->where('order_fulfilled_method', 'Delivery')->sum('quantity'),
-                'carryout_quantity' => (float) $group->filter(
-                    fn($r) =>
-                    empty($r->order_fulfilled_method) || $r->order_fulfilled_method !== 'Delivery'
-                )->sum('quantity'),
+                'delivery_quantity' => (float) $group->delivery_quantity,
+                'carryout_quantity' => (float) $group->carryout_quantity,
 
-                'modified_quantity' => (float) $group->filter(fn($r) => !empty($r->modified_order_amount))->sum('quantity'),
-                'refunded_quantity' => (float) $group->where('refunded', 'Yes')->sum('quantity'),
+                'modified_quantity' => (float) $group->modified_quantity,
+                'refunded_quantity' => (float) $group->refunded_quantity,
             ];
 
-            $this->replaceRow(HourlyItemSummary::class, [
-                'franchise_store' => $first->franchise_store,
-                'business_date' => $first->business_date,
-                'hour' => $hour,
-                'item_id' => $first->item_id,
-            ], $data);
-
-            $rowsWritten++;
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $group->item_id] = $data;
         }
 
-        return $rowsWritten;
+        return [array_values($rows), $groupCount];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -840,14 +1001,11 @@ class AggregationService
             ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
             ->get();
 
-        $rowsWritten = 0;
+        $rows = [];
 
         foreach ($items as $item) {
-            $this->replaceRow(DailyItemSummary::class, [
-                'franchise_store' => $store,
-                'business_date' => $dateStr,
-                'item_id' => $item->item_id,
-            ], [
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $item->item_id] = [
                 'franchise_store' => $store,
                 'business_date' => $dateStr,
                 'item_id' => $item->item_id,
@@ -861,12 +1019,12 @@ class AggregationService
                 'carryout_quantity' => $item->carryout_quantity,
                 'modified_quantity' => $item->modified_quantity,
                 'refunded_quantity' => $item->refunded_quantity,
-            ]);
-
-            $rowsWritten++;
+            ];
         }
 
-        return $rowsWritten;
+        $this->writeItemRows(DailyItemSummary::class, array_values($rows), ['franchise_store', 'business_date', 'item_id']);
+
+        return $items->count();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1016,15 +1174,11 @@ class AggregationService
             ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
             ->get();
 
-        $rowsWritten = 0;
+        $rows = [];
 
         foreach ($items as $item) {
-            $this->replaceRow(WeeklyItemSummary::class, [
-                'franchise_store' => $store,
-                'year_num' => $year,
-                'week_num' => $week,
-                'item_id' => $item->item_id,
-            ], [
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $item->item_id] = [
                 'franchise_store' => $store,
                 'year_num' => $year,
                 'week_num' => $week,
@@ -1040,12 +1194,12 @@ class AggregationService
                 'carryout_quantity' => $item->carryout_quantity,
                 'week_start_date' => $weekStart->toDateString(),
                 'week_end_date' => $weekEnd->toDateString(),
-            ]);
-
-            $rowsWritten++;
+            ];
         }
 
-        return $rowsWritten;
+        $this->writeItemRows(WeeklyItemSummary::class, array_values($rows), ['franchise_store', 'year_num', 'week_num', 'item_id']);
+
+        return $items->count();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1215,15 +1369,11 @@ class AggregationService
             ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
             ->get();
 
-        $rowsWritten = 0;
+        $rows = [];
 
         foreach ($items as $item) {
-            $this->replaceRow(MonthlyItemSummary::class, [
-                'franchise_store' => $store,
-                'year_num' => $year,
-                'month_num' => $month,
-                'item_id' => $item->item_id,
-            ], [
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $item->item_id] = [
                 'franchise_store' => $store,
                 'year_num' => $year,
                 'month_num' => $month,
@@ -1237,12 +1387,12 @@ class AggregationService
                 'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
                 'delivery_quantity' => $item->delivery_quantity,
                 'carryout_quantity' => $item->carryout_quantity,
-            ]);
-
-            $rowsWritten++;
+            ];
         }
 
-        return $rowsWritten;
+        $this->writeItemRows(MonthlyItemSummary::class, array_values($rows), ['franchise_store', 'year_num', 'month_num', 'item_id']);
+
+        return $items->count();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1403,15 +1553,11 @@ class AggregationService
             ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
             ->get();
 
-        $rowsWritten = 0;
+        $rows = [];
 
         foreach ($items as $item) {
-            $this->replaceRow(QuarterlyItemSummary::class, [
-                'franchise_store' => $store,
-                'year_num' => $year,
-                'quarter_num' => $quarter,
-                'item_id' => $item->item_id,
-            ], [
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $item->item_id] = [
                 'franchise_store' => $store,
                 'year_num' => $year,
                 'quarter_num' => $quarter,
@@ -1427,12 +1573,12 @@ class AggregationService
                 'carryout_quantity' => $item->carryout_quantity,
                 'quarter_start_date' => $qStart->toDateString(),
                 'quarter_end_date' => $qEnd->toDateString(),
-            ]);
-
-            $rowsWritten++;
+            ];
         }
 
-        return $rowsWritten;
+        $this->writeItemRows(QuarterlyItemSummary::class, array_values($rows), ['franchise_store', 'year_num', 'quarter_num', 'item_id']);
+
+        return $items->count();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1552,14 +1698,11 @@ class AggregationService
             ->groupBy('item_id', 'menu_item_name', 'menu_item_account')
             ->get();
 
-        $rowsWritten = 0;
+        $rows = [];
 
         foreach ($items as $item) {
-            $this->replaceRow(YearlyItemSummary::class, [
-                'franchise_store' => $store,
-                'year_num' => $year,
-                'item_id' => $item->item_id,
-            ], [
+            // Same key replaceRow() used: a later group for the same item_id overwrites an earlier one.
+            $rows[(string) $item->item_id] = [
                 'franchise_store' => $store,
                 'year_num' => $year,
                 'item_id' => $item->item_id,
@@ -1572,12 +1715,12 @@ class AggregationService
                 'avg_daily_quantity' => round($item->avg_daily_quantity, 2),
                 'delivery_quantity' => $item->delivery_quantity,
                 'carryout_quantity' => $item->carryout_quantity,
-            ]);
-
-            $rowsWritten++;
+            ];
         }
 
-        return $rowsWritten;
+        $this->writeItemRows(YearlyItemSummary::class, array_values($rows), ['franchise_store', 'year_num', 'item_id']);
+
+        return $items->count();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
