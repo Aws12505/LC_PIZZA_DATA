@@ -105,6 +105,54 @@ class StoreScoreTest extends TestCase
         ];
     }
 
+    // ------------------------------------------------ labor (>= 2026-09-08)
+
+    #[DataProvider('laborCases')]
+    public function test_labor_score(
+        float $floor,
+        float $ceil,
+        float $actual,
+        float $expectedScore,
+        int $expectedCase
+    ): void {
+        [$score, $case] = $this->call('laborScore', [$floor, $ceil, $actual, 30.0]);
+
+        $this->assertSame($expectedCase, $case);
+        $this->assertEqualsWithDelta($expectedScore, $score, 0.01);
+    }
+
+    public static function laborCases(): array
+    {
+        return [
+            // within [floor, ceil] -> full 30, case 3
+            'within band' => [19.0, 20.0, 19.5, 30.0, 3],
+            // 1 point over ceil -> deduction (1/100)*30 = 0.3 -> 0
+            'over ceil'   => [19.0, 20.0, 21.0, 0.0, 1],
+            // 0.5 point over ceil -> deduction (0.5/100)*30 = 0.15 -> (0.3-0.15)*100=15
+            'over ceil half' => [19.0, 20.0, 20.5, 15.0, 1],
+            // 0.5 point under floor -> same math, case 2
+            'under floor half' => [19.0, 20.0, 18.5, 15.0, 2],
+            // 1 point under floor -> 0
+            'under floor' => [19.0, 20.0, 18.0, 0.0, 2],
+        ];
+    }
+
+    // ----------------------------------- overtime, new (>= 2026-09-08)
+
+    public function test_overtime_new_full_when_at_or_below_goal(): void
+    {
+        $this->assertEqualsWithDelta(10.0, $this->call('overtimeHoursScoreNew', [10.0, 8.0, 10.0]), 0.01);
+        $this->assertEqualsWithDelta(10.0, $this->call('overtimeHoursScoreNew', [10.0, 10.0, 10.0]), 0.01);
+    }
+
+    public function test_overtime_new_penalized_above_goal(): void
+    {
+        // (12-10)/100 = 0.02 -> (0.1-0.02)*100 = 8
+        $this->assertEqualsWithDelta(8.0, $this->call('overtimeHoursScoreNew', [10.0, 12.0, 10.0]), 0.01);
+        // big gap floors at 0: (30-10)/100 = 0.2 -> 0
+        $this->assertEqualsWithDelta(0.0, $this->call('overtimeHoursScoreNew', [10.0, 30.0, 10.0]), 0.01);
+    }
+
     // -------------------------------------------------------- overtime hours
 
     public function test_overtime_full_when_at_or_below_goal(): void

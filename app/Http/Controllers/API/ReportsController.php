@@ -118,6 +118,8 @@ class ReportsController extends Controller
         'portal' => 11,
         'hnr' => 12,
         'orders_vs_sales' => 15,
+        'labor_floor' => 19,
+        'labor_ceil' => 20,
     ];
 
     /** Dates on/after this use the floor/ceil normal-hours formula. */
@@ -128,6 +130,16 @@ class ReportsController extends Controller
      * (see scoreHnrPlus()) and use SCORE_MAX_HNR_PLUS instead of SCORE_MAX.
      */
     private const HNR_PLUS_CUTOFF = '2026-08-18';
+
+    /**
+     * Dates on/after this replace the Normal Hours store-score category with
+     * Labor (percent-of-sales floor/ceil, see laborScore()) in the same slot,
+     * and switch Overtime Hours to overtimeHoursScoreNew(). Neither category
+     * is sales-flexed any more (no salesDiff/steps adjustment); Labor's
+     * floor/ceil and Overtime's goal are still prorated by the day-elapsed
+     * fraction W like Normal Hours was.
+     */
+    private const LABOR_SCORE_CUTOFF = '2026-09-08';
 
     /** entered_keys ids feeding the score. */
     private const SCORE_KEY_NORMAL_HOURS = 25;
@@ -1641,6 +1653,7 @@ class ReportsController extends Controller
             $prevWeekStart,
             $previousWeekTotal,
             $weekToDateSalesTotal,
+            $laborWeekToDateAvgPercent,
             $goalMetrics
         );
 
@@ -1857,6 +1870,7 @@ class ReportsController extends Controller
         CarbonImmutable $prevWeekStart,
         float $previousWeekTotal,
         float $weekToDateSalesTotal,
+        float $laborWeekToDateAvgPercent,
         array $goalMetrics
     ): array {
         // Per-day rows shared by the HnR and portal daily-mean calcs (one query).
@@ -1880,6 +1894,7 @@ class ReportsController extends Controller
             $prevWeekStart,
             $previousWeekTotal,
             $weekToDateSalesTotal,
+            $laborWeekToDateAvgPercent,
             $goalMetrics,
             $scoreMax
         );
@@ -1954,6 +1969,7 @@ class ReportsController extends Controller
         CarbonImmutable $prevWeekStart,
         float $previousWeekTotal,
         float $weekToDateSalesTotal,
+        float $laborWeekToDateAvgPercent,
         array $goalMetrics,
         array $scoreMax = self::SCORE_MAX
     ): array {
@@ -1974,8 +1990,53 @@ class ReportsController extends Controller
             $w = $weekToDateDayCount / 7;
         }
 
-        $actNormal = $this->enteredKeyValueLatest($store, self::SCORE_KEY_NORMAL_HOURS, $weekStart, $day);
         $actOt = $this->enteredKeyValueLatest($store, self::SCORE_KEY_OVERTIME_HOURS, $weekStart, $day);
+
+        if ($day->toDateString() >= self::LABOR_SCORE_CUTOFF) {
+            // --- Labor formula (replaces Normal Hours; percent-of-sales, no sales-flex) ---
+            $floorGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['labor_floor']);
+            $ceilGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['labor_ceil']);
+
+            $haveLaborGoals = $floorGoal !== null && $ceilGoal !== null;
+            $updFloor = $haveLaborGoals ? $floorGoal * $w : 0.0;
+            $updCeil = $haveLaborGoals ? $ceilGoal * $w : 0.0;
+
+            [$laborScoreValue, $laborCase] = $haveLaborGoals
+                ? $this->laborScore($updFloor, $updCeil, $laborWeekToDateAvgPercent, $normalMax)
+                : [0.0, 0];
+
+            $haveOtGoal = $otGoal !== null;
+            $updOt = $haveOtGoal ? $otGoal * $w : 0.0;
+            $otScore = $haveOtGoal ? $this->overtimeHoursScoreNew($updOt, $actOt, $otMax) : 0.0;
+
+            return [
+                'normal_hours' => [
+                    'key' => 'labor',
+                    'label' => 'Labor',
+                    'score' => round($laborScoreValue, 2),
+                    'max' => $normalMax,
+                    'actual_percent' => round($laborWeekToDateAvgPercent, 2),
+                    'weekly_goal_floor' => $floorGoal,
+                    'weekly_goal_ceil' => $ceilGoal,
+                    'prorate_fraction' => round($w, 4),
+                    'floor_goal' => round($updFloor, 2),
+                    'ceil_goal' => round($updCeil, 2),
+                    'days_elapsed' => $weekToDateDayCount,
+                    'case' => $laborCase,
+                ],
+                'overtime_hours' => [
+                    'key' => 'overtime_hours',
+                    'label' => 'Overtime Hours',
+                    'score' => round($otScore, 2),
+                    'max' => $otMax,
+                    'actual_overtime_hours' => round($actOt, 2),
+                    'weekly_goal' => $otGoal,
+                    'updated_goal' => round($updOt, 2),
+                ],
+            ];
+        }
+
+        $actNormal = $this->enteredKeyValueLatest($store, self::SCORE_KEY_NORMAL_HOURS, $weekStart, $day);
 
         if ($day->toDateString() >= self::NORMAL_HOURS_NEW_CUTOFF) {
             // --- New formula (floor/ceil) ---
@@ -2169,6 +2230,53 @@ class ReportsController extends Controller
         }
 
         return max(0.0, ($max / 100) - (abs($updOt - $actOt) / $updNormal) * 2) * 100;
+    }
+
+    /**
+     * Overtime-hours score (out of $max — 10 on/after HNR_PLUS_CUTOFF),
+     * formula used on/after LABOR_SCORE_CUTOFF: no longer scaled against the
+     * Normal Hours goal (removed in favor of Labor); the overage is divided
+     * flat by 100 instead. Mirrors the source formula:
+     *   =IF(actual<=target, 0.1, MAX(0, 0.1 - (actual-target)/100))
+     */
+    private function overtimeHoursScoreNew(float $updOt, float $actOt, float $max = self::SCORE_MAX_HNR_PLUS['overtime_hours']): float
+    {
+        if ($actOt <= $updOt) {
+            return $max;
+        }
+
+        return max(0.0, ($max / 100) - ($actOt - $updOt) / 100) * 100;
+    }
+
+    /**
+     * Labor score (out of $max — 30 on/after HNR_PLUS_CUTOFF), the category
+     * that replaces Normal Hours on/after LABOR_SCORE_CUTOFF. Unlike Normal
+     * Hours, Labor is a percent-of-sales figure (week-to-date average labor
+     * %, the same figure reported as labor_week_to_date_avg), not hours, and
+     * is not sales-flexed — $floor/$ceil are still prorated by the
+     * day-elapsed fraction W the same way Normal Hours' goals were.
+     *
+     * $actual/$floor/$ceil are percentage-point numbers (e.g. 19.87 meaning
+     * 19.87%), so the point gap is divided by 100 before the *30 multiplier
+     * to match the source spreadsheet's percent-formatted (fractional) cells:
+     *   =MAX(0, 0.3 - IF(actual>highest, (actual-highest)*30,
+     *                  IF(actual<lowest, (lowest-actual)*30, 0)))
+     * Returns [score, case] where case 1=over ceil, 2=under floor, 3=within.
+     */
+    private function laborScore(float $floor, float $ceil, float $actual, float $max = self::SCORE_MAX_HNR_PLUS['normal_hours']): array
+    {
+        if ($actual > $ceil) {
+            $deduction = (($actual - $ceil) / 100) * 30;
+            $case = 1;
+        } elseif ($actual < $floor) {
+            $deduction = (($floor - $actual) / 100) * 30;
+            $case = 2;
+        } else {
+            $deduction = 0.0;
+            $case = 3;
+        }
+
+        return [max(0.0, ($max / 100) - $deduction) * 100, $case];
     }
 
     /**
