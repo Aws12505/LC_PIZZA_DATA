@@ -66,6 +66,7 @@ class DetailOrdersProcessor extends BaseTableProcessor
             'put_into_portal_before_promise_time',
             'portal_compartments_used',
             'time_loaded_into_portal',
+            'marketplace_order_number',
         ];
     }
 
@@ -114,6 +115,7 @@ class DetailOrdersProcessor extends BaseTableProcessor
             'putintoportalbeforepromisetime' => 'put_into_portal_before_promise_time',
             'portalcompartmentsused' => 'portal_compartments_used',
             'timeloadedintoportal' => 'time_loaded_into_portal',
+            'marketplaceordernumber' => 'marketplace_order_number',
         ]);
     }
 

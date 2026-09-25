@@ -23,6 +23,9 @@ use App\Models\NonNegotiableReport;
 use App\Models\GoToCall;
 use App\Models\TransferInOut;
 use App\Models\InventoryOrder;
+use App\Models\CleaningReview;
+use App\Models\CustomerService;
+use App\Models\HnrPlusItem;
 /**
  * DSPR Lite Report Controller
  *
@@ -43,12 +46,46 @@ class ReportsController extends Controller
         '201128' => 'EMB Cheese',
         '201106' => 'EMB Pepperoni',
     ];
+    /** Points per unit for the weighted upselling score. */
+    private const UPSELLING_SCORE_WEIGHTS = [
+        'wings' => 2.25,
+        'crazy_bread' => 2.25,
+        'bev_2l' => 2.20,
+        'cookies' => 2.15,
+        'bev_20oz' => 1.8,
+        'italian_cheese_bread' => 1.5,
+        'EMB Pepperoni' => 0.7,
+        'EMB Cheese' => 0.6,
+        'sauce' => 0.6,
+    ];
     private const LTO_ITEM_IDS = [
         // Add LTO item IDs here, e.g. '201234', '205678'
-        '406152'
+        '101466',
+        '101465'
+    ];
+    private const IMPORTANT_ITEMS_HNR_ITEM_IDS = ['103001', '101001', '103044', '105001', '201048'];
+
+    // private const PORTIONING_INGREDIENT_IDS = [
+    //     404, 3813, 1042, '4660/4621', 1103, 1515, '03', '02',
+    //     4943, 389, 1095, 476, 4759, 5858, 4659, 1612, 4342, 967, 4913,
+    // ];
+    private const PORTIONING_DETAIL_IDS = [
+        404,
+        3813,
+        1042,
+        '4660/4621',
+        1515,
+        1103,
+        '03',
+        '02',
     ];
 
     private const LABOR_ENTERED_KEY_ID = 23;
+    // Starting 2026-07-07, labor is entered a day late under key 28 ("Yesterday's
+    // Labor Cost"): the entry dated D holds the labor cost for business date D-1.
+    // So a business date on/after the cutoff pulls key 28 from entry_date = date+1.
+    private const LABOR_YESTERDAY_KEY_ID = 28;
+    private const LABOR_YESTERDAY_KEY_CUTOFF = '2026-07-07';
     private const IN_STORE_BUCKET = [
         'placed' => ['Register', 'Drive Thru', 'SoundHoundAgent', 'Phone', 'CallCenterAgent'],
         'fulfilled' => ['Register', 'Drive-Thru'],
@@ -81,10 +118,28 @@ class ReportsController extends Controller
         'portal' => 11,
         'hnr' => 12,
         'orders_vs_sales' => 15,
+        'labor_floor' => 19,
+        'labor_ceil' => 20,
     ];
 
     /** Dates on/after this use the floor/ceil normal-hours formula. */
     private const NORMAL_HOURS_NEW_CUTOFF = '2026-06-30';
+
+    /**
+     * Dates on/after this replace the HnR store-score category with HNR+
+     * (see scoreHnrPlus()) and use SCORE_MAX_HNR_PLUS instead of SCORE_MAX.
+     */
+    private const HNR_PLUS_CUTOFF = '2026-08-18';
+
+    /**
+     * Dates on/after this replace the Normal Hours store-score category with
+     * Labor (percent-of-sales floor/ceil, see laborScore()) in the same slot,
+     * and switch Overtime Hours to overtimeHoursScoreNew(). Neither category
+     * is sales-flexed any more (no salesDiff/steps adjustment); Labor's
+     * floor/ceil and Overtime's goal are still prorated by the day-elapsed
+     * fraction W like Normal Hours was.
+     */
+    private const LABOR_SCORE_CUTOFF = '2026-09-08';
 
     /** entered_keys ids feeding the score. */
     private const SCORE_KEY_NORMAL_HOURS = 25;
@@ -97,6 +152,21 @@ class ReportsController extends Controller
         'overtime_hours' => 15,
         'portal' => 10,
         'hnr' => 10,
+        'transfer_in' => 7.5,
+        'items_turned_off' => 7.5,
+        'orders_vs_sales' => 15,
+    ];
+
+    /**
+     * Maximum points per category (sum = 100), on/after HNR_PLUS_CUTOFF: the
+     * 'hnr' slot becomes the HNR+ category (see scoreHnrPlus()) and gets a
+     * bigger share, taken from normal_hours/overtime_hours.
+     */
+    private const SCORE_MAX_HNR_PLUS = [
+        'normal_hours' => 30,
+        'overtime_hours' => 10,
+        'portal' => 10,
+        'hnr' => 20,
         'transfer_in' => 7.5,
         'items_turned_off' => 7.5,
         'orders_vs_sales' => 15,
@@ -202,6 +272,89 @@ class ReportsController extends Controller
         ];
     }
 
+    public function cleaningReviewReport(string $store, string $date): JsonResponse
+    {
+        $this->validateInputs($store, $date);
+
+        return response()->json($this->buildCleaningReviewReport($store, $date));
+    }
+
+    private function buildCleaningReviewReport(string $store, string $date): array
+    {
+        $day = CarbonImmutable::parse($date)->startOfDay();
+        [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
+
+        $entries = CleaningReview::where('store_number', $store)
+            ->whereBetween('date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+            ->get(['review_place', 'score']);
+
+        $total = $entries->count();
+        $passes = $entries->where('score', 'Pass')->count();
+        $overallScore = $total > 0 ? round($passes / $total * 100, 2) : 0;
+
+        return [
+            'filtering' => [
+                'store' => $store,
+                'date' => $day->toDateString(),
+                'week_start' => $weekStart->toDateString(),
+                'week_end' => $weekEnd->toDateString(),
+            ],
+            'overall_score' => $overallScore,
+            'entries' => $entries->map(fn($e) => [
+                'review_place' => $e->review_place,
+                'score' => $e->score,
+            ])->values(),
+        ];
+    }
+
+    public function customerServiceReport(string $store, string $date): JsonResponse
+    {
+        $this->validateInputs($store, $date);
+
+        return response()->json($this->buildCustomerServiceReport($store, $date));
+    }
+
+    private function buildCustomerServiceReport(string $store, string $date): array
+    {
+        $day = CarbonImmutable::parse($date)->startOfDay();
+        [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
+
+        $entries = CustomerService::where('store_number', $store)
+            ->whereBetween('date', [$weekStart->toDateString(), $weekEnd->toDateString()])
+            ->get(['date', 'lobby_in', 'lobby_out', 'drive_thru_in', 'drive_thru_out', 'guest_service']);
+
+        return [
+            'filtering' => [
+                'store' => $store,
+                'date' => $day->toDateString(),
+                'week_start' => $weekStart->toDateString(),
+                'week_end' => $weekEnd->toDateString(),
+            ],
+            'entries' => $entries->map(fn($e) => [
+                'date' => $e->date->toDateString(),
+                'guest_service' => (float) $e->guest_service,
+                'lobby_points' => $this->timePoints($e->lobby_in, $e->lobby_out),
+                'drive_thru_points' => $this->timePoints($e->drive_thru_in, $e->drive_thru_out),
+            ])->values(),
+        ];
+    }
+
+    private function timePoints(?string $start, ?string $end): ?float
+    {
+        if ($start === null || $end === null) {
+            return null;
+        }
+
+        return round($this->timeToMinutes($end) - $this->timeToMinutes($start), 2);
+    }
+
+    private function timeToMinutes(string $time): float
+    {
+        [$hours, $minutes, $seconds] = array_pad(explode(':', $time), 3, 0);
+
+        return ((int) $hours) * 60 + ((int) $minutes) + ((int) $seconds) / 60;
+    }
+
     public function transferInOutReport(string $store, string $date): JsonResponse
     {
         $this->validateInputs($store, $date);
@@ -253,6 +406,295 @@ class ReportsController extends Controller
         ];
     }
 
+    public function hnrPlusReport(string $store, string $date): JsonResponse
+    {
+        $this->validateInputs($store, $date);
+
+        return response()->json($this->buildHnrPlusReport($store, $date));
+    }
+
+    /**
+     * Store-wide HNR+ report for the store's current business week: made/sold
+     * /void/waste/variance/no-inventory totals and percentages (of Made),
+     * plus the weighted HNR+ total score. Falls back to the most recently
+     * completed week's data if this week's HNR+ CSV hasn't landed yet (see
+     * hnrPlusEffectiveWeek()) — same lag as orders-vs-sales.
+     */
+    private function buildHnrPlusReport(string $store, string $date): array
+    {
+        $day = CarbonImmutable::parse($date)->startOfDay();
+        [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
+
+        $effective = $this->hnrPlusEffectiveWeek($store, $weekStart, $weekEnd);
+        $totals = $this->hnrPlusTotalsForWeek($store, $effective['start']);
+        $scores = $this->computeHnrPlusScores($totals);
+
+        $items = HnrPlusItem::where('store_number', $store)
+            ->where('week_start', $effective['start']->toDateString())
+            ->orderBy('item_name')
+            ->get(['item_id', 'item_name', 'made', 'sold', 'voided', 'wasted', 'variance', 'no_inventory_available']);
+
+        return [
+            'filtering' => [
+                'store' => $store,
+                'date' => $day->toDateString(),
+                'week_start' => $weekStart->toDateString(),
+                'week_end' => $weekEnd->toDateString(),
+                'data_week_start' => $effective['start']->toDateString(),
+                'data_week_end' => $effective['end']->toDateString(),
+                'used_previous_week' => $effective['used_previous_week'],
+            ],
+            ...$scores,
+            'items' => $items,
+        ];
+    }
+
+    /**
+     * Business week to actually use for HNR+ figures (report and score). If
+     * the current business week has no HNR+ rows at all (this week's export
+     * hasn't been uploaded yet), fall back to the immediately prior week's
+     * data instead. Mirrors ordersVsSalesEffectiveWeek().
+     */
+    private function hnrPlusEffectiveWeek(string $store, CarbonImmutable $weekStart, CarbonImmutable $weekEnd): array
+    {
+        $key = "hnrPlusEffectiveWeek:{$store}:{$weekStart->toDateString()}:{$weekEnd->toDateString()}";
+
+        return $this->remember($key, function () use ($store, $weekStart, $weekEnd): array {
+            $hasData = HnrPlusItem::where('store_number', $store)
+                ->where('week_start', $weekStart->toDateString())
+                ->exists();
+
+            if ($hasData) {
+                return ['start' => $weekStart, 'end' => $weekEnd, 'used_previous_week' => false];
+            }
+
+            return ['start' => $weekStart->subWeek(), 'end' => $weekEnd->subWeek(), 'used_previous_week' => true];
+        });
+    }
+
+    /** Store-wide made/sold/voided/wasted/variance/no-inventory totals for one business week (memoized). */
+    private function hnrPlusTotalsForWeek(string $store, CarbonImmutable $weekStart): array
+    {
+        $key = "hnrPlusTotalsForWeek:{$store}:{$weekStart->toDateString()}";
+
+        return $this->remember($key, function () use ($store, $weekStart): array {
+            $row = HnrPlusItem::where('store_number', $store)
+                ->where('week_start', $weekStart->toDateString())
+                ->selectRaw(
+                    'COALESCE(SUM(made), 0) as made,'
+                    . ' COALESCE(SUM(sold), 0) as sold,'
+                    . ' COALESCE(SUM(voided), 0) as voided,'
+                    . ' COALESCE(SUM(wasted), 0) as wasted,'
+                    . ' COALESCE(SUM(variance), 0) as variance,'
+                    . ' COALESCE(SUM(no_inventory_available), 0) as no_inventory_available'
+                )
+                ->first();
+
+            return [
+                'made' => (int) ($row->made ?? 0),
+                'sold' => (int) ($row->sold ?? 0),
+                'voided' => (int) ($row->voided ?? 0),
+                'wasted' => (int) ($row->wasted ?? 0),
+                'variance' => (int) ($row->variance ?? 0),
+                'no_inventory_available' => (int) ($row->no_inventory_available ?? 0),
+            ];
+        });
+    }
+
+    /**
+     * HNR+ percentages (of Made) and category scores from store-wide totals.
+     * Weighted total score (0-100): variance 35%, sold 10%, no-inventory 20%,
+     * void 20%, waste 15%.
+     */
+    private function computeHnrPlusScores(array $totals): array
+    {
+        $made = $totals['made'];
+        $pct = fn(int $value): float => $made > 0 ? round(($value / $made) * 100, 2) : 0.0;
+
+        $soldPercent = $pct($totals['sold']);
+        $voidPercent = $pct($totals['voided']);
+        $wastePercent = $pct($totals['wasted']);
+        $variancePercent = $pct($totals['variance']);
+        $noInventoryPercent = $pct($totals['no_inventory_available']);
+
+        $varianceScore = $this->hnrPlusTieredScore(abs($variancePercent), [5 => 100, 8 => 95, 11 => 90, 17 => 80, 25 => 60, 30 => 30]);
+        $noInventoryScore = $this->hnrPlusTieredScore(abs($noInventoryPercent), [5 => 100, 8 => 95, 11 => 90, 17 => 80, 25 => 60, 30 => 30]);
+        $wasteScore = $this->hnrPlusTieredScore($wastePercent, [8 => 100, 10 => 95, 12 => 90, 15 => 80, 20 => 60, 25 => 30]);
+        $voidScore = $this->hnrPlusTieredScore($voidPercent, [4 => 100, 6 => 95, 8 => 90, 11 => 80, 15 => 60, 20 => 30]);
+        $soldScore = $this->hnrPlusSoldScore($soldPercent);
+
+        $totalScore = round(
+            $varianceScore * 0.35
+            + $soldScore * 0.10
+            + $noInventoryScore * 0.20
+            + $voidScore * 0.20
+            + $wasteScore * 0.15,
+            2
+        );
+
+        return [
+            'made' => $made,
+            'sold_percent' => $soldPercent,
+            'void_percent' => $voidPercent,
+            'waste_percent' => $wastePercent,
+            'variance_percent' => $variancePercent,
+            'no_inventory_percent' => $noInventoryPercent,
+            'variance_score' => $varianceScore,
+            'sold_score' => $soldScore,
+            'no_inventory_score' => $noInventoryScore,
+            'void_score' => $voidScore,
+            'waste_score' => $wasteScore,
+            'total_score' => $totalScore,
+        ];
+    }
+
+    /**
+     * Ascending-threshold tiered score: $tiers is [threshold => score] kept in
+     * ascending threshold order; the first threshold strictly greater than
+     * $value wins. Falls through to 0 if $value meets/exceeds every threshold.
+     */
+    private function hnrPlusTieredScore(float $value, array $tiers): float
+    {
+        foreach ($tiers as $threshold => $score) {
+            if ($value < $threshold) {
+                return (float) $score;
+            }
+        }
+
+        return 0.0;
+    }
+
+    /** Sold-percent score: peaks at 80-85% of Made, falls off both above and below. */
+    private function hnrPlusSoldScore(float $soldPercent): float
+    {
+        if ($soldPercent > 105) {
+            return 0.0;
+        }
+        if ($soldPercent > 102) {
+            return 30.0;
+        }
+        if ($soldPercent > 100) {
+            return 60.0;
+        }
+        if ($soldPercent > 85) {
+            return 90.0;
+        }
+        if ($soldPercent > 80) {
+            return 80.0;
+        }
+        if ($soldPercent > 70) {
+            return 65.0;
+        }
+        if ($soldPercent > 60) {
+            return 45.0;
+        }
+
+        return 25.0;
+    }
+
+    /**
+     * HNR+ store-score category (max $max, e.g. 20): scored the same way the
+     * old scoreHnr() was — the report's weighted total_score (0-100, "actual")
+     * compared against the same 'hnr' goal metric, only penalized when below
+     * goal. Replaces scoreHnr() on/after HNR_PLUS_CUTOFF.
+     */
+    private function scoreHnrPlus(string $store, CarbonImmutable $weekStart, CarbonImmutable $weekEnd, float $max, ?float $goal): array
+    {
+        $effective = $this->hnrPlusEffectiveWeek($store, $weekStart, $weekEnd);
+        $totals = $this->hnrPlusTotalsForWeek($store, $effective['start']);
+        $scores = $this->computeHnrPlusScores($totals);
+
+        $actual = $scores['total_score'];
+
+        if ($goal === null) {
+            $score = 0.0;
+        } else {
+            $below = max(0.0, $goal - $actual);
+            $score = round(max(0.0, $max - $below), 2);
+        }
+
+        return [
+            'key' => 'hnr_plus',
+            'label' => 'HNR+',
+            'score' => $score,
+            'max' => $max,
+            'actual_percent' => $actual,
+            'goal_percent' => $goal,
+            'data_week_start' => $effective['start']->toDateString(),
+            'data_week_end' => $effective['end']->toDateString(),
+            'used_previous_week' => $effective['used_previous_week'],
+            'breakdown' => $scores,
+        ];
+    }
+
+    public function portioningReport(string $store, string $date): JsonResponse
+    {
+        $this->validateInputs($store, $date);
+
+        return response()->json($this->buildPortioningReport($store, $date));
+    }
+
+    private function buildPortioningReport(string $store, string $date): array
+    {
+        $day = CarbonImmutable::parse($date)->startOfDay();
+        [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
+
+        $queries = DatabaseRouter::routedQueries(
+            'alta_inventory_ingredient_usage',
+            $weekStart->toMutable(),
+            $weekEnd->toMutable()
+        );
+
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
+            $union->unionAll($q);
+        }
+
+        $rows = DB::query()
+            ->fromSub($union, 'u')
+            ->where('franchise_store', $store)
+            ->where('count_period', 'W')
+            ->groupBy('ingredient_id', 'ingredient_description')
+            ->get([
+                'ingredient_id',
+                'ingredient_description',
+                DB::raw('SUM((theoretical_usage * ingredient_unit_cost) + ((actual_usage - theoretical_usage + variance_qty) * ingredient_unit_cost)) as theo_usage_value'),
+                DB::raw('SUM(variance_qty * ingredient_unit_cost) as variance_value'),
+            ]);
+
+        $theoUsage = round((float) $rows->sum('theo_usage_value'), 2);
+
+        $detailIds = array_map('strval', self::PORTIONING_DETAIL_IDS);
+
+        $breakdown = $rows
+            ->filter(fn($row) => in_array((string) $row->ingredient_id, $detailIds, true))
+            ->map(function ($row) use ($theoUsage) {
+                $varianceValue = round((float) $row->variance_value, 2);
+
+                return [
+                    'ingredient_id' => $row->ingredient_id,
+                    'ingredient_description' => $row->ingredient_description,
+                    'variance_value' => $varianceValue,
+                    'percentage_of_theo_usage' => $theoUsage != 0.0
+                        ? round($varianceValue / $theoUsage * 100, 2)
+                        : 0.0,
+                ];
+            })
+            ->values()
+            ->toArray();
+
+        return [
+            'filtering' => [
+                'store' => $store,
+                'date' => $day->toDateString(),
+                'week_start' => $weekStart->toDateString(),
+                'week_end' => $weekEnd->toDateString(),
+            ],
+            'theo_usage' => $theoUsage,
+            'variance_breakdown' => $breakdown,
+        ];
+    }
+
     public function ordersVsSalesReport(string $store, string $date): JsonResponse
     {
         $this->validateInputs($store, $date);
@@ -265,33 +707,56 @@ class ReportsController extends Controller
         $day = CarbonImmutable::parse($date)->startOfDay();
         [$weekStart, $weekEnd] = $this->isoBusinessWeek($day);
 
+        $effectiveWeek = $this->ordersVsSalesEffectiveWeek($store, $weekStart, $weekEnd);
+        $effectiveWeekStart = $effectiveWeek['start'];
+        $effectiveWeekEnd = $effectiveWeek['end'];
+
         return [
             'filtering' => [
                 'store' => $store,
                 'date' => $day->toDateString(),
                 'week_start' => $weekStart->toDateString(),
                 'week_end' => $weekEnd->toDateString(),
+                'data_week_start' => $effectiveWeekStart->toDateString(),
+                'data_week_end' => $effectiveWeekEnd->toDateString(),
+                'used_previous_week' => $effectiveWeek['used_previous_week'],
             ],
-            'current_week' => $this->ordersVsSalesPeriod($store, $weekStart, $weekEnd),
-            'four_weeks' => $this->ordersVsSalesPeriod($store, $weekStart->subWeeks(3), $weekEnd),
-            'twelve_weeks' => $this->ordersVsSalesPeriod($store, $weekStart->subWeeks(11), $weekEnd),
-            'six_months' => $this->ordersVsSalesPeriod($store, $weekStart->subMonths(6), $weekEnd),
+            'current_week' => $this->ordersVsSalesPeriod($store, $effectiveWeekStart, $effectiveWeekEnd),
+            'four_weeks' => $this->ordersVsSalesPeriod($store, $effectiveWeekStart->subWeeks(3), $effectiveWeekEnd),
+            'twelve_weeks' => $this->ordersVsSalesPeriod($store, $effectiveWeekStart->subWeeks(11), $effectiveWeekEnd),
+            'six_months' => $this->ordersVsSalesPeriod($store, $effectiveWeekStart->subMonths(6), $effectiveWeekEnd),
         ];
+    }
+
+    /**
+     * Business week to actually use for orders-vs-sales figures (report and
+     * score). If the current business week has no Blue Line and no Pepsi
+     * orders at all (e.g. this week's delivery hasn't landed yet), its data
+     * isn't in yet, so we fall back to the immediately prior week's data
+     * instead. Looks back one week only - if that's empty too, it's used
+     * as-is.
+     */
+    private function ordersVsSalesEffectiveWeek(string $store, CarbonImmutable $weekStart, CarbonImmutable $weekEnd): array
+    {
+        $key = "ordersVsSalesEffectiveWeek:{$store}:{$weekStart->toDateString()}:{$weekEnd->toDateString()}";
+
+        return $this->remember($key, function () use ($store, $weekStart, $weekEnd): array {
+            $hasData = $this->blueLineTotalForRange($store, $weekStart, $weekEnd) > 0.0
+                || $this->pepsiTotalForRange($store, $weekStart, $weekEnd) > 0.0;
+
+            if ($hasData) {
+                return ['start' => $weekStart, 'end' => $weekEnd, 'used_previous_week' => false];
+            }
+
+            return ['start' => $weekStart->subWeek(), 'end' => $weekEnd->subWeek(), 'used_previous_week' => true];
+        });
     }
 
     private function ordersVsSalesPeriod(string $store, CarbonImmutable $start, CarbonImmutable $end): array
     {
         $sales = $this->salesTotal($store, $start, $end);
-
-        $blueLine = (float) InventoryOrder::where('store_number', $store)
-            ->whereBetween('delivery_date', [$start->toDateString(), $end->toDateString()])
-            ->where('vendor_name', 'like', '%BLUE LINE%')
-            ->sum('invoice_total');
-
-        $pepsi = (float) InventoryOrder::where('store_number', $store)
-            ->whereBetween('delivery_date', [$start->toDateString(), $end->toDateString()])
-            ->where('vendor_name', 'like', '%PEPSI%')
-            ->sum('invoice_total');
+        $blueLine = $this->blueLineTotalForRange($store, $start, $end);
+        $pepsi = $this->pepsiTotalForRange($store, $start, $end);
 
         return [
             'sales' => round($sales, 2),
@@ -300,6 +765,186 @@ class ReportsController extends Controller
             'blue_line_pct' => $sales > 0 ? round($blueLine / $sales * 100, 2) : 0,
             'pepsi_pct' => $sales > 0 ? round($pepsi / $sales * 100, 2) : 0,
         ];
+    }
+
+    // ---------------------------------------------------------------------
+    // Sales history (all-time weekly series + fiscal period/quarter/year rollups)
+    // ---------------------------------------------------------------------
+
+    /** Numeric columns summed at every granularity (weeks, periods, quarters, years). */
+    private const SALES_HISTORY_MEASURES = [
+        'total_sales',
+        'customer_count',
+        'royalty_obligation',
+        'phone_sales',
+        'call_center_sales',
+        'drive_thru_sales',
+        'website_sales',
+        'mobile_sales',
+        'doordash_sales',
+        'ubereats_sales',
+        'grubhub_sales',
+    ];
+
+    /**
+     * All-time sales/customer-count/channel series for a store, in a single query,
+     * bucketed into Tuesday-Monday business weeks and rolled up (in memory) into
+     * fiscal periods, quarters, and years so the frontend can switch views freely.
+     */
+    private function buildSalesHistory(string $store, string $date): array
+    {
+        $day = CarbonImmutable::parse($date)->startOfDay();
+
+        // Bucket each business_date into its Tuesday-starting business week (matches
+        // isoBusinessWeek()'s Tue-Mon def). DAYOFWEEK: Sun=1..Sat=7 (locale-independent),
+        // so (DAYOFWEEK + 4) % 7 = days to subtract to reach the week's Tuesday.
+        $weekStartExpr = 'DATE_SUB(business_date, INTERVAL ((DAYOFWEEK(business_date) + 4) % 7) DAY)';
+
+        $rows = DailyStoreSummary::where('franchise_store', $store)
+            ->selectRaw(
+                "{$weekStartExpr} as week_start,"
+                . ' COALESCE(SUM(royalty_obligation), 0) as total_sales,'
+                . ' COALESCE(SUM(customer_count), 0) as customer_count,'
+                . ' COALESCE(SUM(royalty_obligation) - SUM(phone_sales) - SUM(call_center_sales)'
+                . ' - SUM(drive_thru_sales) - SUM(website_sales) - SUM(mobile_sales)'
+                . ' - SUM(doordash_sales) - SUM(ubereats_sales) - SUM(grubhub_sales), 0) as royalty_obligation,'
+                . ' COALESCE(SUM(phone_sales), 0) as phone_sales,'
+                . ' COALESCE(SUM(call_center_sales), 0) as call_center_sales,'
+                . ' COALESCE(SUM(drive_thru_sales), 0) as drive_thru_sales,'
+                . ' COALESCE(SUM(website_sales), 0) as website_sales,'
+                . ' COALESCE(SUM(mobile_sales), 0) as mobile_sales,'
+                . ' COALESCE(SUM(doordash_sales), 0) as doordash_sales,'
+                . ' COALESCE(SUM(ubereats_sales), 0) as ubereats_sales,'
+                . ' COALESCE(SUM(grubhub_sales), 0) as grubhub_sales'
+            )
+            ->groupByRaw($weekStartExpr)
+            ->orderByRaw($weekStartExpr)
+            ->get();
+
+        $weeks = [];
+        $periods = [];
+        $quarters = [];
+        $years = [];
+
+        foreach ($rows as $row) {
+            $weekStart = CarbonImmutable::parse($row->week_start);
+
+            // --- Fiscal calendar (mirrors buildCustomerCountAndSalesReport) ---
+            $fiscalYear = $this->fiscalYearOf($weekStart);
+            $yearStart = $this->fiscalYearStart($fiscalYear);
+            $weekIdx = (int) ($yearStart->diffInDays($weekStart) / 7);
+            $periodIdx = (int) floor($weekIdx / 4);
+            $periodNumber = $periodIdx + 1;
+            $weekNumber = $periodIdx * 4 + $weekIdx % 4 + 1;
+
+            // 3-3-3-4 quarters (mirrors quarterBounds); any rare 53rd-week overflow folds into Q4.
+            $quarterNumber = 4;
+            $quarterStartPeriodIdx = 9;
+            $acc = 0;
+            foreach ([3, 3, 3, 4] as $qi => $n) {
+                if ($periodIdx < $acc + $n) {
+                    $quarterNumber = $qi + 1;
+                    $quarterStartPeriodIdx = $acc;
+                    break;
+                }
+                $acc += $n;
+            }
+
+            $periodStart = $yearStart->addWeeks($periodIdx * 4);
+            $quarterStart = $yearStart->addWeeks($quarterStartPeriodIdx * 4);
+            $quarterWeeks = $quarterNumber === 4 ? 16 : 12;
+
+            // --- Week row (enriched with fiscal labels so the frontend can also regroup client-side) ---
+            $weeks[] = [
+                'week_start' => $weekStart->toDateString(),
+                'week_end' => $weekStart->addDays(6)->toDateString(),
+                'fiscal_year' => $fiscalYear,
+                'week_number' => $weekNumber,
+                'period_number' => $periodNumber,
+                'quarter_number' => $quarterNumber,
+            ] + $this->formatSalesMeasures($this->addSalesMeasures([], $row));
+
+            // --- Roll up into period / quarter / year buckets (keyed by canonical fiscal start) ---
+            $pKey = $periodStart->toDateString();
+            $periods[$pKey] ??= [
+                'fiscal_year' => $fiscalYear,
+                'number' => $periodNumber,
+                'start' => $periodStart,
+                'end' => $periodStart->addWeeks(4)->subDay(),
+            ];
+            $periods[$pKey] = $this->addSalesMeasures($periods[$pKey], $row);
+
+            $qKey = $quarterStart->toDateString();
+            $quarters[$qKey] ??= [
+                'fiscal_year' => $fiscalYear,
+                'number' => $quarterNumber,
+                'start' => $quarterStart,
+                'end' => $quarterStart->addWeeks($quarterWeeks)->subDay(),
+            ];
+            $quarters[$qKey] = $this->addSalesMeasures($quarters[$qKey], $row);
+
+            $yKey = (string) $fiscalYear;
+            $years[$yKey] ??= [
+                'fiscal_year' => $fiscalYear,
+                'number' => null,
+                'start' => $yearStart,
+                'end' => $this->fiscalYearStart($fiscalYear + 1)->subDay(),
+            ];
+            $years[$yKey] = $this->addSalesMeasures($years[$yKey], $row);
+        }
+
+        return [
+            'filtering' => [
+                'store' => $store,
+                'date' => $day->toDateString(),
+            ],
+            'weeks' => $weeks,
+            'periods' => $this->formatSalesBuckets($periods, 'period_number', 'period'),
+            'quarters' => $this->formatSalesBuckets($quarters, 'quarter_number', 'quarter'),
+            'years' => $this->formatSalesBuckets($years, null, 'year'),
+        ];
+    }
+
+    /** Accumulate one weekly SQL row's measures into a bucket (creates keys on first hit). */
+    private function addSalesMeasures(array $bucket, object $row): array
+    {
+        foreach (self::SALES_HISTORY_MEASURES as $m) {
+            $bucket[$m] = ($bucket[$m] ?? 0) + (float) $row->$m;
+        }
+        $bucket['weeks_count'] = ($bucket['weeks_count'] ?? 0) + 1;
+
+        return $bucket;
+    }
+
+    /** Round measures for output; customer_count as int, money to 2dp. */
+    private function formatSalesMeasures(array $bucket): array
+    {
+        $out = [];
+        foreach (self::SALES_HISTORY_MEASURES as $m) {
+            $out[$m] = $m === 'customer_count'
+                ? (int) round($bucket[$m] ?? 0)
+                : round((float) ($bucket[$m] ?? 0), 2);
+        }
+
+        return $out;
+    }
+
+    /** Turn the keyed period/quarter/year buckets into an ordered, labeled list. */
+    private function formatSalesBuckets(array $buckets, ?string $numberKey, string $label): array
+    {
+        $out = [];
+        foreach ($buckets as $b) {                 // insertion order = chronological
+            $meta = ['fiscal_year' => $b['fiscal_year']];
+            if ($numberKey !== null) {
+                $meta[$numberKey] = $b['number'];
+            }
+            $meta["{$label}_start"] = $b['start']->toDateString();
+            $meta["{$label}_end"] = $b['end']->toDateString();
+            $meta['weeks_count'] = $b['weeks_count'];
+            $out[] = $meta + $this->formatSalesMeasures($b);
+        }
+
+        return $out;
     }
 
     /**
@@ -410,8 +1055,13 @@ class ReportsController extends Controller
             'promo' => $this->buildPromoReport($store, $date),
             'non-negotiable-reports' => $this->buildNonNegotiableReports($store, $date),
             'go-to' => $this->buildGoToReport($store, $date),
+            'cleaning-review' => $this->buildCleaningReviewReport($store, $date),
+            'customer-service' => $this->buildCustomerServiceReport($store, $date),
             'transfer-in-out' => $this->buildTransferInOutReport($store, $date),
+            'portioning' => $this->buildPortioningReport($store, $date),
             'orders-vs-sales' => $this->buildOrdersVsSalesReport($store, $date),
+            'hnr-plus' => $this->buildHnrPlusReport($store, $date),
+            'sales-history' => $this->buildSalesHistory($store, $date),
         ]);
     }
 
@@ -478,7 +1128,7 @@ class ReportsController extends Controller
             $cacheKey,
             $ttl,
             fn() =>
-            $this->buildMultiDashboard($storesInput, $startDate, $endDate)
+                $this->buildMultiDashboard($storesInput, $startDate, $endDate)
         );
 
         return response()->json($result);
@@ -530,10 +1180,16 @@ class ReportsController extends Controller
             ->with('participants')
             ->get();
 
-        $laborEntries = EnteredKeyValue::whereIn('store_id', $stores)
-            ->where('key_id', self::LABOR_ENTERED_KEY_ID)
-            ->whereBetween('entry_date', [$start->toDateString(), $end->toDateString()])
-            ->get();
+        // One value per store per day: take the latest entry for that store/day
+        // (whichever user filled it out last), not a sum across every filler.
+        $laborEntries = EnteredKeyValue::whereIn('id', function ($q) use ($stores, $start, $end) {
+            $q->from('entered_key_values')
+                ->selectRaw('MAX(id)')
+                ->whereIn('store_id', $stores)
+                ->where('is_mistaken', false);
+            $this->applyLaborKeySegments($q, $start, $end);
+            $q->groupBy('store_id', 'entry_date');
+        })->get();
 
         $grandTotals = $this->initializeMetricsBag();
         $byStore = [];
@@ -880,6 +1536,9 @@ class ReportsController extends Controller
         $hourlySalesWeekToDateSum = $this->hourlySalesByChannelSum($store, $weekToDateStart, $weekToDateEnd);
         $weekToDateTotals = $this->dailySummaryTotals($store, $weekToDateStart, $weekToDateEnd);
         $weekToDateTotalsAvg = $this->averageWeekToDateTotals($weekToDateTotals, $weekToDateDayCount);
+        $importantItemsHnrDailyRows = $this->importantItemsHnrDailyRowsForRange($store, $weekToDateStart, $weekToDateEnd);
+        $importantItemsHnrWeekToDateTotals = $this->sumImportantItemsHnrRows($importantItemsHnrDailyRows);
+        $importantItemsHnrDayTotals = $this->importantItemsHnrRowForDay($importantItemsHnrDailyRows, $day);
         $weekToDateSalesTotals = $this->totalSalesByChannelForRange($store, $weekToDateStart, $weekToDateEnd);
         $weekToDateSalesTotalsAvg = $this->averageSalesByChannelTotals($weekToDateSalesTotals, $weekToDateDayCount);
         $weekToDateTopItems = $this->topItemsForRange($store, $weekToDateStart, $weekToDateEnd, 5, 'gross_sales');
@@ -907,15 +1566,13 @@ class ReportsController extends Controller
         $weekToDateSalesTotal = $this->sumSalesByDayRange($thisWeekByDay, $weekToDateStart, $weekToDateEnd);
         $weekToDateSalesAvg = $this->averageValue($weekToDateSalesTotal, $weekToDateDayCount);
 
-        $laborValueDay = $this->enteredKeyValueSumForRange(
+        $laborValueDay = $this->laborValueSumForRange(
             $store,
-            self::LABOR_ENTERED_KEY_ID,
             $day,
             $day
         );
-        $laborWeekToDateSum = $this->enteredKeyValueSumForRange(
+        $laborWeekToDateSum = $this->laborValueSumForRange(
             $store,
-            self::LABOR_ENTERED_KEY_ID,
             $weekToDateStart,
             $weekToDateEnd
         );
@@ -924,11 +1581,17 @@ class ReportsController extends Controller
         $laborPercent = $this->percentOfSales($laborValueDay, $daySales);
         $laborWeekToDatePercent = $this->percentOfSales($laborWeekToDateSum, $weekToDateSalesTotal);
         $laborWeekToDateAvgPercent = $this->percentOfSales($laborWeekToDateAvgValue, $weekToDateSalesAvg);
+        $laborWeekToDateByDay = $this->laborByDayForRange($store, $weekToDateStart, $weekToDateEnd, $thisWeekByDay);
 
         $upsellingDay = $this->upsellingForRange($store, $day, $day);
         $upsellingWeekToDate = $this->upsellingForRange($store, $weekToDateStart, $weekToDateEnd);
         $totalUpsellingDay = $this->totalUpsellingUnits($upsellingDay);
         $totalUpsellingWeekToDate = $this->totalUpsellingUnits($upsellingWeekToDate);
+
+        $upsellingScoreDay = $this->upsellingScoreForItems($upsellingDay);
+        $upsellingScoreWeekToDate = $this->upsellingScoreForItems($upsellingWeekToDate);
+        $totalUpsellingScoreDay = $this->totalUpsellingScore($upsellingScoreDay);
+        $totalUpsellingScoreWeekToDate = $this->totalUpsellingScore($upsellingScoreWeekToDate);
 
         $totalSales = [
             'royalty_obligation' => 0,
@@ -990,6 +1653,7 @@ class ReportsController extends Controller
             $prevWeekStart,
             $previousWeekTotal,
             $weekToDateSalesTotal,
+            $laborWeekToDateAvgPercent,
             $goalMetrics
         );
 
@@ -1105,6 +1769,10 @@ class ReportsController extends Controller
                 'hnr_week_to_date' => $this->hnrTotals($weekToDateTotals),
                 'hnr_week_to_date_avg' => $this->hnrTotalsAverage($weekToDateTotals, $weekToDateDayCount),
 
+                'important_items_hnr' => $this->hnrTotals($importantItemsHnrDayTotals),
+                'important_items_hnr_week_to_date' => $this->hnrTotals($importantItemsHnrWeekToDateTotals),
+                'important_items_hnr_week_to_date_avg' => $this->hnrTotalsAverage($importantItemsHnrWeekToDateTotals, $weekToDateDayCount),
+
                 'upselling' => [
                     'day' => $upsellingDay,
                     'week_to_date' => $upsellingWeekToDate,
@@ -1112,9 +1780,17 @@ class ReportsController extends Controller
                     'total_upselling_week_to_date' => $totalUpsellingWeekToDate,
                 ],
 
+                'upselling_score' => [
+                    'day' => $upsellingScoreDay,
+                    'week_to_date' => $upsellingScoreWeekToDate,
+                    'total_upselling_score_day' => $totalUpsellingScoreDay,
+                    'total_upselling_score_week_to_date' => $totalUpsellingScoreWeekToDate,
+                ],
+
                 'labor' => $laborPercent,
                 'labor_week_to_date' => $laborWeekToDatePercent,
                 'labor_week_to_date_avg' => $laborWeekToDateAvgPercent,
+                'labor_week_to_date_by_day' => $laborWeekToDateByDay,
 
                 'portal' => array_merge($this->portalMetrics($store, $day), [
                     'week_to_date' => $weekToDatePortal,
@@ -1194,10 +1870,20 @@ class ReportsController extends Controller
         CarbonImmutable $prevWeekStart,
         float $previousWeekTotal,
         float $weekToDateSalesTotal,
+        float $laborWeekToDateAvgPercent,
         array $goalMetrics
     ): array {
         // Per-day rows shared by the HnR and portal daily-mean calcs (one query).
         $dailyRows = $this->dailySummaryRowsForRange($store, $weekStart, $day);
+
+        $ordersVsSalesEffectiveWeek = $this->ordersVsSalesEffectiveWeek($store, $weekStart, $weekStart->addDays(6));
+        $ordersVsSalesEffectiveWeekStart = $ordersVsSalesEffectiveWeek['start'];
+        $ordersVsSalesEffectiveDay = $ordersVsSalesEffectiveWeek['used_previous_week'] ? $day->subWeek() : $day;
+
+        // On/after HNR_PLUS_CUTOFF: HNR+ replaces HnR and normal/overtime hours
+        // caps shrink to make room for it (sum stays 100 either way).
+        $useHnrPlus = $day->toDateString() >= self::HNR_PLUS_CUTOFF;
+        $scoreMax = $useHnrPlus ? self::SCORE_MAX_HNR_PLUS : self::SCORE_MAX;
 
         $hours = $this->scoreHours(
             $store,
@@ -1208,8 +1894,23 @@ class ReportsController extends Controller
             $prevWeekStart,
             $previousWeekTotal,
             $weekToDateSalesTotal,
-            $goalMetrics
+            $laborWeekToDateAvgPercent,
+            $goalMetrics,
+            $scoreMax
         );
+
+        $hnrCategory = $useHnrPlus
+            ? $this->scoreHnrPlus(
+                $store,
+                $weekStart,
+                $weekStart->addDays(6),
+                $scoreMax['hnr'],
+                $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['hnr'])
+            )
+            : $this->scoreHnr(
+                $this->importantItemsHnrDailyRowsForRange($store, $weekStart, $day),
+                $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['hnr'])
+            );
 
         $details = [
             $hours['normal_hours'],
@@ -1218,17 +1919,14 @@ class ReportsController extends Controller
                 $dailyRows,
                 $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['portal'])
             ),
-            $this->scoreHnr(
-                $dailyRows,
-                $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['hnr'])
-            ),
+            $hnrCategory,
             $this->scoreTransferIn($store, $weekStart, $day),
             $this->scoreItemsTurnedOff($store, $weekStart, $day),
             $this->scoreOrdersVsSales(
                 $store,
-                $weekStart->subWeeks(3),
-                $day,
-                $this->salesTotal($store, $weekStart->subWeeks(3), $day),
+                $ordersVsSalesEffectiveWeekStart->subWeeks(3),
+                $ordersVsSalesEffectiveDay,
+                $this->salesTotal($store, $ordersVsSalesEffectiveWeekStart->subWeeks(3), $ordersVsSalesEffectiveDay),
                 $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['orders_vs_sales'])
             ),
         ];
@@ -1271,10 +1969,12 @@ class ReportsController extends Controller
         CarbonImmutable $prevWeekStart,
         float $previousWeekTotal,
         float $weekToDateSalesTotal,
-        array $goalMetrics
+        float $laborWeekToDateAvgPercent,
+        array $goalMetrics,
+        array $scoreMax = self::SCORE_MAX
     ): array {
-        $normalMax = self::SCORE_MAX['normal_hours'];
-        $otMax = self::SCORE_MAX['overtime_hours'];
+        $normalMax = $scoreMax['normal_hours'];
+        $otMax = $scoreMax['overtime_hours'];
 
         $salesGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['sales']);
         $otGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['overtime_hours']);
@@ -1290,8 +1990,53 @@ class ReportsController extends Controller
             $w = $weekToDateDayCount / 7;
         }
 
-        $actNormal = $this->enteredKeyValueLatest($store, self::SCORE_KEY_NORMAL_HOURS, $weekStart, $day);
         $actOt = $this->enteredKeyValueLatest($store, self::SCORE_KEY_OVERTIME_HOURS, $weekStart, $day);
+
+        if ($day->toDateString() >= self::LABOR_SCORE_CUTOFF) {
+            // --- Labor formula (replaces Normal Hours; percent-of-sales, no sales-flex) ---
+            $floorGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['labor_floor']);
+            $ceilGoal = $this->goalValueFromMetrics($goalMetrics, self::SCORE_GOAL_METRIC_IDS['labor_ceil']);
+
+            $haveLaborGoals = $floorGoal !== null && $ceilGoal !== null;
+            $updFloor = $haveLaborGoals ? $floorGoal * $w : 0.0;
+            $updCeil = $haveLaborGoals ? $ceilGoal * $w : 0.0;
+
+            [$laborScoreValue, $laborCase] = $haveLaborGoals
+                ? $this->laborScore($updFloor, $updCeil, $laborWeekToDateAvgPercent, $normalMax)
+                : [0.0, 0];
+
+            $haveOtGoal = $otGoal !== null;
+            $updOt = $haveOtGoal ? $otGoal * $w : 0.0;
+            $otScore = $haveOtGoal ? $this->overtimeHoursScoreNew($updOt, $actOt, $otMax) : 0.0;
+
+            return [
+                'normal_hours' => [
+                    'key' => 'labor',
+                    'label' => 'Labor',
+                    'score' => round($laborScoreValue, 2),
+                    'max' => $normalMax,
+                    'actual_percent' => round($laborWeekToDateAvgPercent, 2),
+                    'weekly_goal_floor' => $floorGoal,
+                    'weekly_goal_ceil' => $ceilGoal,
+                    'prorate_fraction' => round($w, 4),
+                    'floor_goal' => round($updFloor, 2),
+                    'ceil_goal' => round($updCeil, 2),
+                    'days_elapsed' => $weekToDateDayCount,
+                    'case' => $laborCase,
+                ],
+                'overtime_hours' => [
+                    'key' => 'overtime_hours',
+                    'label' => 'Overtime Hours',
+                    'score' => round($otScore, 2),
+                    'max' => $otMax,
+                    'actual_overtime_hours' => round($actOt, 2),
+                    'weekly_goal' => $otGoal,
+                    'updated_goal' => round($updOt, 2),
+                ],
+            ];
+        }
+
+        $actNormal = $this->enteredKeyValueLatest($store, self::SCORE_KEY_NORMAL_HOURS, $weekStart, $day);
 
         if ($day->toDateString() >= self::NORMAL_HOURS_NEW_CUTOFF) {
             // --- New formula (floor/ceil) ---
@@ -1311,8 +2056,8 @@ class ReportsController extends Controller
                 $origOt = $otGoal * $w;
                 $updOt = $origOt + $steps * self::SCORE_FLEX_OVERTIME_HOURS_STEP;
 
-                [$normalScore, $normalCase] = $this->normalHoursScoreNew($updFloor, $updCeil, $actNormal);
-                $otScore = $this->overtimeHoursScore($updOt, $actOt, $updCeil);
+                [$normalScore, $normalCase] = $this->normalHoursScoreNew($updFloor, $updCeil, $actNormal, $normalMax);
+                $otScore = $this->overtimeHoursScore($updOt, $actOt, $updCeil, $otMax);
             } else {
                 $origFloor = $origCeil = $origOt = $proratedSalesGoal = 0.0;
                 $salesDiff = $steps = $updFloor = $updCeil = $updOt = 0.0;
@@ -1367,7 +2112,7 @@ class ReportsController extends Controller
             $updOt = $origOt + $steps * self::SCORE_FLEX_OVERTIME_HOURS_STEP;
 
             [$normalScore, $normalCase] = $this->normalHoursScore($origNormal, $updNormal, $actNormal);
-            $otScore = $this->overtimeHoursScore($updOt, $actOt, $updNormal);
+            $otScore = $this->overtimeHoursScore($updOt, $actOt, $updNormal, $otMax);
         } else {
             $origNormal = $origOt = $proratedSalesGoal = 0.0;
             $salesDiff = $steps = $updNormal = $updOt = 0.0;
@@ -1442,13 +2187,14 @@ class ReportsController extends Controller
     }
 
     /**
-     * Normal-hours score (out of 35) — new formula (dates >= NORMAL_HOURS_NEW_CUTOFF).
-     * Full 35 when actual is within [floor, ceil].
+     * Normal-hours score (out of $max — 35, or 30 on/after HNR_PLUS_CUTOFF) —
+     * new formula (dates >= NORMAL_HOURS_NEW_CUTOFF).
+     * Full $max when actual is within [floor, ceil].
      * Above ceil: deduct ((actual - ceil) / ceil) * 5.
      * Below floor: deduct ((floor - actual) / ceil) * 5.
      * Returns [score, case] where case 1=over, 2=under, 3=within.
      */
-    private function normalHoursScoreNew(float $floor, float $ceil, float $actual): array
+    private function normalHoursScoreNew(float $floor, float $ceil, float $actual, float $max = self::SCORE_MAX['normal_hours']): array
     {
         if ($ceil <= 0) {
             return [0.0, 0];
@@ -1465,24 +2211,72 @@ class ReportsController extends Controller
             $case = 3;
         }
 
-        return [max(0.0, 35.0 - $deduction), $case];
+        return [max(0.0, $max - $deduction * 100), $case];
     }
 
     /**
-     * Overtime-hours score (out of 15). Full points when actual <= goal;
-     * otherwise penalized by the gap relative to the updated NORMAL goal.
+     * Overtime-hours score (out of $max — 15, or 10 on/after HNR_PLUS_CUTOFF).
+     * Full points when actual <= goal; otherwise penalized by the gap
+     * relative to the updated NORMAL goal.
      */
-    private function overtimeHoursScore(float $updOt, float $actOt, float $updNormal): float
+    private function overtimeHoursScore(float $updOt, float $actOt, float $updNormal, float $max = self::SCORE_MAX['overtime_hours']): float
     {
         if ($updNormal <= 0) {
             return 0.0;
         }
 
         if ($actOt <= $updOt) {
-            return 0.15 * 100;
+            return $max;
         }
 
-        return max(0.0, 0.15 - (abs($updOt - $actOt) / $updNormal) * 2) * 100;
+        return max(0.0, ($max / 100) - (abs($updOt - $actOt) / $updNormal) * 2) * 100;
+    }
+
+    /**
+     * Overtime-hours score (out of $max — 10 on/after HNR_PLUS_CUTOFF),
+     * formula used on/after LABOR_SCORE_CUTOFF: no longer scaled against the
+     * Normal Hours goal (removed in favor of Labor); the overage is divided
+     * flat by 100 instead. Mirrors the source formula:
+     *   =IF(actual<=target, 0.1, MAX(0, 0.1 - (actual-target)/100))
+     */
+    private function overtimeHoursScoreNew(float $updOt, float $actOt, float $max = self::SCORE_MAX_HNR_PLUS['overtime_hours']): float
+    {
+        if ($actOt <= $updOt) {
+            return $max;
+        }
+
+        return max(0.0, ($max / 100) - ($actOt - $updOt) / 100) * 100;
+    }
+
+    /**
+     * Labor score (out of $max — 30 on/after HNR_PLUS_CUTOFF), the category
+     * that replaces Normal Hours on/after LABOR_SCORE_CUTOFF. Unlike Normal
+     * Hours, Labor is a percent-of-sales figure (week-to-date average labor
+     * %, the same figure reported as labor_week_to_date_avg), not hours, and
+     * is not sales-flexed — $floor/$ceil are still prorated by the
+     * day-elapsed fraction W the same way Normal Hours' goals were.
+     *
+     * $actual/$floor/$ceil are percentage-point numbers (e.g. 19.87 meaning
+     * 19.87%), so the point gap is divided by 100 before the *30 multiplier
+     * to match the source spreadsheet's percent-formatted (fractional) cells:
+     *   =MAX(0, 0.3 - IF(actual>highest, (actual-highest)*30,
+     *                  IF(actual<lowest, (lowest-actual)*30, 0)))
+     * Returns [score, case] where case 1=over ceil, 2=under floor, 3=within.
+     */
+    private function laborScore(float $floor, float $ceil, float $actual, float $max = self::SCORE_MAX_HNR_PLUS['normal_hours']): array
+    {
+        if ($actual > $ceil) {
+            $deduction = (($actual - $ceil) / 100) * 30;
+            $case = 1;
+        } elseif ($actual < $floor) {
+            $deduction = (($floor - $actual) / 100) * 30;
+            $case = 2;
+        } else {
+            $deduction = 0.0;
+            $case = 3;
+        }
+
+        return [max(0.0, ($max / 100) - $deduction) * 100, $case];
     }
 
     /**
@@ -1549,6 +2343,8 @@ class ReportsController extends Controller
     /**
      * HnR category (max 10): mean of each day's promise-met % across days
      * with transactions, compared to the HnR goal. Only penalized below goal.
+     * Scored off the important-items HnR (see importantItemsHnrDailyRowsForRange()),
+     * not the store-wide HnR shown elsewhere in the report.
      */
     private function scoreHnr(array $dailyRows, ?float $goal): array
     {
@@ -1751,6 +2547,7 @@ class ReportsController extends Controller
             ->where('store_id', $store)
             ->where('key_id', $keyId)
             ->whereBetween('entry_date', [$start->toDateString(), $end->toDateString()])
+            ->where('is_mistaken', false)
             ->orderBy('entry_date', 'desc')
             ->orderBy('id', 'desc')
             ->first(['value_number']);
@@ -1785,6 +2582,17 @@ class ReportsController extends Controller
         return $this->remember($key, fn(): float => (float) InventoryOrder::where('store_number', $store)
             ->whereBetween('delivery_date', [$start->toDateString(), $end->toDateString()])
             ->where('vendor_name', 'like', '%BLUE LINE%')
+            ->sum('invoice_total'));
+    }
+
+    /** Pepsi invoice total for a store within the range (memoized). */
+    private function pepsiTotalForRange(string $store, CarbonImmutable $start, CarbonImmutable $end): float
+    {
+        $key = "pepsiTotalForRange:{$store}:{$start->toDateString()}:{$end->toDateString()}";
+
+        return $this->remember($key, fn(): float => (float) InventoryOrder::where('store_number', $store)
+            ->whereBetween('delivery_date', [$start->toDateString(), $end->toDateString()])
+            ->where('vendor_name', 'like', '%PEPSI%')
             ->sum('invoice_total'));
     }
 
@@ -2285,6 +3093,11 @@ class ReportsController extends Controller
         ];
     }
 
+    /**
+     * Sum of the latest entered-key value per day for a store within the range.
+     * Multiple users can fill the same key/day (fill_mode = role_each); only the
+     * latest entry per day counts, regardless of who filled it out.
+     */
     private function enteredKeyValueSumForRange(
         string $store,
         int $keyId,
@@ -2292,10 +3105,94 @@ class ReportsController extends Controller
         CarbonImmutable $end
     ): float {
         return (float) EnteredKeyValue::query()
-            ->where('store_id', $store)
-            ->where('key_id', $keyId)
-            ->whereBetween('entry_date', [$start->toDateString(), $end->toDateString()])
+            ->whereIn('id', function ($q) use ($store, $keyId, $start, $end) {
+                $q->from('entered_key_values')
+                    ->selectRaw('MAX(id)')
+                    ->where('store_id', $store)
+                    ->where('key_id', $keyId)
+                    ->whereBetween('entry_date', [$start->toDateString(), $end->toDateString()])
+                    ->where('is_mistaken', false)
+                    ->groupBy('entry_date');
+            })
             ->sum('value_number');
+    }
+
+    /**
+     * Constrains a query to the entered-key rows that hold labor cost for the
+     * business dates in [$start, $end], covering the key 23 -> key 28 switchover:
+     * dates before the cutoff read key 23 at entry_date = date; dates on/after the
+     * cutoff read key 28 at entry_date = date + 1 day.
+     */
+    private function applyLaborKeySegments(Builder $query, CarbonImmutable $start, CarbonImmutable $end): void
+    {
+        $cutoff = CarbonImmutable::parse(self::LABOR_YESTERDAY_KEY_CUTOFF);
+        $oldEnd = $end->lt($cutoff) ? $end : $cutoff->subDay();
+        $newStart = $start->gte($cutoff) ? $start : $cutoff;
+
+        $query->where(function (Builder $q) use ($start, $oldEnd, $newStart, $end) {
+            if ($start->lte($oldEnd)) {
+                $q->orWhere(function (Builder $q2) use ($start, $oldEnd) {
+                    $q2->where('key_id', self::LABOR_ENTERED_KEY_ID)
+                        ->whereBetween('entry_date', [$start->toDateString(), $oldEnd->toDateString()]);
+                });
+            }
+
+            if ($newStart->lte($end)) {
+                $q->orWhere(function (Builder $q2) use ($newStart, $end) {
+                    $q2->where('key_id', self::LABOR_YESTERDAY_KEY_ID)
+                        ->whereBetween('entry_date', [
+                            $newStart->addDay()->toDateString(),
+                            $end->addDay()->toDateString(),
+                        ]);
+                });
+            }
+        });
+    }
+
+    /**
+     * Sum of labor cost per business day for a store within the range, accounting
+     * for the key 23 -> key 28 (yesterday's labor) switchover. See applyLaborKeySegments().
+     */
+    private function laborValueSumForRange(
+        string $store,
+        CarbonImmutable $start,
+        CarbonImmutable $end
+    ): float {
+        return (float) EnteredKeyValue::query()
+            ->whereIn('id', function ($q) use ($store, $start, $end) {
+                $q->from('entered_key_values')
+                    ->selectRaw('MAX(id)')
+                    ->where('store_id', $store)
+                    ->where('is_mistaken', false);
+                $this->applyLaborKeySegments($q, $start, $end);
+                $q->groupBy('entry_date');
+            })
+            ->sum('value_number');
+    }
+
+    /**
+     * Labor cost (value + percent of sales) for each individual business day
+     * within the range, e.g. week-to-date so far.
+     */
+    private function laborByDayForRange(
+        string $store,
+        CarbonImmutable $start,
+        CarbonImmutable $end,
+        array $salesByDay
+    ): array {
+        $out = [];
+
+        for ($d = $start; $d->lte($end); $d = $d->addDay()) {
+            $value = $this->laborValueSumForRange($store, $d, $d);
+            $sales = (float) ($salesByDay[$d->toDateString()] ?? 0.0);
+
+            $out[$d->toDateString()] = [
+                'value' => round($value, 2),
+                'percent' => $this->percentOfSales($value, $sales),
+            ];
+        }
+
+        return $out;
     }
 
     private function percentOfSales(float $value, float $sales): float
@@ -2440,15 +3337,7 @@ class ReportsController extends Controller
         CarbonImmutable $start,
         CarbonImmutable $end
     ): array {
-        $queries = DatabaseRouter::routedQueries('detail_orders', $start->toMutable(), $end->toMutable());
-
-        $union = array_shift($queries);
-        foreach ($queries as $q) {
-            $union->unionAll($q);
-        }
-
-        $row = DB::query()
-            ->fromSub($union, 'd')
+        $row = $this->detailOrdersSource($start, $end)
             ->where('franchise_store', $store)
             ->whereIn('order_placed_method', ['Website', 'Mobile'])
             ->selectRaw("
@@ -2628,6 +3517,24 @@ class ReportsController extends Controller
         return $total;
     }
 
+    /** Weighted points per item (units * weight) for the same items totalUpsellingUnits() counts. */
+    private function upsellingScoreForItems(array $upselling): array
+    {
+        $scores = [];
+
+        foreach (self::UPSELLING_SCORE_WEIGHTS as $key => $weight) {
+            $units = (int) ($upselling[$key] ?? 0);
+            $scores[$key] = round($units * $weight, 2);
+        }
+
+        return $scores;
+    }
+
+    private function totalUpsellingScore(array $upsellingScore): float
+    {
+        return round(array_sum($upsellingScore), 2);
+    }
+
     private function soldWithPizzaUnitsForRange(string $store, CarbonImmutable $start, CarbonImmutable $end): array
     {
         $base = $this->applyInStoreBucketFilters(
@@ -2711,6 +3618,19 @@ class ReportsController extends Controller
         return DB::query()->fromSub($union, 'ol');
     }
 
+    private function detailOrdersSource(CarbonImmutable $start, CarbonImmutable $end): Builder
+    {
+        $queries = DatabaseRouter::routedQueries('detail_orders', $start->toMutable(), $end->toMutable());
+
+        $union = array_shift($queries);
+        foreach ($queries as $q) {
+            $union->unionAll($q);
+        }
+
+        // Union hot + archive detail_orders tables for the requested range.
+        return DB::query()->fromSub($union, 'd');
+    }
+
     private function applyInStoreBucketFilters(Builder $query): Builder
     {
         return $query
@@ -2784,6 +3704,88 @@ class ReportsController extends Controller
         CarbonImmutable $end
     ): array {
         $totals = $this->dailySummaryTotals($store, $start, $end);
+        return $this->hnrTotals($totals);
+    }
+
+    // ---------------------------------------------------------------------
+    // Important-items HnR (raw, not present in any aggregated table)
+    //
+    // detail_orders (hnrOrder/broken_promise) is order-header level, with no
+    // item_id; order_line (item_id) has no hnr flags. So this joins the two
+    // raw tables directly: orders that contain one of the important items,
+    // matched to their hnrOrder/broken_promise flags, grouped per business
+    // day in a single query.
+    // ---------------------------------------------------------------------
+
+    /** Per-day important-items HnR counts for a store/range (memoized, one query). */
+    private function importantItemsHnrDailyRowsForRange(string $store, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $key = "importantItemsHnrDailyRows:{$store}:{$start->toDateString()}:{$end->toDateString()}";
+
+        return $this->remember($key, fn(): array => $this->computeImportantItemsHnrDailyRowsForRange($store, $start, $end));
+    }
+
+    private function computeImportantItemsHnrDailyRowsForRange(string $store, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $importantOrders = $this->orderLineSource($start, $end)
+            ->where('franchise_store', $store)
+            ->whereIn('item_id', self::IMPORTANT_ITEMS_HNR_ITEM_IDS)
+            ->whereNotNull('order_id')
+            ->select('franchise_store', 'business_date', 'order_id')
+            ->distinct();
+
+        return $this->detailOrdersSource($start, $end)
+            ->where('d.franchise_store', $store)
+            ->where('d.hnrOrder', 'Yes')
+            ->joinSub($importantOrders, 'io', function ($join) {
+                $join->on('io.franchise_store', '=', 'd.franchise_store')
+                    ->on('io.business_date', '=', 'd.business_date')
+                    ->on('io.order_id', '=', 'd.order_id');
+            })
+            ->selectRaw(
+                'd.business_date as business_date,'
+                . ' COUNT(*) as hnr_transactions,'
+                . " SUM(CASE WHEN d.broken_promise = 'Yes' THEN 1 ELSE 0 END) as hnr_broken_promises"
+            )
+            ->groupBy('d.business_date')
+            ->orderBy('d.business_date')
+            ->get()
+            ->all();
+    }
+
+    /** Folds per-day important-items HnR rows into a hnrTotals()-compatible totals array. */
+    private function sumImportantItemsHnrRows(array $rows): array
+    {
+        $transactions = 0;
+        $broken = 0;
+
+        foreach ($rows as $row) {
+            $transactions += (int) ($row->hnr_transactions ?? 0);
+            $broken += (int) ($row->hnr_broken_promises ?? 0);
+        }
+
+        return ['hnr_transactions' => $transactions, 'hnr_broken_promises' => $broken];
+    }
+
+    /** Picks a single day's totals out of a per-day important-items HnR row set. */
+    private function importantItemsHnrRowForDay(array $rows, CarbonImmutable $day): array
+    {
+        foreach ($rows as $row) {
+            if (CarbonImmutable::parse($row->business_date)->isSameDay($day)) {
+                return [
+                    'hnr_transactions' => (int) $row->hnr_transactions,
+                    'hnr_broken_promises' => (int) $row->hnr_broken_promises,
+                ];
+            }
+        }
+
+        return ['hnr_transactions' => 0, 'hnr_broken_promises' => 0];
+    }
+
+    private function importantItemsHnrMetricsForRange(string $store, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $totals = $this->sumImportantItemsHnrRows($this->importantItemsHnrDailyRowsForRange($store, $start, $end));
+
         return $this->hnrTotals($totals);
     }
 
@@ -3015,6 +4017,7 @@ class ReportsController extends Controller
             'week_end' => $day->toDateString(),
             ...$this->portalMetricsForRange($store, $weekStart, $day),
             ...$this->hnrMetricsForRange($store, $weekStart, $day),
+            'important_items_hnr' => $this->importantItemsHnrMetricsForRange($store, $weekStart, $day),
         ];
 
         // 7 previous complete weeks
@@ -3026,6 +4029,7 @@ class ReportsController extends Controller
                 'week_end' => $end->toDateString(),
                 ...$this->portalMetricsForRange($store, $start, $end),
                 ...$this->hnrMetricsForRange($store, $start, $end),
+                'important_items_hnr' => $this->importantItemsHnrMetricsForRange($store, $start, $end),
             ];
         }
 
